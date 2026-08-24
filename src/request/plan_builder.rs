@@ -91,6 +91,8 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
                 store_token_store_id: 0,
                 interceptor: None,
+                execution_details_trace_handler:
+                    crate::trace::current_execution_details_trace_handler(),
                 resource_control: None,
                 response_codec,
                 v1_response_codec,

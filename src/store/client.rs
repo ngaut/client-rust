@@ -4,7 +4,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -648,6 +648,72 @@ mod tests {
         server.stop().await.unwrap();
     }
 
+    #[tokio::test]
+    async fn source_exec_details_trace_wraps_a_physical_batch_rpc() {
+        use crate::proto::tikvpb;
+        use tikvpb::batch_commands_response::response::Cmd;
+
+        let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
+            .await
+            .unwrap();
+        server.set_batch_commands_handler(Some(Arc::new(|request| {
+            Ok(tikvpb::BatchCommandsResponse {
+                responses: request
+                    .requests
+                    .iter()
+                    .map(|_| tikvpb::batch_commands_response::Response {
+                        cmd: Some(Cmd::Get(kvrpcpb::GetResponse {
+                            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                                time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                                    total_rpc_wall_time_ns: 1_000_000,
+                                    wait_wall_time_ns: 100_000,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        })),
+                    })
+                    .collect(),
+                request_ids: request.request_ids,
+                ..Default::default()
+            })
+        })));
+        let address = server.addr().unwrap();
+        let client = KvRpcClient::new(
+            vec![TikvClient::connect(format!("http://{address}"))
+                .await
+                .unwrap()],
+            Duration::from_secs(1),
+        )
+        .with_batch_worker(&crate::config::TiKvClient::default());
+        let traces = Arc::new(Mutex::new(Vec::new()));
+        let observed = traces.clone();
+
+        crate::trace::with_trace_exec_details(
+            Arc::new(move |_, span| observed.lock().unwrap().push(span.to_string())),
+            async {
+                client
+                    .dispatch(&kvrpcpb::GetRequest::default())
+                    .await
+                    .unwrap();
+            },
+        )
+        .await;
+        assert_eq!(
+            *traces.lock().unwrap(),
+            vec!["tikv.RPC[1ms]{ tikv.Wait[100µs] tikv.Process tikv.Suspend }"]
+        );
+
+        client
+            .dispatch(&kvrpcpb::GetRequest::default())
+            .await
+            .unwrap();
+        assert_eq!(traces.lock().unwrap().len(), 1);
+        client.close();
+        server.stop().await.unwrap();
+    }
+
     #[test]
     fn source_batch_stream_metadata_carries_forwarding_host_and_pool_index() {
         let forwarded =
@@ -1043,6 +1109,7 @@ impl KvRpcClient {
                 )));
             }
         }
+        let started_at = Instant::now();
         if let (Some(worker), Some(batch_request)) = (
             self.batch_worker.as_ref(),
             BatchCommandRequest::from_store_request(request),
@@ -1064,7 +1131,9 @@ impl KvRpcClient {
                     )
                 })?
                 .map_err(|error| self.wrap_connection_error(error))?;
-            return Ok(BatchCommandResponse::into_any(response));
+            let response = BatchCommandResponse::into_any(response);
+            crate::trace::trace_exec_details_response(started_at, response.as_ref());
+            return Ok(response);
         }
         let index = self.next_client_index();
         let timeout = timeout.unwrap_or(self.timeout);
@@ -1073,6 +1142,9 @@ impl KvRpcClient {
             .dispatch_with_forwarded_host(&self.rpc_clients[index], timeout, forwarded_host)
             .await
             .map_err(|error| self.wrap_connection_error(error));
+        if let Ok(response) = &result {
+            crate::trace::trace_exec_details_response(started_at, response.as_ref());
+        }
         self.set_connection_state(
             index,
             if result.is_ok() {

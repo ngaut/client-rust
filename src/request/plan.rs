@@ -112,6 +112,9 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) store_token_store_id: StoreId,
     /// Optional transaction-level decorator for this physical RPC.
     pub interceptor: Option<RpcInterceptorChain>,
+    /// Task-scoped execution-detail trace sink captured before this dispatch
+    /// may move into a fan-out task.
+    pub(crate) execution_details_trace_handler: Option<crate::trace::ExecutionDetailsTraceHandler>,
     /// Optional client-go-compatible resource-group controller applied before
     /// the user interceptor and settled after a successful response.
     pub resource_control: Option<ResourceGroupControllerHandle>,
@@ -190,15 +193,21 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .as_ref()
             .expect("Unreachable: kv_client has not been initialised in Dispatch")
             .clone();
+        let execution_details_trace_handler = self
+            .execution_details_trace_handler
+            .clone()
+            .or_else(crate::trace::current_execution_details_trace_handler);
         let next = Box::new(|| {
             Box::pin(async {
-                client
-                    .dispatch_with_timeout_and_forwarded_host(
-                        &request,
-                        self.request_timeout,
-                        &self.forwarded_host,
-                    )
-                    .await
+                let dispatch = client.dispatch_with_timeout_and_forwarded_host(
+                    &request,
+                    self.request_timeout,
+                    &self.forwarded_host,
+                );
+                match execution_details_trace_handler.clone() {
+                    Some(handler) => crate::trace::with_trace_exec_details(handler, dispatch).await,
+                    None => dispatch.await,
+                }
             }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         });
         let started_at = Instant::now();
