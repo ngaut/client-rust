@@ -1325,6 +1325,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_lite_lock_resolution_scopes_resolve_lock_to_the_key() {
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                let req = req
+                    .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                    .expect("expected ResolveLock request");
+                assert_eq!(req.keys, vec![vec![1]]);
+                Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let key = vec![1];
+        resolve_lock_with_retry(
+            &key,
+            1,
+            2,
+            false,
+            get_global_config().tikv_client.resolve_lock_lite_threshold - 1,
+            client,
+            Keyspace::Disable,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Backoff::no_jitter_backoff(0, 0, 1),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     #[serial]
     async fn test_resolve_locks_resolves_committed_even_if_ttl_not_expired() {
         let check_txn_status_count = Arc::new(AtomicUsize::new(0));
