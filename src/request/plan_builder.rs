@@ -203,6 +203,13 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
             None => self,
         }
     }
+
+    pub(crate) fn ru_details_option(self, ru_details: Option<Arc<crate::RuDetails>>) -> Self {
+        match ru_details {
+            Some(ru_details) => self.ru_details(ru_details),
+            None => self,
+        }
+    }
 }
 
 impl<PdC: PdClient, P: Plan> PlanBuilder<PdC, P, Targetted> {

@@ -100,6 +100,7 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     rpc_interceptor: Option<RpcInterceptorChain>,
     resource_group_name: Option<String>,
     resource_control: Option<ResourceGroupControllerHandle>,
+    ru_details: Option<Arc<crate::RuDetails>>,
     /// Snapshot-only callers may replace this with source replica-read
     /// settings; ordinary transactions retain direct leader reads.
     replica_read_config: ReplicaReadConfig,
@@ -162,6 +163,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             rpc_interceptor: None,
             resource_group_name: None,
             resource_control: None,
+            ru_details: None,
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
             is_heartbeat_started: false,
@@ -177,6 +179,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .rpc_interceptor_option(self.rpc_interceptor.clone())
             .resource_group_option(self.resource_group_name.as_deref())
             .resource_control_option(self.resource_control.clone())
+            .ru_details_option(self.ru_details.clone())
             .replica_read(self.replica_read_config.clone())
     }
 
@@ -247,6 +250,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.resource_control = Some(controller);
     }
 
+    /// Attach source-compatible resource-unit accounting to subsequent
+    /// transaction RPCs, including retries and commit/rollback requests.
+    pub fn set_ru_details(&mut self, ru_details: Arc<crate::RuDetails>) {
+        self.ru_details = Some(ru_details);
+    }
+
     /// Create a new 'get' request
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
@@ -277,6 +286,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc_interceptor = self.rpc_interceptor.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
+        let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
         let replica_read_config = self.replica_read_config_for_items(1);
 
@@ -290,6 +300,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     rpc_interceptor,
                     resource_group_name.as_deref(),
                     resource_control,
+                    ru_details,
                     replica_read_config.clone(),
                     request,
                 )
@@ -424,6 +435,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc_interceptor = self.rpc_interceptor.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
+        let ru_details = self.ru_details.clone();
         let keys = keys
             .into_iter()
             .map(move |k| k.into().encode_keyspace(keyspace, KeyMode::Txn));
@@ -448,6 +460,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     rpc_interceptor,
                     resource_group_name.as_deref(),
                     resource_control,
+                    ru_details,
                     replica_read_config,
                     request,
                 )
@@ -879,6 +892,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc_interceptor.clone(),
             self.resource_group_name.clone(),
             self.resource_control.clone(),
+            self.ru_details.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -956,6 +970,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc_interceptor.clone(),
             self.resource_group_name.clone(),
             self.resource_control.clone(),
+            self.ru_details.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -1029,6 +1044,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc_interceptor = self.rpc_interceptor.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
+        let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
         let replica_read_config = self.replica_read_config.clone();
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
@@ -1054,6 +1070,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         rpc_interceptor,
                         resource_group_name.as_deref(),
                         resource_control,
+                        ru_details,
                         replica_read_config.clone(),
                         request,
                     )
@@ -1250,6 +1267,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc_interceptor = self.rpc_interceptor.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
+        let ru_details = self.ru_details.clone();
         debug!(
             "starting auto-heartbeat, start_ts: {}, interval: {:?}",
             self.timestamp.version(),
@@ -1282,6 +1300,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     rpc_interceptor.clone(),
                     resource_group_name.as_deref(),
                     resource_control.clone(),
+                    ru_details.clone(),
                     ReplicaReadConfig::default(),
                     request,
                 )
@@ -1343,6 +1362,7 @@ fn plan_with_keyspace_name<PdC: PdClient, Req: KvRequest>(
     rpc_interceptor: Option<RpcInterceptorChain>,
     resource_group_name: Option<&str>,
     resource_control: Option<ResourceGroupControllerHandle>,
+    ru_details: Option<Arc<crate::RuDetails>>,
     replica_read_config: ReplicaReadConfig,
     request: Req,
 ) -> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
@@ -1351,6 +1371,7 @@ fn plan_with_keyspace_name<PdC: PdClient, Req: KvRequest>(
         .rpc_interceptor_option(rpc_interceptor)
         .resource_group_option(resource_group_name)
         .resource_control_option(resource_control)
+        .ru_details_option(ru_details)
         .replica_read(replica_read_config)
 }
 
@@ -1621,6 +1642,7 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     rpc_interceptor: Option<RpcInterceptorChain>,
     resource_group_name: Option<String>,
     resource_control: Option<ResourceGroupControllerHandle>,
+    ru_details: Option<Arc<crate::RuDetails>>,
     #[new(default)]
     undetermined: bool,
     write_size: u64,
@@ -1712,6 +1734,7 @@ impl<PdC: PdClient> Committer<PdC> {
             self.rpc_interceptor.clone(),
             self.resource_group_name.as_deref(),
             self.resource_control.clone(),
+            self.ru_details.clone(),
             ReplicaReadConfig::default(),
             request,
         )
@@ -1769,6 +1792,7 @@ impl<PdC: PdClient> Committer<PdC> {
             self.rpc_interceptor.clone(),
             self.resource_group_name.as_deref(),
             self.resource_control.clone(),
+            self.ru_details.clone(),
             ReplicaReadConfig::default(),
             req,
         )
@@ -1900,6 +1924,7 @@ impl<PdC: PdClient> Committer<PdC> {
             self.rpc_interceptor,
             self.resource_group_name.as_deref(),
             self.resource_control,
+            self.ru_details,
             ReplicaReadConfig::default(),
             req,
         )
@@ -1955,6 +1980,7 @@ impl<PdC: PdClient> Committer<PdC> {
         let rpc_interceptor = self.rpc_interceptor;
         let resource_group_name = self.resource_group_name;
         let resource_control = self.resource_control;
+        let ru_details = self.ru_details;
         let priority = self.options.priority;
         match self.options.kind {
             TransactionKind::Pessimistic(for_update_ts) if !prewritten => {
@@ -1967,6 +1993,7 @@ impl<PdC: PdClient> Committer<PdC> {
                     rpc_interceptor,
                     resource_group_name.as_deref(),
                     resource_control,
+                    ru_details,
                     ReplicaReadConfig::default(),
                     req,
                 )
@@ -1988,6 +2015,7 @@ impl<PdC: PdClient> Committer<PdC> {
                     rpc_interceptor,
                     resource_group_name.as_deref(),
                     resource_control,
+                    ru_details,
                     ReplicaReadConfig::default(),
                     req,
                 )
@@ -2099,12 +2127,17 @@ mod tests {
             assert_eq!(resource_group_name, "test-rg");
             self.events.lock().unwrap().push("request");
             Ok(RequestWaitResult {
+                consumption: resource_manager::Consumption {
+                    r_r_u: 2.0,
+                    w_r_u: 3.0,
+                    ..Default::default()
+                },
                 penalty: Some(resource_manager::Consumption {
                     r_r_u: 1.0,
                     ..Default::default()
                 }),
+                wait_duration: Duration::from_millis(2),
                 priority: 7,
-                ..Default::default()
             })
         }
 
@@ -2116,7 +2149,14 @@ mod tests {
         ) -> crate::Result<ResponseWaitResult> {
             assert_eq!(resource_group_name, "test-rg");
             self.events.lock().unwrap().push("response");
-            Ok(ResponseWaitResult::default())
+            Ok(ResponseWaitResult {
+                consumption: resource_manager::Consumption {
+                    r_r_u: 5.0,
+                    w_r_u: 7.0,
+                    ..Default::default()
+                },
+                wait_duration: Duration::from_millis(3),
+            })
         }
     }
     use crate::ReplicaReadSelectorOption;
@@ -2345,6 +2385,8 @@ mod tests {
         );
         txn.set_resource_group("test-rg");
         txn.set_resource_control(controller);
+        let ru_details = Arc::new(crate::RuDetails::new());
+        txn.set_ru_details(ru_details.clone());
         txn.put("key".to_owned(), "value").await.unwrap();
         txn.commit().await.unwrap();
 
@@ -2352,6 +2394,9 @@ mod tests {
             *events.lock().unwrap(),
             ["request", "response", "request", "response"]
         );
+        assert_eq!(ru_details.read_ru(), 14.0);
+        assert_eq!(ru_details.write_ru(), 20.0);
+        assert_eq!(ru_details.ru_wait_duration(), Duration::from_millis(10));
     }
 
     #[tokio::test]

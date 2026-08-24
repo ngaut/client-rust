@@ -1,7 +1,7 @@
 use crate::transaction::sync_client::safe_block_on;
 use crate::{
     transaction::Mutation, BoundRange, Key, KvPair, Priority, Result, RpcInterceptorHandle,
-    Timestamp, Transaction, Value,
+    RuDetails, Timestamp, Transaction, Value,
 };
 use std::sync::Arc;
 
@@ -42,6 +42,11 @@ impl SyncTransaction {
     /// Attach a PD resource-group controller to subsequent transaction RPCs.
     pub fn set_resource_control(&mut self, controller: crate::ResourceGroupControllerHandle) {
         self.inner.set_resource_control(controller);
+    }
+
+    /// Attach resource-unit accounting to subsequent transaction RPCs.
+    pub fn set_ru_details(&mut self, ru_details: Arc<RuDetails>) {
+        self.inner.set_ru_details(ru_details);
     }
 
     /// Get the value associated with the given key.
