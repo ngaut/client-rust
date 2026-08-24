@@ -89,33 +89,35 @@ pub fn extract_locks_from_key_error(
     }
 }
 
-/// Refuse to resolve SHARED locks — loudly, before any of them can be mis-handled.
+/// Refuse to resolve a shared-lock wrapper before it can be mis-handled.
 ///
 /// The contract (`kvrpcpb.LockInfo.shared_lock_infos`) is explicit: a shared lock's
 /// real holders live ONLY in `shared_lock_infos` — "DO NOT read from the wrapper
-/// LockInfo", whose own `key`/`lock_version` are unset. This client does not implement
-/// shared-lock resolution yet, and every partial handling is worse than none:
-/// resolving the wrapper checks transaction 0; filtering on wrapper fields silently
-/// drops the members; and the pessimistic-lock special cases in this resolver do not
-/// know `SharedPessimisticLock`. Until support lands, an explicit error is the only
-/// answer that cannot roll back a live transaction or skip a dead one.
+/// LockInfo", whose own `key`/`lock_version` are unset. Resolving such a wrapper
+/// checks transaction 0 and filtering it silently drops the members.
 ///
-/// Servers that predate shared locks never produce them, so this is a no-op there.
+/// `SharedPessimisticLock` is different: it is an embedded, concrete holder and
+/// client-go's `Lock.IsPessimistic` resolves it through PessimisticRollback.
 pub(crate) fn reject_shared_locks(locks: &[kvrpcpb::LockInfo]) -> Result<()> {
     let shared = |l: &kvrpcpb::LockInfo| {
-        !l.shared_lock_infos.is_empty()
-            || l.lock_type == kvrpcpb::Op::SharedLock as i32
-            || l.lock_type == kvrpcpb::Op::SharedPessimisticLock as i32
+        !l.shared_lock_infos.is_empty() || l.lock_type == kvrpcpb::Op::SharedLock as i32
     };
     if locks.iter().any(shared) {
         return Err(Error::StringError(
-            "shared locks (SharedLock/SharedPessimisticLock) are not supported by this \
-             client yet; refusing to resolve them — resolving the wrapper would target \
-             the wrong transaction"
+            "shared lock wrappers are not resolver inputs; expand shared_lock_infos before \
+             resolving them — resolving the wrapper would target the wrong transaction"
                 .to_owned(),
         ));
     }
     Ok(())
+}
+
+fn is_pessimistic_lock(lock: &kvrpcpb::LockInfo) -> bool {
+    matches!(
+        lock.lock_type,
+        value if value == kvrpcpb::Op::PessimisticLock as i32
+            || value == kvrpcpb::Op::SharedPessimisticLock as i32
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -365,7 +367,7 @@ async fn resolve_locks_with_context_inner(
                         .await?;
                 }
 
-                if lock.lock_type == kvrpcpb::Op::PessimisticLock as i32 {
+                if is_pessimistic_lock(&lock) {
                     lock_resolver
                         .resolve_pessimistic_lock(pd_client.clone(), keyspace, keyspace_name, &lock)
                         .await?;
@@ -801,7 +803,7 @@ impl LockResolver {
                     u64::MAX,
                     true,
                     false,
-                    l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
+                    is_pessimistic_lock(&l),
                     l.is_txn_file,
                 )
                 .await?;
@@ -809,7 +811,7 @@ impl LockResolver {
             // client-go's BatchResolveLocks handles pessimistic locks after
             // their status check with PessimisticRollback. They must not be
             // included in the ordinary batch ResolveLock transaction list.
-            if l.lock_type == kvrpcpb::Op::PessimisticLock as i32 {
+            if is_pessimistic_lock(&l) {
                 self.resolve_pessimistic_lock(pd_client.clone(), keyspace, keyspace_name, &l)
                     .await?;
                 continue;
@@ -842,6 +844,7 @@ impl LockResolver {
 
                 if commit_ts.is_none() {
                     debug!("fallback to 2pc, txn_id:{}, check_txn_status again", txn_id);
+                    let resolving_pessimistic_lock = is_pessimistic_lock(&l);
                     status = self
                         .check_txn_status(
                             pd_client.clone(),
@@ -853,7 +856,7 @@ impl LockResolver {
                             u64::MAX,
                             true,
                             true,
-                            l.lock_type == kvrpcpb::Op::PessimisticLock as i32,
+                            resolving_pessimistic_lock,
                             l.is_txn_file,
                         )
                         .await?;
@@ -1076,7 +1079,7 @@ impl LockResolver {
                     current_ts,
                     rollback_if_not_exist,
                     force_sync_commit,
-                    lock.lock_type == kvrpcpb::Op::PessimisticLock as i32,
+                    is_pessimistic_lock(lock),
                     lock.is_txn_file,
                 )
                 .await
@@ -1091,7 +1094,7 @@ impl LockResolver {
                         );
                         rollback_if_not_exist = true;
                         continue;
-                    } else if lock.lock_type == kvrpcpb::Op::PessimisticLock as i32 {
+                    } else if is_pessimistic_lock(lock) {
                         let status = TransactionStatus {
                             kind: TransactionStatusKind::Locked(lock.lock_ttl, lock.clone()),
                             action: kvrpcpb::Action::NoAction,
@@ -1107,8 +1110,7 @@ impl LockResolver {
                     return Err(Error::TxnNotFound(txn_not_found));
                 }
                 Err(Error::KeyError(key_error))
-                    if lock.lock_type == kvrpcpb::Op::PessimisticLock as i32
-                        && key_error.primary_mismatch.is_some() =>
+                    if is_pessimistic_lock(lock) && key_error.primary_mismatch.is_some() =>
                 {
                     // client-go's primaryMismatch is valid only while resolving a
                     // pessimistic secondary. Treat it as an already-determined
@@ -1121,7 +1123,7 @@ impl LockResolver {
                     }));
                 }
                 Err(Error::MultipleKeyErrors(errors))
-                    if lock.lock_type == kvrpcpb::Op::PessimisticLock as i32
+                    if is_pessimistic_lock(lock)
                         && matches!(
                             errors.first(),
                             Some(Error::KeyError(key_error)) if key_error.primary_mismatch.is_some()
@@ -1211,7 +1213,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_locks_are_refused_never_misresolved() {
+    fn shared_lock_wrappers_are_refused_but_shared_pessimistic_holders_are_not() {
         let plain = kvrpcpb::LockInfo {
             key: b"k1".to_vec(),
             lock_version: 7,
@@ -1231,12 +1233,20 @@ mod tests {
         };
         assert!(reject_shared_locks(&[plain.clone(), wrapper]).is_err());
 
-        // Also refused when only the op marks it shared (empty member list).
+        // client-go's Lock.IsShared only rejects this wrapper form.
+        let by_op = kvrpcpb::LockInfo {
+            lock_type: kvrpcpb::Op::SharedLock as i32,
+            ..Default::default()
+        };
+        assert!(reject_shared_locks(&[by_op]).is_err());
+
+        // A concrete shared-pessimistic holder is handled as pessimistic.
         let by_op = kvrpcpb::LockInfo {
             lock_type: kvrpcpb::Op::SharedPessimisticLock as i32,
             ..Default::default()
         };
-        assert!(reject_shared_locks(&[by_op]).is_err());
+        assert!(reject_shared_locks(&[by_op.clone()]).is_ok());
+        assert!(is_pessimistic_lock(&by_op));
     }
 
     #[test]
@@ -1806,7 +1816,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_pessimistic_lock_uses_pessimistic_rollback_not_resolve_lock() {
+    async fn source_shared_pessimistic_lock_uses_pessimistic_rollback_not_resolve_lock() {
         let rollback_count = Arc::new(AtomicUsize::new(0));
         let rollback_count_captured = rollback_count.clone();
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -1837,7 +1847,7 @@ mod tests {
             key: vec![2],
             primary_lock: vec![1],
             lock_version: 1,
-            lock_type: kvrpcpb::Op::PessimisticLock as i32,
+            lock_type: kvrpcpb::Op::SharedPessimisticLock as i32,
             ..Default::default()
         };
 
