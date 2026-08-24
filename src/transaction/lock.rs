@@ -325,9 +325,11 @@ async fn resolve_locks_with_context_inner(
                             .await;
 
                         if let Some(read_lock_context) = read_lock_context {
-                            schedule_read_lock_cleanup(
+                            let keys = secondary_status.keys_to_resolve(&lock.primary_lock);
+                            schedule_read_async_commit_cleanup(
                                 &lock,
                                 commit_version,
+                                keys,
                                 pd_client.clone(),
                                 keyspace,
                                 keyspace_name,
@@ -666,6 +668,59 @@ async fn schedule_read_lite_cleanup(
         let _ = resolve_lite_locks_with_retry_for_read_cleanup(
             &keys,
             &primary_lock,
+            true,
+            start_version,
+            commit_version,
+            is_txn_file,
+            pd_client,
+            keyspace,
+            keyspace_name.as_deref(),
+            rpc_interceptor,
+            resource_group_name.as_deref(),
+            resource_control,
+            ru_details,
+            Backoff::no_jitter_backoff(2, 500, 87),
+        )
+        .await;
+    };
+
+    match ASYNC_READ_RESOLVE_LOCKS.clone().try_acquire_owned() {
+        Ok(permit) => {
+            tokio::spawn(async move {
+                let _permit = permit;
+                resolve.await;
+            });
+        }
+        Err(_) => resolve.await,
+    }
+}
+
+/// Expired async-commit recovery determines the full transaction outcome, so
+/// client-go resolves its recovered secondary set plus primary rather than
+/// only the lock which caused the read retry.
+#[allow(clippy::too_many_arguments)]
+async fn schedule_read_async_commit_cleanup(
+    lock: &kvrpcpb::LockInfo,
+    commit_version: u64,
+    keys: Vec<Vec<u8>>,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: &ResolveLocksContext,
+) {
+    let primary_lock = lock.primary_lock.clone();
+    let start_version = lock.lock_version;
+    let is_txn_file = lock.is_txn_file;
+    let keyspace_name = keyspace_name.map(ToOwned::to_owned);
+    let rpc_interceptor = context.rpc_interceptor.clone();
+    let resource_group_name = context.resource_group_name.clone();
+    let resource_control = context.resource_control.clone();
+    let ru_details = context.ru_details.clone();
+    let resolve = async move {
+        let _ = resolve_lite_locks_with_retry_for_read_cleanup(
+            &keys,
+            &primary_lock,
+            false,
             start_version,
             commit_version,
             is_txn_file,
@@ -696,6 +751,7 @@ async fn schedule_read_lite_cleanup(
 async fn resolve_lite_locks_with_retry_for_read_cleanup(
     keys: &[Vec<u8>],
     primary_lock: &[u8],
+    skip_checked_primary: bool,
     start_version: u64,
     commit_version: u64,
     is_txn_file: bool,
@@ -711,7 +767,7 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
     // `resolveLock(lite=true)` skips its already-checked primary. A multi-key
     // batch deliberately retains the primary, matching client-go's
     // `resolveRegionLocks` path.
-    if keys.len() == 1 && keys[0] == primary_lock {
+    if skip_checked_primary && keys.len() == 1 && keys[0] == primary_lock {
         return Ok(());
     }
 
@@ -2475,6 +2531,91 @@ mod tests {
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
         assert_eq!(check_secondary_count.load(Ordering::SeqCst), 1);
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn source_read_async_commit_cleanup_resolves_recovered_secondaries_and_primary() {
+        let cleanup_sent = Arc::new(tokio::sync::Notify::new());
+        let cleanup_sent_by_hook = Arc::clone(&cleanup_sent);
+        let start_ts = Timestamp {
+            physical: 1,
+            logical: 0,
+            ..Default::default()
+        }
+        .version();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .is_some()
+                {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 1,
+                        lock_info: Some(kvrpcpb::LockInfo {
+                            lock_version: start_ts,
+                            primary_lock: vec![1],
+                            secondaries: vec![vec![2]],
+                            min_commit_ts: start_ts + 1,
+                            use_async_commit: true,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if req
+                    .downcast_ref::<kvrpcpb::CheckSecondaryLocksRequest>()
+                    .is_some()
+                {
+                    return Ok(Box::new(kvrpcpb::CheckSecondaryLocksResponse {
+                        locks: vec![kvrpcpb::LockInfo {
+                            key: vec![2],
+                            lock_version: start_ts,
+                            min_commit_ts: start_ts + 1,
+                            use_async_commit: true,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    assert_eq!(req.keys, [vec![2], vec![1]]);
+                    assert!(!req.is_async);
+                    cleanup_sent_by_hook.notify_one();
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        client.set_timestamp(Timestamp {
+            physical: 100,
+            logical: 0,
+            ..Default::default()
+        });
+        let read_locks = ReadLockContext::default();
+        let lock = kvrpcpb::LockInfo {
+            key: vec![1],
+            primary_lock: vec![1],
+            lock_version: start_ts,
+            lock_ttl: 1,
+            ..Default::default()
+        };
+
+        assert!(resolve_locks_for_read_with_context(
+            vec![lock],
+            Timestamp::from_version(start_ts + 2),
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+            &read_locks,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        assert_eq!(read_locks.snapshot().1, [start_ts]);
+        tokio::time::timeout(Duration::from_secs(1), cleanup_sent.notified())
+            .await
+            .expect("detached async-commit cleanup should resolve the whole transaction");
     }
 
     #[tokio::test]
