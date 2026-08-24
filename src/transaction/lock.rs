@@ -232,6 +232,7 @@ async fn resolve_locks_with_context_inner(
     read_lock_context: Option<&ReadLockContext>,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
+    stats::increment_lock_resolver_action("resolve");
     reject_shared_locks(&locks)?;
     // client-go ResolveLocksWithOpts returns before consulting the oracle when
     // no locks were supplied. This also keeps an empty retry path independent
@@ -1069,7 +1070,9 @@ async fn resolve_lock_with_retry_inner(
         let mut request =
             requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
         let resolve_lite = txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
+        stats::increment_lock_resolver_action("query_resolve_locks");
         if resolve_lite {
+            stats::increment_lock_resolver_action("query_resolve_lock_lite");
             request.keys = vec![key.clone()];
         } else if server_side_async && NEXT_GEN {
             request.is_async = true;
@@ -1673,6 +1676,7 @@ impl LockResolver {
         // 2.1 Txn Committed
         // 2.2 Txn Rollbacked -- rollback itself, rollback by others, GC tomb etc.
         // 2.3 No lock -- pessimistic lock rollback, concurrence prewrite.
+        stats::increment_lock_resolver_action("query_txn_status");
         let req = new_check_txn_status_request(
             primary,
             txn_id,
@@ -1713,6 +1717,15 @@ impl LockResolver {
 
         let current = pd_client.clone().get_timestamp().await?;
         status.check_ttl(current);
+        match &status.kind {
+            TransactionStatusKind::Committed(_) => {
+                stats::increment_lock_resolver_action("query_txn_status_committed");
+            }
+            TransactionStatusKind::RolledBack => {
+                stats::increment_lock_resolver_action("query_txn_status_rolled_back");
+            }
+            TransactionStatusKind::Locked(_, _) => {}
+        }
         let res = Arc::new(status);
         if res.is_cacheable() {
             self.ctx.save_resolved(txn_id, res.clone()).await;
@@ -1754,6 +1767,7 @@ impl LockResolver {
     ) -> Result<RegionVerId> {
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
+        stats::increment_lock_resolver_action("batch_resolve");
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
             .keyspace_name_option(keyspace_name)
             .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
