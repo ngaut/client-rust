@@ -41,6 +41,7 @@ use crate::transaction::buffer::Buffer;
 use crate::transaction::latch::LatchesScheduler;
 use crate::transaction::lock::format_key_for_log;
 use crate::transaction::lowering::*;
+use crate::transaction::ReadLockContext;
 use crate::BoundRange;
 use crate::Error;
 use crate::Key;
@@ -107,6 +108,9 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// Source `KVSnapshot.replicaReadAdjuster`, retained independently from
     /// the stable selection settings because it runs per get/batch-get.
     replica_read_adjuster: Option<ReplicaReadAdjuster>,
+    /// client-go keeps resolved/committed transaction IDs on each snapshot;
+    /// they must not leak across transactions with different read timestamps.
+    read_lock_context: ReadLockContext,
     is_heartbeat_started: bool,
     /// Set once the transaction enters the commit path (`StartedCommit`), where
     /// prewrite may place 2PC locks. Kept as a dedicated flag because the status
@@ -166,6 +170,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             ru_details: None,
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
+            read_lock_context: ReadLockContext::default(),
             is_heartbeat_started: false,
             prewritten: false,
             start_instant: std::time::Instant::now(),
@@ -289,6 +294,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
         let replica_read_config = self.replica_read_config_for_items(1);
+        let read_lock_context = self.read_lock_context.clone();
 
         self.buffer
             .get_or_else(key, |key| async move {
@@ -305,7 +311,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                     request,
                 )
                 .priority(priority)
-                .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
+                .resolve_lock_for_read(
+                    timestamp,
+                    retry_options.lock_backoff,
+                    keyspace,
+                    read_lock_context,
+                )
                 .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(CollectSingle)
                 .post_process_default()
@@ -443,6 +454,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let priority = self.options.priority;
         let replica_read_config = self.replica_read_config.clone();
         let replica_read_adjuster = self.replica_read_adjuster.clone();
+        let read_lock_context = self.read_lock_context.clone();
 
         self.buffer
             .batch_get_or_else(keys, move |keys| async move {
@@ -465,7 +477,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                     request,
                 )
                 .priority(priority)
-                .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
+                .resolve_lock_for_read(
+                    timestamp,
+                    retry_options.lock_backoff,
+                    keyspace,
+                    read_lock_context,
+                )
                 .retry_multi_region(retry_options.region_backoff)
                 .merge(Collect)
                 .plan();
@@ -1047,6 +1064,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
         let replica_read_config = self.replica_read_config.clone();
+        let read_lock_context = self.read_lock_context.clone();
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
 
         self.buffer
@@ -1075,7 +1093,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                         request,
                     )
                     .priority(priority)
-                    .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
+                    .resolve_lock_for_read(
+                        timestamp,
+                        retry_options.lock_backoff,
+                        keyspace,
+                        read_lock_context,
+                    )
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
                     .plan();

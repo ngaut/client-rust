@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 
 use fail::fail_point;
@@ -155,6 +156,52 @@ pub(crate) async fn resolve_locks_with_context(
     keyspace_name: Option<&str>,
     context: ResolveLocksContext,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
+    resolve_locks_with_context_inner(
+        locks,
+        timestamp,
+        pd_client,
+        keyspace,
+        keyspace_name,
+        context,
+        None,
+    )
+    .await
+}
+
+/// Source `LockResolver.ResolveLocksForRead`: record final status in the
+/// snapshot context so TiKV can ignore or read through the lock on retry.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resolve_locks_for_read_with_context(
+    locks: Vec<kvrpcpb::LockInfo>,
+    timestamp: Timestamp,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: ResolveLocksContext,
+    read_lock_context: &ReadLockContext,
+) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
+    resolve_locks_with_context_inner(
+        locks,
+        timestamp,
+        pd_client,
+        keyspace,
+        keyspace_name,
+        context,
+        Some(read_lock_context),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_locks_with_context_inner(
+    locks: Vec<kvrpcpb::LockInfo>,
+    timestamp: Timestamp,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: ResolveLocksContext,
+    read_lock_context: Option<&ReadLockContext>,
+) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
     reject_shared_locks(&locks)?;
     // client-go ResolveLocksWithOpts returns before consulting the oracle when
@@ -251,6 +298,17 @@ pub(crate) async fn resolve_locks_with_context(
                             .save_resolved(lock.lock_version, determined_status)
                             .await;
 
+                        if let Some(read_lock_context) = read_lock_context {
+                            record_read_lock_status(
+                                read_lock_context,
+                                lock.lock_version,
+                                commit_version,
+                                caller_start_ts,
+                                status.action,
+                            );
+                            continue;
+                        }
+
                         commit_versions.insert(lock.lock_version, commit_version);
                         for key in secondary_status.keys_to_resolve(&lock.primary_lock) {
                             let region_ver_id = pd_client
@@ -319,14 +377,34 @@ pub(crate) async fn resolve_locks_with_context(
                 match &status.kind {
                     TransactionStatusKind::Committed(ts) => {
                         let commit_version = ts.version();
+                        if let Some(read_lock_context) = read_lock_context {
+                            record_read_lock_status(
+                                read_lock_context,
+                                lock.lock_version,
+                                commit_version,
+                                caller_start_ts,
+                                status.action,
+                            );
+                            continue;
+                        }
                         commit_versions.insert(lock.lock_version, commit_version);
                         Some(commit_version)
                     }
                     TransactionStatusKind::RolledBack => {
+                        if let Some(read_lock_context) = read_lock_context {
+                            read_lock_context.add_resolved(lock.lock_version);
+                            continue;
+                        }
                         commit_versions.insert(lock.lock_version, 0);
                         Some(0)
                     }
                     TransactionStatusKind::Locked(_, lock_info) => {
+                        if let Some(read_lock_context) = read_lock_context {
+                            if status.action == kvrpcpb::Action::MinCommitTsPushed {
+                                read_lock_context.add_resolved(lock.lock_version);
+                                continue;
+                            }
+                        }
                         live_locks.push(lock_info.clone());
                         None
                     }
@@ -335,6 +413,16 @@ pub(crate) async fn resolve_locks_with_context(
         };
 
         if let Some(commit_version) = commit_version {
+            if let Some(read_lock_context) = read_lock_context {
+                record_read_lock_status(
+                    read_lock_context,
+                    lock.lock_version,
+                    commit_version,
+                    caller_start_ts,
+                    kvrpcpb::Action::NoAction,
+                );
+                continue;
+            }
             let resolve_lite =
                 lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
             if resolve_lite && lock.key == lock.primary_lock {
@@ -365,6 +453,23 @@ pub(crate) async fn resolve_locks_with_context(
         }
     }
     Ok(live_locks)
+}
+
+fn record_read_lock_status(
+    read_lock_context: &ReadLockContext,
+    txn_id: u64,
+    commit_version: u64,
+    caller_start_ts: u64,
+    action: kvrpcpb::Action,
+) {
+    if action == kvrpcpb::Action::MinCommitTsPushed
+        || commit_version == 0
+        || commit_version > caller_start_ts
+    {
+        read_lock_context.add_resolved(txn_id);
+    } else {
+        read_lock_context.add_committed(txn_id);
+    }
 }
 
 async fn resolve_lock_with_retry(
@@ -487,6 +592,39 @@ pub struct ResolveLocksContext {
     pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
 }
 
+/// Per-snapshot transaction IDs carried in TiKV read contexts.
+///
+/// client-go owns two `util.TSSet`s on every `KVSnapshot`, rather than on the
+/// shared lock resolver: the outcome is valid only for that read timestamp.
+#[derive(Default, Clone)]
+pub(crate) struct ReadLockContext {
+    state: Arc<StdRwLock<ReadLockState>>,
+}
+
+#[derive(Default)]
+struct ReadLockState {
+    resolved: HashSet<u64>,
+    committed: HashSet<u64>,
+}
+
+impl ReadLockContext {
+    pub(crate) fn add_resolved(&self, txn_id: u64) {
+        self.state.write().unwrap().resolved.insert(txn_id);
+    }
+
+    pub(crate) fn add_committed(&self, txn_id: u64) {
+        self.state.write().unwrap().committed.insert(txn_id);
+    }
+
+    pub(crate) fn snapshot(&self) -> (Vec<u64>, Vec<u64>) {
+        let state = self.state.read().unwrap();
+        (
+            state.resolved.iter().copied().collect(),
+            state.committed.iter().copied().collect(),
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ResolveLocksOptions {
     pub async_commit_only: bool,
@@ -503,6 +641,21 @@ impl Default for ResolveLocksOptions {
 }
 
 impl ResolveLocksContext {
+    pub(crate) fn with_request_options(
+        rpc_interceptor: Option<RpcInterceptorChain>,
+        resource_group_name: Option<String>,
+        resource_control: Option<ResourceGroupControllerHandle>,
+        ru_details: Option<Arc<crate::RuDetails>>,
+    ) -> Self {
+        Self {
+            rpc_interceptor,
+            resource_group_name,
+            resource_control,
+            ru_details,
+            ..Default::default()
+        }
+    }
+
     pub async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
         self.resolved.lock().await.statuses.get(&txn_id).cloned()
     }
@@ -1421,6 +1574,60 @@ mod tests {
         .await
         .unwrap()
         .is_empty());
+    }
+
+    #[tokio::test]
+    async fn source_read_resolution_reads_through_committed_locks_without_cleanup() {
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                if req
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .is_some()
+                {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                assert!(req.downcast_ref::<kvrpcpb::ResolveLockRequest>().is_none());
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        let read_locks = ReadLockContext::default();
+        let lock = kvrpcpb::LockInfo {
+            key: vec![1],
+            primary_lock: vec![1],
+            lock_version: 1,
+            ..Default::default()
+        };
+
+        assert!(resolve_locks_for_read_with_context(
+            vec![lock],
+            Timestamp::from_version(3),
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+            &read_locks,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        let (resolved, committed) = read_locks.snapshot();
+        assert!(resolved.is_empty());
+        assert_eq!(committed, [1]);
+    }
+
+    #[test]
+    fn source_read_resolution_classifies_ignore_and_read_through_transaction_ids() {
+        let read_locks = ReadLockContext::default();
+        record_read_lock_status(&read_locks, 1, 7, 8, kvrpcpb::Action::NoAction);
+        record_read_lock_status(&read_locks, 2, 9, 8, kvrpcpb::Action::NoAction);
+        record_read_lock_status(&read_locks, 3, 1, 8, kvrpcpb::Action::MinCommitTsPushed);
+        let (mut resolved, committed) = read_locks.snapshot();
+        resolved.sort_unstable();
+        assert_eq!(resolved, [2, 3]);
+        assert_eq!(committed, [1]);
     }
 
     #[tokio::test]

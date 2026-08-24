@@ -45,8 +45,10 @@ use crate::store::HasRegionErrors;
 use crate::store::KvClient;
 use crate::store::RegionStore;
 use crate::store::{HasKeyErrors, Store};
+use crate::transaction::resolve_locks_for_read_with_context;
 use crate::transaction::resolve_locks_with_ru_details;
 use crate::transaction::HasLocks;
+use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
 use crate::util::iter::FlatMapOkIterExt;
@@ -64,6 +66,11 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
 
     /// Execute the plan.
     async fn execute(&self) -> Result<Self::Result>;
+
+    /// Attach the source snapshot's lock-resolution hints to an imminent
+    /// physical read. Plans that do not end in a TiKV context request retain
+    /// the no-op default.
+    fn set_read_lock_context(&mut self, _resolved_locks: Vec<u64>, _committed_locks: Vec<u64>) {}
 }
 
 /// The simplest plan which just dispatches a request to a specific kv server.
@@ -198,6 +205,11 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 .decode_v1_response(&mut response, self.v1_response_codec.as_ref())?;
             Ok(response)
         })
+    }
+
+    fn set_read_lock_context(&mut self, resolved_locks: Vec<u64>, committed_locks: Vec<u64>) {
+        self.request.set_resolved_locks(resolved_locks);
+        self.request.set_committed_locks(committed_locks);
     }
 }
 
@@ -1400,6 +1412,8 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub resource_group_name: Option<String>,
     pub resource_control: Option<ResourceGroupControllerHandle>,
     pub ru_details: Option<Arc<crate::RuDetails>>,
+    pub(crate) resolve_locks_context: ResolveLocksContext,
+    pub(crate) read_lock_context: Option<ReadLockContext>,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1415,6 +1429,8 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             resource_group_name: self.resource_group_name.clone(),
             resource_control: self.resource_control.clone(),
             ru_details: self.ru_details.clone(),
+            resolve_locks_context: self.resolve_locks_context.clone(),
+            read_lock_context: self.read_lock_context.clone(),
         }
     }
 }
@@ -1427,8 +1443,8 @@ where
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let mut result = self.inner.execute().await?;
         let mut clone = self.clone();
+        let mut result = clone.execute_inner().await?;
         loop {
             let locks = result.take_locks();
             if locks.is_empty() {
@@ -1446,30 +1462,57 @@ where
             clone.disable_stale_read_after_lock();
 
             let pd_client = self.pd_client.clone();
-            let live_locks = resolve_locks_with_ru_details(
-                locks,
-                self.timestamp.clone(),
-                pd_client.clone(),
-                self.keyspace,
-                self.keyspace_name.as_deref(),
-                self.rpc_interceptor.clone(),
-                self.resource_group_name.as_deref(),
-                self.resource_control.clone(),
-                self.ru_details.clone(),
-            )
-            .await?;
+            let live_locks = match &self.read_lock_context {
+                Some(read_lock_context) => {
+                    resolve_locks_for_read_with_context(
+                        locks,
+                        self.timestamp.clone(),
+                        pd_client.clone(),
+                        self.keyspace,
+                        self.keyspace_name.as_deref(),
+                        self.resolve_locks_context.clone(),
+                        read_lock_context,
+                    )
+                    .await?
+                }
+                None => {
+                    resolve_locks_with_ru_details(
+                        locks,
+                        self.timestamp.clone(),
+                        pd_client.clone(),
+                        self.keyspace,
+                        self.keyspace_name.as_deref(),
+                        self.rpc_interceptor.clone(),
+                        self.resource_group_name.as_deref(),
+                        self.resource_control.clone(),
+                        self.ru_details.clone(),
+                    )
+                    .await?
+                }
+            };
             if live_locks.is_empty() {
-                result = clone.inner.execute().await?;
+                result = clone.execute_inner().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError(live_locks)),
                     Some(delay_duration) => {
                         sleep(delay_duration).await;
-                        result = clone.inner.execute().await?;
+                        result = clone.execute_inner().await?;
                     }
                 }
             }
         }
+    }
+}
+
+impl<P: Plan, PdC: PdClient> ResolveLock<P, PdC> {
+    async fn execute_inner(&self) -> Result<P::Result> {
+        let mut inner = self.inner.clone();
+        if let Some(read_lock_context) = &self.read_lock_context {
+            let (resolved_locks, committed_locks) = read_lock_context.snapshot();
+            inner.set_read_lock_context(resolved_locks, committed_locks);
+        }
+        inner.execute().await
     }
 }
 
@@ -2541,6 +2584,8 @@ mod test {
                 resource_group_name: None,
                 resource_control: None,
                 ru_details: None,
+                resolve_locks_context: ResolveLocksContext::default(),
+                read_lock_context: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),

@@ -33,6 +33,7 @@ use crate::store::HasRegionErrors;
 use crate::store::RegionStore;
 use crate::transaction::HasLocks;
 use crate::transaction::Priority;
+use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
 use crate::Result;
@@ -248,6 +249,57 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 resource_group_name: self.resource_group_name.clone(),
                 resource_control: self.resource_control.clone(),
                 ru_details: self.ru_details.clone(),
+                resolve_locks_context: ResolveLocksContext::with_request_options(
+                    self.rpc_interceptor.clone(),
+                    self.resource_group_name.clone(),
+                    self.resource_control.clone(),
+                    self.ru_details.clone(),
+                ),
+                read_lock_context: None,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Resolve locks encountered by a snapshot read. Unlike a mutation,
+    /// client-go reissues the read with TiKV's resolved/committed-lock hints
+    /// instead of waiting for secondary-lock cleanup.
+    pub(crate) fn resolve_lock_for_read(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+        keyspace: Keyspace,
+        read_lock_context: ReadLockContext,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    where
+        P: Shardable,
+        P::Result: HasLocks,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: ResolveLock {
+                inner: self.plan,
+                timestamp,
+                backoff,
+                pd_client: self.pd_client,
+                keyspace,
+                keyspace_name: self.keyspace_name.clone(),
+                rpc_interceptor: self.rpc_interceptor.clone(),
+                resource_group_name: self.resource_group_name.clone(),
+                resource_control: self.resource_control.clone(),
+                ru_details: self.ru_details.clone(),
+                resolve_locks_context: ResolveLocksContext::with_request_options(
+                    self.rpc_interceptor.clone(),
+                    self.resource_group_name.clone(),
+                    self.resource_control.clone(),
+                    self.ru_details.clone(),
+                ),
+                read_lock_context: Some(read_lock_context),
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,

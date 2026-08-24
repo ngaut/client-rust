@@ -38,9 +38,11 @@ mod requests;
 pub use lock::extract_lock_from_key_error;
 pub use lock::extract_locks_from_key_error;
 pub(crate) use lock::reject_shared_locks;
+pub(crate) use lock::resolve_locks_for_read_with_context;
 pub(crate) use lock::resolve_locks_with_context;
 pub(crate) use lock::resolve_locks_with_ru_details;
 pub use lock::LockResolver;
+pub(crate) use lock::ReadLockContext;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;
 #[doc(hidden)]

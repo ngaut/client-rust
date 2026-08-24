@@ -79,6 +79,16 @@ pub trait Request: Any + Sync + Send + 'static {
         0
     }
 
+    /// Transactions whose locks have been determined rolled back, or whose
+    /// commit timestamp is newer than this read, can be ignored by TiKV.
+    /// Context-free requests deliberately retain the no-op default.
+    fn set_resolved_locks(&mut self, _resolved_locks: Vec<u64>) {}
+
+    /// Transactions committed no later than this read may be read through by
+    /// TiKV without waiting for their secondary locks to be cleaned up.
+    /// Context-free requests deliberately retain the no-op default.
+    fn set_committed_locks(&mut self, _committed_locks: Vec<u64>) {}
+
     /// The TiKV context carried by a region-scoped request. Store-scoped and
     /// streaming requests deliberately retain the no-context default.
     fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
@@ -303,6 +313,18 @@ macro_rules! impl_request {
                 self.context
                     .as_ref()
                     .map_or(0, |context| context.max_execution_duration_ms)
+            }
+
+            fn set_resolved_locks(&mut self, resolved_locks: Vec<u64>) {
+                self.context
+                    .get_or_insert_with(kvrpcpb::Context::default)
+                    .resolved_locks = resolved_locks;
+            }
+
+            fn set_committed_locks(&mut self, committed_locks: Vec<u64>) {
+                self.context
+                    .get_or_insert_with(kvrpcpb::Context::default)
+                    .committed_locks = committed_locks;
             }
 
             fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
@@ -835,6 +857,17 @@ mod tests {
         store_safe_ts.set_replica_read(true);
         store_safe_ts.set_busy_threshold_ms(123);
         assert!(store_safe_ts.key_range.is_none());
+    }
+
+    #[test]
+    fn source_snapshot_lock_hints_are_carried_by_context_requests() {
+        let mut get = kvrpcpb::GetRequest::default();
+        get.set_resolved_locks(vec![3, 1]);
+        get.set_committed_locks(vec![2]);
+
+        let context = get.context.unwrap();
+        assert_eq!(context.resolved_locks, [3, 1]);
+        assert_eq!(context.committed_locks, [2]);
     }
 
     #[test]
