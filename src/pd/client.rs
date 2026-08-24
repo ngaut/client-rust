@@ -27,6 +27,7 @@ use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
 use crate::region::StoreId;
 use crate::region_cache::{RegionCache, StoreLiveness};
+use crate::retry::RetryBackoffer;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
 use crate::store::TikvConnect;
@@ -110,6 +111,7 @@ pub trait PdClient: Send + Sync + 'static {
         &self,
         key: &Key,
         count: usize,
+        _backoffer: &mut RetryBackoffer,
     ) -> Result<Vec<RegionWithLeader>> {
         let mut next = key.clone();
         let mut regions = Vec::with_capacity(count);
@@ -868,6 +870,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         &self,
         key: &Key,
         count: usize,
+        backoffer: &mut RetryBackoffer,
     ) -> Result<Vec<RegionWithLeader>> {
         let key = if self.enable_codec {
             key.to_encoded()
@@ -875,7 +878,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
             key.clone()
         };
         self.region_cache
-            .batch_load_regions_from_key(key, count)
+            .batch_load_regions_from_key(key, count, backoffer)
             .await?
             .into_iter()
             .map(|region| Self::decode_region(region, self.enable_codec))
