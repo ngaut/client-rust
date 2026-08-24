@@ -124,7 +124,9 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::time::Duration;
 
     use super::*;
     use crate::mock::MockPdClient;
@@ -134,6 +136,33 @@ mod tests {
     struct RecordingHandler {
         ranges: Arc<Mutex<Vec<(Vec<u8>, Vec<u8>)>>>,
         fail_first: bool,
+    }
+
+    #[derive(Clone, Default)]
+    struct ConcurrentHandler {
+        active: Arc<AtomicUsize>,
+        peak_active: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl RangeTaskHandler for ConcurrentHandler {
+        async fn handle(
+            &self,
+            _cancellation: Cancellation,
+            _range: (Vec<u8>, Vec<u8>),
+        ) -> (TaskStat, Result<()>) {
+            let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
+            self.peak_active.fetch_max(active, Ordering::AcqRel);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            self.active.fetch_sub(1, Ordering::AcqRel);
+            (
+                TaskStat {
+                    completed_regions: 1,
+                    ..Default::default()
+                },
+                Ok(()),
+            )
+        }
     }
 
     #[async_trait]
@@ -202,5 +231,17 @@ mod tests {
         assert_eq!(*ranges.lock().unwrap(), vec![(vec![], vec![10])]);
         assert_eq!(runner.completed_regions(), 0);
         assert_eq!(runner.failed_regions(), 1);
+    }
+
+    #[tokio::test]
+    async fn source_runner_bounds_concurrent_task_handlers() {
+        let handler = ConcurrentHandler::default();
+        let peak_active = handler.peak_active.clone();
+        let mut runner = Runner::new(Arc::new(MockPdClient::default()), 2, handler);
+        runner.set_regions_per_task(1);
+        runner.run_on_range(vec![], vec![250, 250]).await.unwrap();
+
+        assert_eq!(peak_active.load(Ordering::Acquire), 2);
+        assert_eq!(runner.completed_regions(), 2);
     }
 }

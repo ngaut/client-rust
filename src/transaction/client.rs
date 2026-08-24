@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use futures::StreamExt;
 use log::debug;
 use log::info;
 
@@ -21,12 +23,14 @@ use crate::request::Plan;
 use crate::request::PlanBuilder;
 use crate::request::{build_keyspace_name, Keyspace};
 use crate::retry::RetryBackoffer;
+use crate::store::region_stream_for_range;
 use crate::timestamp::TimestampExt;
 use crate::transaction::latch::LatchesScheduler;
 use crate::transaction::lock::ResolveLocksOptions;
 use crate::transaction::lowering::new_delete_range_request;
 use crate::transaction::lowering::new_scan_lock_request;
 use crate::transaction::lowering::new_unsafe_destroy_range_request;
+use crate::transaction::range_task::{RangeTaskHandler, Runner, TaskStat};
 use crate::transaction::resolve_locks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::Snapshot;
@@ -46,12 +50,10 @@ pub use crate::proto::kvrpcpb::LockInfo as ProtoLockInfo;
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 const DELETE_RANGE_ONE_REGION_MAX_BACKOFF_MS: u64 = 100_000;
+const DEFAULT_DELETE_RANGE_CONCURRENCY: usize = 1;
 
-fn delete_range_retry_backoffer() -> RetryBackoffer {
-    RetryBackoffer::new(
-        Cancellation::default(),
-        DELETE_RANGE_ONE_REGION_MAX_BACKOFF_MS,
-    )
+fn delete_range_retry_backoffer(cancellation: Cancellation) -> RetryBackoffer {
+    RetryBackoffer::new(cancellation, DELETE_RANGE_ONE_REGION_MAX_BACKOFF_MS)
 }
 
 /// The TiKV transactional `Client` is used to interact with TiKV using transactional requests.
@@ -422,14 +424,58 @@ impl Client {
     /// TiKV when invoked frequently. The returned count is the number of regions
     /// that completed successfully.
     pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<usize> {
-        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
-        let request = new_delete_range_request(range);
-        self.plan(request)
-            .retry_multi_region_with_retry_backoffer(delete_range_retry_backoffer())
-            .merge(crate::request::Collect)
-            .plan()
-            .execute()
+        self.delete_range_with_concurrency(range, DEFAULT_DELETE_RANGE_CONCURRENCY)
             .await
+    }
+
+    /// Delete every MVCC version in `range` immediately, using at most
+    /// `concurrency` source-compatible range tasks at once.
+    ///
+    /// This corresponds to client-go's explicit `KVStore.DeleteRange`
+    /// concurrency argument. Each task processes its assigned regions in
+    /// order, and a failure cancels the remaining tasks.
+    pub async fn delete_range_with_concurrency(
+        &self,
+        range: impl Into<BoundRange>,
+        concurrency: usize,
+    ) -> Result<usize> {
+        self.run_delete_range_task(range, concurrency, false).await
+    }
+
+    /// Notify every region in `range` about a pending destructive operation
+    /// without deleting its data.
+    ///
+    /// TiKV replicates this request through Raft with `notify_only` set. This
+    /// is client-go's `NewNotifyDeleteRangeTask` behavior and is useful before
+    /// a subsequent unsafe range-destruction operation.
+    pub async fn notify_delete_range_with_concurrency(
+        &self,
+        range: impl Into<BoundRange>,
+        concurrency: usize,
+    ) -> Result<usize> {
+        self.run_delete_range_task(range, concurrency, true).await
+    }
+
+    async fn run_delete_range_task(
+        &self,
+        range: impl Into<BoundRange>,
+        concurrency: usize,
+        notify_only: bool,
+    ) -> Result<usize> {
+        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+        let (start_key, end_key) = range.into_keys();
+        let runner = Runner::new(
+            self.pd.clone(),
+            concurrency,
+            DeleteRangeHandler {
+                client: self.clone(),
+                notify_only,
+            },
+        );
+        runner
+            .run_on_range(start_key.into(), end_key.unwrap_or_default().into())
+            .await?;
+        Ok(runner.completed_regions())
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
@@ -449,6 +495,56 @@ impl Client {
     ) -> PlanBuilder<PdRpcClient, Dispatch<Req>, NoTarget> {
         PlanBuilder::new(self.pd.clone(), self.keyspace, request)
             .keyspace_name_option(self.keyspace_name.as_deref())
+    }
+}
+
+#[derive(Clone)]
+struct DeleteRangeHandler {
+    client: Client,
+    notify_only: bool,
+}
+
+#[async_trait]
+impl RangeTaskHandler for DeleteRangeHandler {
+    async fn handle(
+        &self,
+        cancellation: Cancellation,
+        range: (Vec<u8>, Vec<u8>),
+    ) -> (TaskStat, Result<()>) {
+        let mut stat = TaskStat::default();
+        let regions = region_stream_for_range(range, self.client.pd.clone());
+        futures::pin_mut!(regions);
+
+        while let Some(region) = regions.next().await {
+            if cancellation.is_cancelled() {
+                return (
+                    stat,
+                    Err(crate::Error::StringError("range task cancelled".to_owned())),
+                );
+            }
+            let ((start_key, end_key), _) = match region {
+                Ok(region) => region,
+                Err(error) => return (stat, Err(error)),
+            };
+            let range = BoundRange::from((start_key, end_key));
+            let mut request = new_delete_range_request(range);
+            request.notify_only = self.notify_only;
+            match self
+                .client
+                .plan(request)
+                .retry_multi_region_with_retry_backoffer(delete_range_retry_backoffer(
+                    cancellation.clone(),
+                ))
+                .merge(crate::request::Collect)
+                .plan()
+                .execute()
+                .await
+            {
+                Ok(completed_regions) => stat.completed_regions += completed_regions,
+                Err(error) => return (stat, Err(error)),
+            }
+        }
+        (stat, Ok(()))
     }
 }
 
@@ -486,7 +582,7 @@ mod latch_config_tests {
 
     #[test]
     fn delete_range_uses_client_go_per_region_retry_budget() {
-        let backoffer = delete_range_retry_backoffer();
+        let backoffer = delete_range_retry_backoffer(Cancellation::default());
         assert_eq!(
             backoffer.max_sleep_ms(),
             DELETE_RANGE_ONE_REGION_MAX_BACKOFF_MS

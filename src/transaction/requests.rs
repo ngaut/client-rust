@@ -1171,10 +1171,16 @@ impl Merge<kvrpcpb::DeleteRangeResponse> for Collect {
     type Out = usize;
 
     fn merge(&self, input: Vec<Result<kvrpcpb::DeleteRangeResponse>>) -> Result<Self::Out> {
-        input
-            .into_iter()
-            .collect::<Result<Vec<_>>>()
-            .map(|responses| responses.len())
+        let responses = input.into_iter().collect::<Result<Vec<_>>>()?;
+        for response in &responses {
+            if !response.error.is_empty() {
+                return Err(crate::Error::StringError(format!(
+                    "unexpected delete range err: {}",
+                    response.error
+                )));
+            }
+        }
+        Ok(responses.len())
     }
 }
 
@@ -1666,11 +1672,27 @@ mod tests {
     use crate::proto::errorpb;
     use crate::proto::kvrpcpb;
     use crate::request::plan::Merge;
+    use crate::request::Collect;
     use crate::request::CollectWithShard;
     use crate::request::ResponseWithShard;
     use crate::request::{ApiV1Codec, ApiV2Codec, KeyMode, KvRequest};
     use crate::store::Request;
     use crate::KvPair;
+
+    #[test]
+    fn source_delete_range_server_error_is_terminal() {
+        let error = Collect
+            .merge(vec![Ok(kvrpcpb::DeleteRangeResponse {
+                error: "delete failed".to_owned(),
+                ..Default::default()
+            })])
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "unexpected delete range err: delete failed"
+        );
+    }
 
     #[test]
     fn api_v2_decoder_runs_before_pessimistic_lock_errors_are_extracted() {
