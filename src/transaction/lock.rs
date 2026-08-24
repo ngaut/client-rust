@@ -241,6 +241,7 @@ async fn resolve_locks_with_context_inner(
 
     let mut live_locks = Vec::new();
     let mut lock_resolver = LockResolver::new(context);
+    let mut read_lite_cleanups = HashMap::new();
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
@@ -412,7 +413,8 @@ async fn resolve_locks_with_context_inner(
                     TransactionStatusKind::Committed(ts) => {
                         let commit_version = ts.version();
                         if let Some(read_lock_context) = read_lock_context {
-                            schedule_read_lock_cleanup(
+                            schedule_or_collect_read_lite_cleanup(
+                                &mut read_lite_cleanups,
                                 &lock,
                                 commit_version,
                                 pd_client.clone(),
@@ -435,7 +437,8 @@ async fn resolve_locks_with_context_inner(
                     }
                     TransactionStatusKind::RolledBack => {
                         if let Some(read_lock_context) = read_lock_context {
-                            schedule_read_lock_cleanup(
+                            schedule_or_collect_read_lite_cleanup(
+                                &mut read_lite_cleanups,
                                 &lock,
                                 0,
                                 pd_client.clone(),
@@ -466,7 +469,8 @@ async fn resolve_locks_with_context_inner(
 
         if let Some(commit_version) = commit_version {
             if let Some(read_lock_context) = read_lock_context {
-                schedule_read_lock_cleanup(
+                schedule_or_collect_read_lite_cleanup(
+                    &mut read_lite_cleanups,
                     &lock,
                     commit_version,
                     pd_client.clone(),
@@ -513,7 +517,56 @@ async fn resolve_locks_with_context_inner(
             }
         }
     }
+    for cleanup in read_lite_cleanups.into_values() {
+        schedule_read_lite_cleanup(
+            cleanup,
+            pd_client.clone(),
+            keyspace,
+            keyspace_name,
+            &lock_resolver.ctx,
+        )
+        .await;
+    }
     Ok(live_locks)
+}
+
+struct ReadLiteCleanup {
+    lock: kvrpcpb::LockInfo,
+    commit_version: u64,
+    keys: Vec<Vec<u8>>,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn schedule_or_collect_read_lite_cleanup(
+    cleanups: &mut HashMap<u64, ReadLiteCleanup>,
+    lock: &kvrpcpb::LockInfo,
+    commit_version: u64,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: &ResolveLocksContext,
+) {
+    if lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold {
+        let cleanup = cleanups
+            .entry(lock.lock_version)
+            .or_insert_with(|| ReadLiteCleanup {
+                lock: lock.clone(),
+                commit_version,
+                keys: Vec::new(),
+            });
+        debug_assert_eq!(cleanup.commit_version, commit_version);
+        cleanup.keys.push(lock.key.clone());
+    } else {
+        schedule_read_lock_cleanup(
+            lock,
+            commit_version,
+            pd_client,
+            keyspace,
+            keyspace_name,
+            context,
+        )
+        .await;
+    }
 }
 
 fn record_read_lock_status(
@@ -585,6 +638,157 @@ async fn schedule_read_lock_cleanup(
             });
         }
         Err(_) => resolve.await,
+    }
+}
+
+/// Resolve the collected lite keys once per current region. The source defers
+/// this work until every lock status is known so a read neither waits for
+/// cleanup nor sends one key-scoped ResolveLock RPC per encountered lock.
+#[allow(clippy::too_many_arguments)]
+async fn schedule_read_lite_cleanup(
+    cleanup: ReadLiteCleanup,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: &ResolveLocksContext,
+) {
+    let primary_lock = cleanup.lock.primary_lock.clone();
+    let start_version = cleanup.lock.lock_version;
+    let commit_version = cleanup.commit_version;
+    let is_txn_file = cleanup.lock.is_txn_file;
+    let keys = cleanup.keys;
+    let keyspace_name = keyspace_name.map(ToOwned::to_owned);
+    let rpc_interceptor = context.rpc_interceptor.clone();
+    let resource_group_name = context.resource_group_name.clone();
+    let resource_control = context.resource_control.clone();
+    let ru_details = context.ru_details.clone();
+    let resolve = async move {
+        let _ = resolve_lite_locks_with_retry_for_read_cleanup(
+            &keys,
+            &primary_lock,
+            start_version,
+            commit_version,
+            is_txn_file,
+            pd_client,
+            keyspace,
+            keyspace_name.as_deref(),
+            rpc_interceptor,
+            resource_group_name.as_deref(),
+            resource_control,
+            ru_details,
+            Backoff::no_jitter_backoff(2, 500, 87),
+        )
+        .await;
+    };
+
+    match ASYNC_READ_RESOLVE_LOCKS.clone().try_acquire_owned() {
+        Ok(permit) => {
+            tokio::spawn(async move {
+                let _permit = permit;
+                resolve.await;
+            });
+        }
+        Err(_) => resolve.await,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_lite_locks_with_retry_for_read_cleanup(
+    keys: &[Vec<u8>],
+    primary_lock: &[u8],
+    start_version: u64,
+    commit_version: u64,
+    is_txn_file: bool,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<&str>,
+    resource_control: Option<ResourceGroupControllerHandle>,
+    ru_details: Option<Arc<crate::RuDetails>>,
+    mut backoff: Backoff,
+) -> Result<()> {
+    // `resolveLock(lite=true)` skips its already-checked primary. A multi-key
+    // batch deliberately retains the primary, matching client-go's
+    // `resolveRegionLocks` path.
+    if keys.len() == 1 && keys[0] == primary_lock {
+        return Ok(());
+    }
+
+    loop {
+        let mut regions: HashMap<RegionVerId, (RegionStore, Vec<Vec<u8>>)> = HashMap::new();
+        for key in keys {
+            let store = pd_client.clone().store_for_key(&key.clone().into()).await?;
+            regions
+                .entry(store.region_with_leader.ver_id())
+                .or_insert_with(|| (store, Vec::new()))
+                .1
+                .push(key.clone());
+        }
+
+        let mut retry = false;
+        for (_, (store, region_keys)) in regions {
+            let mut request =
+                requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
+            request.keys = region_keys;
+            let plan_builder =
+                match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
+                    .keyspace_name_option(keyspace_name)
+                    .rpc_interceptor_option(rpc_interceptor.clone())
+                    .resource_group_option(resource_group_name)
+                    .resource_control_option(resource_control.clone())
+                    .ru_details_option(ru_details.clone())
+                    .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
+                    .single_region_with_store(store.clone())
+                    .await
+                {
+                    Ok(plan_builder) => plan_builder,
+                    Err(Error::LeaderNotFound { region }) => {
+                        pd_client.invalidate_region_cache(region).await;
+                        retry = true;
+                        break;
+                    }
+                    Err(err) => return Err(err),
+                };
+            match plan_builder.extract_error().plan().execute().await {
+                Ok(_) => {}
+                Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
+                    Some(Error::RegionError(error)) => {
+                        handle_region_error(pd_client.clone(), *error, store).await?;
+                        retry = true;
+                        break;
+                    }
+                    Some(Error::KeyError(error)) => return Err(Error::KeyError(error)),
+                    Some(error) => return Err(error),
+                    None => unreachable!(),
+                },
+                Err(error) if is_grpc_error(&error) => {
+                    pd_client
+                        .invalidate_region_cache(store.region_with_leader.ver_id())
+                        .await;
+                    invalidate_connection_for_error(
+                        pd_client.as_ref(),
+                        &error,
+                        store.region_with_leader.get_store_id().ok(),
+                    )
+                    .await;
+                    retry = true;
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if !retry {
+            return Ok(());
+        }
+        match backoff.next_delay_duration() {
+            Some(delay) => sleep(delay).await,
+            None => {
+                return Err(Error::StringError(
+                    "lite ResolveLock retry exhausted".to_owned(),
+                ))
+            }
+        }
     }
 }
 
@@ -1969,6 +2173,71 @@ mod tests {
         let (resolved, committed) = read_locks.snapshot();
         assert!(resolved.is_empty());
         assert_eq!(committed, [1]);
+    }
+
+    #[tokio::test]
+    async fn source_read_lite_cleanup_batches_transaction_keys_per_region() {
+        let cleanup_sent = Arc::new(tokio::sync::Notify::new());
+        let cleanup_sent_by_hook = Arc::clone(&cleanup_sent);
+        let cleanup_requests = Arc::new(AtomicUsize::new(0));
+        let cleanup_requests_by_hook = Arc::clone(&cleanup_requests);
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .is_some()
+                {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    assert_eq!(req.keys, [vec![1], vec![2]]);
+                    assert!(!req.is_async);
+                    cleanup_requests_by_hook.fetch_add(1, Ordering::SeqCst);
+                    cleanup_sent_by_hook.notify_one();
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        let txn_size = get_global_config().tikv_client.resolve_lock_lite_threshold - 1;
+        let read_locks = ReadLockContext::default();
+        let locks = vec![
+            kvrpcpb::LockInfo {
+                key: vec![1],
+                primary_lock: vec![0],
+                lock_version: 1,
+                txn_size,
+                ..Default::default()
+            },
+            kvrpcpb::LockInfo {
+                key: vec![2],
+                primary_lock: vec![0],
+                lock_version: 1,
+                txn_size,
+                ..Default::default()
+            },
+        ];
+
+        assert!(resolve_locks_for_read_with_context(
+            locks,
+            Timestamp::from_version(3),
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+            &read_locks,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        assert_eq!(read_locks.snapshot().1, [1]);
+        tokio::time::timeout(Duration::from_secs(1), cleanup_sent.notified())
+            .await
+            .expect("detached lite cleanup should send ResolveLock");
+        assert_eq!(cleanup_requests.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
