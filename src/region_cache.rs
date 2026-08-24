@@ -71,6 +71,9 @@ struct CachedRegion {
     /// cache lock, so this does not need client-go's atomic representation.
     sync_flags: u8,
     tiflash_cursor: Arc<AtomicUsize>,
+    /// Last forwarding proxy that completed successfully for this cached
+    /// region. Source prefers it before walking the remaining replicas.
+    proxy_store_id: Option<StoreId>,
 }
 
 impl CachedRegion {
@@ -86,6 +89,7 @@ impl CachedRegion {
             ttl: next_region_cache_ttl(now),
             sync_flags,
             tiflash_cursor: Arc::new(AtomicUsize::new(0)),
+            proxy_store_id: None,
         }
     }
 
@@ -2058,6 +2062,22 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             })
     }
 
+    pub(crate) async fn set_region_proxy_store(
+        &self,
+        ver_id: &RegionVerId,
+        proxy_store_id: Option<StoreId>,
+    ) -> bool {
+        self.region_cache
+            .write()
+            .await
+            .ver_id_to_region
+            .get_mut(ver_id)
+            .is_some_and(|region| {
+                region.proxy_store_id = proxy_store_id;
+                true
+            })
+    }
+
     pub(crate) async fn mark_region_delayed_reload(&self, ver_id: &RegionVerId) -> bool {
         self.region_cache
             .write()
@@ -2802,28 +2822,42 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     pub(crate) async fn proxy_for_unreachable_leader(
         &self,
         region: &RegionWithLeader,
+        selector_state: &ReplicaSelectorState,
     ) -> Result<Option<metapb::Peer>> {
         let Some(leader) = region.leader.as_ref() else {
             return Ok(None);
         };
         if self.store_liveness(leader.store_id) != Some(StoreLiveness::Unreachable) {
+            self.set_region_proxy_store(&region.ver_id(), None).await;
             return Ok(None);
         }
-        let proxy = self
-            .select_mixed_replica(
-                region,
-                &[],
-                &[],
-                &ReplicaSelectorState::default(),
-                MixedReplicaSelection {
-                    read_type: ReplicaReadType::Follower,
-                    leader_only: false,
-                    prefer_leader: false,
-                    labels_requested: false,
-                },
-            )
-            .await?
-            .filter(|peer| peer.id != leader.id);
+        let cached_proxy_store_id = self
+            .region_cache
+            .read()
+            .await
+            .ver_id_to_region
+            .get(&region.ver_id())
+            .and_then(|cached| cached.proxy_store_id);
+        let candidates = self
+            .replica_candidates(region, &[], &[], selector_state)
+            .await?;
+        let is_proxy_candidate = |peer: &&metapb::Peer| {
+            peer.id != leader.id
+                && candidates.iter().any(|candidate| {
+                    candidate.peer_id == peer.id && candidate.reachable && candidate.attempts == 0
+                })
+        };
+        let proxy = cached_proxy_store_id
+            .and_then(|store_id| {
+                region
+                    .region
+                    .peers
+                    .iter()
+                    .find(|peer| peer.store_id == store_id)
+                    .filter(is_proxy_candidate)
+                    .cloned()
+            })
+            .or_else(|| region.region.peers.iter().find(is_proxy_candidate).cloned());
         if proxy.is_none() {
             self.mark_region_reload_on_access(&region.ver_id()).await;
         }
@@ -4361,8 +4395,92 @@ mod test {
         assert_eq!(selected, region.leader.clone());
 
         assert!(cache.set_store_liveness(1, StoreLiveness::Unreachable));
-        let proxy = cache.proxy_for_unreachable_leader(&region).await.unwrap();
+        let proxy = cache
+            .proxy_for_unreachable_leader(&region, &ReplicaSelectorState::default())
+            .await
+            .unwrap();
         assert_eq!(proxy, Some(follower));
+    }
+
+    #[tokio::test]
+    async fn source_forwarding_prefers_cached_proxy_then_walks_untried_replicas() {
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        for store_id in 1..=3 {
+            cache.store_cache.write().unwrap().insert(
+                store_id,
+                CachedStore::new(metapb::Store {
+                    id: store_id,
+                    address: format!("store-{store_id}"),
+                    ..Default::default()
+                }),
+            );
+        }
+        let leader = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
+        };
+        let first_proxy = metapb::Peer {
+            id: 12,
+            store_id: 2,
+            ..Default::default()
+        };
+        let cached_proxy = metapb::Peer {
+            id: 13,
+            store_id: 3,
+            ..Default::default()
+        };
+        let mut region = region(1, vec![], vec![]);
+        region.region.peers = vec![leader.clone(), first_proxy.clone(), cached_proxy.clone()];
+        region.leader = Some(leader);
+        cache.add_region(region.clone()).await;
+        assert!(cache.set_store_liveness(1, StoreLiveness::Unreachable));
+
+        assert_eq!(
+            cache
+                .proxy_for_unreachable_leader(&region, &ReplicaSelectorState::default())
+                .await
+                .unwrap(),
+            Some(first_proxy.clone())
+        );
+        assert!(
+            cache
+                .set_region_proxy_store(&region.ver_id(), Some(cached_proxy.store_id))
+                .await
+        );
+        assert_eq!(
+            cache
+                .proxy_for_unreachable_leader(&region, &ReplicaSelectorState::default())
+                .await
+                .unwrap(),
+            Some(cached_proxy.clone())
+        );
+
+        let mut attempted = ReplicaSelectorState::default();
+        attempted.record_attempt(cached_proxy.id);
+        assert_eq!(
+            cache
+                .proxy_for_unreachable_leader(&region, &attempted)
+                .await
+                .unwrap(),
+            Some(first_proxy.clone())
+        );
+        attempted.record_attempt(first_proxy.id);
+        assert_eq!(
+            cache
+                .proxy_for_unreachable_leader(&region, &attempted)
+                .await
+                .unwrap(),
+            None
+        );
+        assert!(cache
+            .region_cache
+            .read()
+            .await
+            .ver_id_to_region
+            .get(&region.ver_id())
+            .unwrap()
+            .has_sync_flags(NEED_RELOAD_ON_ACCESS));
     }
 
     #[tokio::test]

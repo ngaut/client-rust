@@ -16,6 +16,7 @@ use crate::request::Plan;
 use crate::request::Process;
 use crate::request::ProcessResponse;
 use crate::request::ResolveLock;
+use crate::retry::RetryConfig;
 use crate::store::RegionStore;
 use crate::store::Request;
 use crate::Result;
@@ -61,6 +62,26 @@ macro_rules! impl_inner_shardable {
 
         fn record_replica_attempt(&mut self, peer_id: u64) {
             self.inner.record_replica_attempt(peer_id);
+        }
+
+        fn record_replica_attempted_time(&mut self, peer_id: u64, duration: std::time::Duration) {
+            self.inner.record_replica_attempted_time(peer_id, duration);
+        }
+
+        fn mark_replica_deadline_exceeded(&mut self, peer_id: u64) {
+            self.inner.mark_replica_deadline_exceeded(peer_id);
+        }
+
+        fn add_pending_backoff(&mut self, store_id: u64, config: RetryConfig, reason: String) {
+            self.inner.add_pending_backoff(store_id, config, reason);
+        }
+
+        fn take_pending_backoff(&mut self, store_id: u64) -> Option<(RetryConfig, String)> {
+            self.inner.take_pending_backoff(store_id)
+        }
+
+        fn largest_pending_backoff(&self) -> Option<(RetryConfig, String)> {
+            self.inner.largest_pending_backoff()
         }
 
         fn mark_retry_request(&mut self) {
@@ -163,6 +184,20 @@ pub trait Shardable {
     }
 
     fn record_replica_attempt(&mut self, _peer_id: u64) {}
+
+    fn record_replica_attempted_time(&mut self, _peer_id: u64, _duration: std::time::Duration) {}
+
+    fn mark_replica_deadline_exceeded(&mut self, _peer_id: u64) {}
+
+    fn add_pending_backoff(&mut self, _store_id: u64, _config: RetryConfig, _reason: String) {}
+
+    fn take_pending_backoff(&mut self, _store_id: u64) -> Option<(RetryConfig, String)> {
+        None
+    }
+
+    fn largest_pending_backoff(&self) -> Option<(RetryConfig, String)> {
+        None
+    }
 
     /// Source `RegionRequestSender` marks every resend in the wire context.
     /// Plans without a TiKV request retain a no-op implementation.
@@ -377,6 +412,28 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.replica_selector_state.record_attempt(peer_id);
     }
 
+    fn record_replica_attempted_time(&mut self, peer_id: u64, duration: std::time::Duration) {
+        self.replica_selector_state
+            .record_attempted_time(peer_id, duration);
+    }
+
+    fn mark_replica_deadline_exceeded(&mut self, peer_id: u64) {
+        self.replica_selector_state.mark_deadline_exceeded(peer_id);
+    }
+
+    fn add_pending_backoff(&mut self, store_id: u64, config: RetryConfig, reason: String) {
+        self.replica_selector_state
+            .add_pending_backoff(store_id, config, reason);
+    }
+
+    fn take_pending_backoff(&mut self, store_id: u64) -> Option<(RetryConfig, String)> {
+        self.replica_selector_state.take_pending_backoff(store_id)
+    }
+
+    fn largest_pending_backoff(&self) -> Option<(RetryConfig, String)> {
+        self.replica_selector_state.largest_pending_backoff()
+    }
+
     fn mark_retry_request(&mut self) {
         self.request.set_is_retry_request();
         if let Some(timeout) = self.retry_request_timeout {
@@ -421,9 +478,7 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     }
 
     fn record_server_busy(&mut self, peer_id: u64) {
-        if self.replica_read_config.busy_threshold_ms != 0 {
-            self.replica_selector_state.record_server_busy(peer_id);
-        }
+        self.replica_selector_state.record_server_busy(peer_id);
     }
 
     fn force_leader_after_flashback(&mut self) {

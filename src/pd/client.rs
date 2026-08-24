@@ -20,6 +20,7 @@ use crate::pd::codec::{CodecPdClient, PdRegionCodec};
 use crate::pd::retry::RetryClientTrait;
 use crate::pd::Cluster;
 use crate::pd::RetryClient;
+use crate::proto::errorpb;
 use crate::proto::keyspacepb;
 use crate::proto::kvrpcpb;
 use crate::proto::metapb;
@@ -332,6 +333,10 @@ pub trait PdClient: Send + Sync + 'static {
     /// do not own a region/store cache retain a no-op default.
     fn record_server_load(&self, _store_id: StoreId, _estimated_wait_ms: u32) {}
 
+    /// Remembers the physical proxy that successfully forwarded a logical
+    /// leader request. Custom clients without a region cache retain a no-op.
+    async fn record_forwarding_proxy(&self, _ver_id: RegionVerId, _store_id: StoreId) {}
+
     /// Handles a TiKV transport failure after a physical route has been
     /// selected. Returning `true` retains the legacy generic cache eviction;
     /// the concrete PD client checks source store liveness and keeps the
@@ -611,7 +616,11 @@ where
         Ok(route)
     }
 
-    async fn map_leader_route(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
+    async fn map_leader_route(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        selector_state: &ReplicaSelectorState,
+    ) -> Result<RegionStore> {
         let leader = region
             .leader
             .clone()
@@ -620,7 +629,7 @@ where
             })?;
         let proxy = if self.enable_forwarding {
             self.region_cache
-                .proxy_for_unreachable_leader(&region)
+                .proxy_for_unreachable_leader(&region, selector_state)
                 .await?
         } else {
             None
@@ -704,7 +713,8 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
-        self.map_leader_route(region).await
+        self.map_leader_route(region, &ReplicaSelectorState::default())
+            .await
     }
 
     async fn on_send_failure(self: Arc<Self>, route: Option<&RegionStore>) -> bool {
@@ -778,7 +788,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                     == Some(StoreLiveness::Reachable)
                 {
                     return self
-                        .map_leader_route(region)
+                        .map_leader_route(region, &selector_state)
                         .await
                         .map(|route| route.with_busy_threshold(busy_threshold_ms));
                 }
@@ -811,24 +821,41 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                         // with leader-read wire context after the leader is
                         // exhausted or returns a hintless NotLeader; it is a
                         // probe, not a replica read.
-                        return Ok(self
+                        let route = self
                             .map_region_to_route(region, follower, None)
                             .await?
-                            .with_force_leader_read()
-                            .with_busy_threshold(busy_threshold_ms));
+                            .with_busy_threshold(busy_threshold_ms);
+                        return Ok(
+                            if source_leader_fallback_uses_replica_read(&selector_state, leader.id)
+                            {
+                                // A caller-configured read deadline switches the
+                                // source retry to a genuine follower read.
+                                route
+                            } else {
+                                // Ordinary exhaustion and hintless NotLeader use
+                                // the follower only as a leader-read probe.
+                                route.with_force_leader_read()
+                            },
+                        );
                     }
-                    return Err(crate::Error::StringError(
-                        "no eligible follower after leader fallback".to_owned(),
-                    ));
+                    if !selector_state.has_deadline_exceeded() {
+                        self.region_cache
+                            .invalidate_region_cache(region.ver_id())
+                            .await;
+                    }
+                    return Err(selector_exhausted_error());
                 }
                 // Source `leaderOnly` still applies after
                 // `ReplicaSelectLeaderStrategy` exhausts the leader. Mixed
                 // fallback has no eligible candidate in that mode, so return
                 // to the sender/cache refresh path rather than resending the
                 // known exhausted leader.
-                return Err(crate::Error::StringError(
-                    "no eligible replica after exhausted leader".to_owned(),
-                ));
+                if !selector_state.has_deadline_exceeded() {
+                    self.region_cache
+                        .invalidate_region_cache(region.ver_id())
+                        .await;
+                }
+                return Err(selector_exhausted_error());
             }
             if is_read_request && busy_threshold_ms != 0 {
                 if let Some(leader) = region.leader.as_ref() {
@@ -854,9 +881,12 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                                 .await
                                 .map(|route| route.with_busy_threshold(busy_threshold_ms));
                         }
-                        return self.map_region_to_store(region).await.map(|route| {
-                            route.with_busy_threshold(0).with_busy_threshold_disabled()
-                        });
+                        return self
+                            .map_leader_route(region, &selector_state)
+                            .await
+                            .map(|route| {
+                                route.with_busy_threshold(0).with_busy_threshold_disabled()
+                            });
                     }
                 }
             }
@@ -892,7 +922,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                 }
             }
             return self
-                .map_region_to_store(region)
+                .map_leader_route(region, &selector_state)
                 .await
                 .map(|route| route.with_busy_threshold(busy_threshold_ms));
         }
@@ -930,9 +960,18 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                 },
             )
             .await?
-            .ok_or_else(|| {
-                crate::Error::StringError("no eligible TiKV replica for request".to_owned())
-            })?;
+            .ok_or_else(selector_exhausted_error);
+        let peer = match peer {
+            Ok(peer) => peer,
+            Err(error) => {
+                if !selector_state.has_deadline_exceeded() {
+                    self.region_cache
+                        .invalidate_region_cache(region.ver_id())
+                        .await;
+                }
+                return Err(error);
+            }
+        };
         let stale_read = config.stale_read
             && !region
                 .leader
@@ -1040,6 +1079,12 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     fn record_server_load(&self, store_id: StoreId, estimated_wait_ms: u32) {
         self.region_cache
             .record_server_load(store_id, estimated_wait_ms);
+    }
+
+    async fn record_forwarding_proxy(&self, ver_id: RegionVerId, store_id: StoreId) {
+        self.region_cache
+            .set_region_proxy_store(&ver_id, Some(store_id))
+            .await;
     }
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId) {
@@ -1363,7 +1408,21 @@ fn source_leader_falls_back_to_follower(
     selector_state: &ReplicaSelectorState,
     leader_peer_id: u64,
 ) -> bool {
-    selector_state.has_no_leader(leader_peer_id) || selector_state.attempts(leader_peer_id) > 0
+    !selector_state.is_leader_candidate(leader_peer_id)
+}
+
+fn source_leader_fallback_uses_replica_read(
+    selector_state: &ReplicaSelectorState,
+    leader_peer_id: u64,
+) -> bool {
+    selector_state.deadline_exceeded(leader_peer_id)
+}
+
+fn selector_exhausted_error() -> crate::Error {
+    crate::Error::RegionError(Box::new(errorpb::Error {
+        epoch_not_match: Some(errorpb::EpochNotMatch::default()),
+        ..Default::default()
+    }))
 }
 
 fn make_key_range(start_key: Vec<u8>, end_key: Vec<u8>) -> kvrpcpb::KeyRange {
@@ -1393,6 +1452,10 @@ pub mod test {
         let mut selector_state = ReplicaSelectorState::default();
         assert!(!source_leader_falls_back_to_follower(&selector_state, 11));
 
+        for _ in 0..9 {
+            selector_state.record_attempt(11);
+        }
+        assert!(!source_leader_falls_back_to_follower(&selector_state, 11));
         selector_state.record_attempt(11);
         assert!(source_leader_falls_back_to_follower(&selector_state, 11));
 
@@ -1400,6 +1463,13 @@ pub mod test {
         hintless.mark_no_leader(11);
         assert!(source_leader_falls_back_to_follower(&hintless, 11));
         assert!(!source_leader_falls_back_to_follower(&hintless, 12));
+
+        let mut deadline = ReplicaSelectorState::default();
+        deadline.record_attempt(11);
+        deadline.mark_deadline_exceeded(11);
+        assert!(source_leader_falls_back_to_follower(&deadline, 11));
+        assert!(source_leader_fallback_uses_replica_read(&deadline, 11));
+        assert!(!source_leader_fallback_uses_replica_read(&hintless, 11));
     }
 
     #[test]

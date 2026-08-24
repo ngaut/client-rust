@@ -332,6 +332,9 @@ impl RetryBackoffer {
     pub(crate) fn max_sleep_ms(&self) -> u64 {
         self.max_sleep_ms
     }
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
     pub fn excluded_sleep_ms(&self) -> u64 {
         self.excluded_sleep_ms
     }
