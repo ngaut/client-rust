@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
 
 use fail::fail_point;
 use log::debug;
@@ -48,6 +49,8 @@ pub(crate) fn format_key_for_log(key: &[u8]) -> String {
 
 /// client-go's `txnlock.ResolvedCacheSize`.
 const RESOLVED_CACHE_SIZE: usize = 2048;
+/// client-go `internal/client.MaxWriteExecutionTime`.
+const LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION: Duration = Duration::from_secs(20);
 
 #[derive(Default)]
 struct ResolvedStatusCache {
@@ -276,6 +279,7 @@ async fn resolve_lock_with_retry(
                 .resource_group_option(resource_group_name)
                 .resource_control_option(resource_control.clone())
                 .ru_details_option(ru_details.clone())
+                .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
                 .single_region_with_store(store.clone())
                 .await
             {
@@ -638,6 +642,7 @@ impl LockResolver {
             .resource_group_option(self.ctx.resource_group_name.as_deref())
             .resource_control_option(self.ctx.resource_control.clone())
             .ru_details_option(self.ctx.ru_details.clone())
+            .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
             .extract_error()
@@ -683,6 +688,7 @@ impl LockResolver {
             .resource_group_option(self.ctx.resource_group_name.as_deref())
             .resource_control_option(self.ctx.resource_control.clone())
             .ru_details_option(self.ctx.ru_details.clone())
+            .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .merge(Collect)
@@ -706,6 +712,7 @@ impl LockResolver {
             .resource_group_option(self.ctx.resource_group_name.as_deref())
             .resource_control_option(self.ctx.resource_control.clone())
             .ru_details_option(self.ctx.ru_details.clone())
+            .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
             .single_region_with_store(store.clone())
             .await?
             .extract_error()
@@ -1074,6 +1081,7 @@ mod tests {
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
                     assert_eq!(context.keyspace_id, 7);
                     assert_eq!(context.keyspace_name, "tenant");
+                    assert_eq!(context.max_execution_duration_ms, 20_000);
                     assert_eq!(
                         context
                             .resource_control_context
@@ -1095,6 +1103,7 @@ mod tests {
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
                     assert_eq!(context.keyspace_id, 7);
                     assert_eq!(context.keyspace_name, "tenant");
+                    assert_eq!(context.max_execution_duration_ms, 20_000);
                     assert_eq!(
                         context
                             .resource_control_context
