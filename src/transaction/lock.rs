@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex as StdMutex;
@@ -25,6 +26,7 @@ use crate::interceptor::RpcInterceptorChain;
 use crate::kv::HexRepr;
 use crate::pd::PdClient;
 use crate::resource_control::ResourceGroupControllerHandle;
+use crate::stats;
 
 use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
@@ -633,15 +635,7 @@ async fn schedule_read_lock_cleanup(
         .await;
     };
 
-    match ASYNC_READ_RESOLVE_LOCKS.clone().try_acquire_owned() {
-        Ok(permit) => {
-            tokio::spawn(async move {
-                let _permit = permit;
-                resolve.await;
-            });
-        }
-        Err(_) => resolve.await,
-    }
+    schedule_read_cleanup_task(resolve, "read_resolve", "read_async_resolve_fallback").await;
 }
 
 /// Resolve the collected lite keys once per current region. The source defers
@@ -685,15 +679,7 @@ async fn schedule_read_lite_cleanup(
         .await;
     };
 
-    match ASYNC_READ_RESOLVE_LOCKS.clone().try_acquire_owned() {
-        Ok(permit) => {
-            tokio::spawn(async move {
-                let _permit = permit;
-                resolve.await;
-            });
-        }
-        Err(_) => resolve.await,
-    }
+    schedule_read_cleanup_task(resolve, "read_resolve", "read_async_resolve_fallback").await;
 }
 
 /// Expired async-commit recovery determines the full transaction outcome, so
@@ -737,14 +723,34 @@ async fn schedule_read_async_commit_cleanup(
         .await;
     };
 
+    schedule_read_cleanup_task(
+        resolve,
+        "resolve_async_commit",
+        "async_resolve_async_commit_fallback",
+    )
+    .await;
+}
+
+async fn schedule_read_cleanup_task<F>(
+    resolve: F,
+    task_kind: &'static str,
+    fallback_action: &'static str,
+) where
+    F: Future<Output = ()> + Send + 'static,
+{
     match ASYNC_READ_RESOLVE_LOCKS.clone().try_acquire_owned() {
         Ok(permit) => {
+            stats::add_lock_resolver_async_running_tasks(task_kind, 1);
             tokio::spawn(async move {
                 let _permit = permit;
                 resolve.await;
+                stats::add_lock_resolver_async_running_tasks(task_kind, -1);
             });
         }
-        Err(_) => resolve.await,
+        Err(_) => {
+            stats::increment_lock_resolver_action(fallback_action);
+            resolve.await;
+        }
     }
 }
 
@@ -2405,6 +2411,54 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), cleanup_sent.notified())
             .await
             .expect("detached read cleanup should send ResolveLock");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn source_read_cleanup_metrics_track_running_tasks_and_fallbacks() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let started_by_task = Arc::clone(&started);
+        let release = Arc::new(tokio::sync::Notify::new());
+        let release_by_task = Arc::clone(&release);
+        schedule_read_cleanup_task(
+            async move {
+                started_by_task.notify_one();
+                release_by_task.notified().await;
+            },
+            "read_resolve",
+            "read_async_resolve_fallback",
+        )
+        .await;
+        tokio::time::timeout(Duration::from_secs(1), started.notified())
+            .await
+            .expect("detached cleanup task should start");
+        assert_eq!(
+            crate::stats::lock_resolver_async_running_tasks("read_resolve"),
+            1.0
+        );
+        release.notify_one();
+        for _ in 0..10 {
+            if crate::stats::lock_resolver_async_running_tasks("read_resolve") == 0.0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            crate::stats::lock_resolver_async_running_tasks("read_resolve"),
+            0.0
+        );
+
+        let permits = ASYNC_READ_RESOLVE_LOCKS
+            .clone()
+            .try_acquire_many_owned(ASYNC_READ_RESOLVE_LOCK_LIMIT as u32)
+            .expect("test owns every cleanup permit");
+        let before = crate::stats::lock_resolver_action_count("read_async_resolve_fallback");
+        schedule_read_cleanup_task(async {}, "read_resolve", "read_async_resolve_fallback").await;
+        assert_eq!(
+            crate::stats::lock_resolver_action_count("read_async_resolve_fallback"),
+            before + 1
+        );
+        drop(permits);
     }
 
     #[test]
