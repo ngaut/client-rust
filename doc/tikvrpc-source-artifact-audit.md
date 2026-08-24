@@ -74,7 +74,7 @@ All 74 Go files importing `tikvrpc` were assigned; completion of this foundation
 | API codec | `internal/apicodec/{codec.go,codec_test.go,codec_v1.go,codec_v2.go,codec_v2_test.go}`; already complete and consumes typed command/context transforms. |
 | Transport | `internal/client/{client.go,client_async.go,client_async_test.go,client_batch.go,client_collapse.go,client_fail_test.go,client_interceptor.go,client_interceptor_test.go,client_test.go,conn_pool.go}`; already complete and owns pools, batch streams, dispatch, close, and observability. |
 | Internal request plumbing | `internal/kvrpc/batch.go`; retains its independent ledger status. `internal/mockstore/mocktikv/rpc.go` remains with the concrete mock-store package. |
-| Locate/routing | `internal/locate/{metrics_collector.go,metrics_collector_test.go,region_cache.go,region_cache_test.go,region_request.go,region_request3_test.go,region_request_state_test.go,region_request_test.go,replica_selector.go,replica_selector_test.go,store_cache.go}`; the package remains non-complete and owns selection/retry/ResponseExt integration. |
+| Locate/routing | `internal/locate/{metrics_collector.go,metrics_collector_test.go,region_cache.go,region_cache_test.go,region_request.go,region_request3_test.go,region_request_state_test.go,region_request_test.go,replica_selector.go,replica_selector_test.go,store_cache.go}`; now complete under its own receipt and owns selection/retry/ResponseExt integration. |
 | Resource control | `internal/resourcecontrol/{resource_control.go,resource_control_test.go}`; already complete and consumes request/response size/classification/detail surfaces. |
 | High-level raw/store | `rawkv/rawkv.go`; `tikv/{gc.go,interface.go,kv.go,kv_test.go,region.go,split_region.go,test_probe.go,test_util.go}`; their ledger rows remain non-complete. |
 | Range and lock | `txnkv/rangetask/delete_range.go` is already complete; `txnkv/txnlock/lock_resolver.go` remains non-complete. |
@@ -85,4 +85,4 @@ All 74 Go files importing `tikvrpc` were assigned; completion of this foundation
 
 ## Validation boundary
 
-Package behavior is deterministic or already exercised through the completed loopback transport package. No live TiKV/PD cluster is required for this receipt. The pinned Go tests were inspected but cannot be re-executed on this host because no Go toolchain is installed. Final cross-client live-cluster behavior remains mandatory for the unfinished locate, raw, snapshot, transaction, and high-level `tikv` packages.
+Package behavior is deterministic or already exercised through the completed loopback transport and locate packages. No live TiKV/PD cluster is required for this receipt. The pinned Go tests were inspected but cannot be re-executed on this host because no Go toolchain is installed. Final cross-client live-cluster behavior remains mandatory for the unfinished raw, snapshot, transaction, and high-level `tikv` packages.
