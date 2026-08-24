@@ -5,6 +5,7 @@ use std::sync::Arc;
 use log::debug;
 use log::info;
 
+use crate::async_util::Cancellation;
 use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;
 use crate::pd::PdClient;
@@ -19,6 +20,7 @@ use crate::request::NoTarget;
 use crate::request::Plan;
 use crate::request::PlanBuilder;
 use crate::request::{build_keyspace_name, Keyspace};
+use crate::retry::RetryBackoffer;
 use crate::timestamp::TimestampExt;
 use crate::transaction::latch::LatchesScheduler;
 use crate::transaction::lock::ResolveLocksOptions;
@@ -43,6 +45,14 @@ pub use crate::proto::kvrpcpb::LockInfo as ProtoLockInfo;
 
 // FIXME: cargo-culted value
 const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
+const DELETE_RANGE_ONE_REGION_MAX_BACKOFF_MS: u64 = 100_000;
+
+fn delete_range_retry_backoffer() -> RetryBackoffer {
+    RetryBackoffer::new(
+        Cancellation::default(),
+        DELETE_RANGE_ONE_REGION_MAX_BACKOFF_MS,
+    )
+}
 
 /// The TiKV transactional `Client` is used to interact with TiKV using transactional requests.
 ///
@@ -415,7 +425,7 @@ impl Client {
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let request = new_delete_range_request(range);
         self.plan(request)
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region_with_retry_backoffer(delete_range_retry_backoffer())
             .merge(crate::request::Collect)
             .plan()
             .execute()
@@ -472,5 +482,15 @@ mod latch_config_tests {
 
         let valid = Config::default().with_txn_local_latches(7);
         assert!(transaction_latches(&valid).unwrap().is_some());
+    }
+
+    #[test]
+    fn delete_range_uses_client_go_per_region_retry_budget() {
+        let backoffer = delete_range_retry_backoffer();
+        assert_eq!(
+            backoffer.max_sleep_ms(),
+            DELETE_RANGE_ONE_REGION_MAX_BACKOFF_MS
+                * (backoffer.variables().backoff_weight.max(1) as u64)
+        );
     }
 }

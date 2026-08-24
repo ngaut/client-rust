@@ -328,6 +328,10 @@ impl RetryBackoffer {
     pub fn total_sleep_ms(&self) -> u64 {
         self.total_sleep_ms
     }
+
+    pub(crate) fn max_sleep_ms(&self) -> u64 {
+        self.max_sleep_ms
+    }
     pub fn excluded_sleep_ms(&self) -> u64 {
         self.excluded_sleep_ms
     }
