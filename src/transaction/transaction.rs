@@ -2334,6 +2334,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transactional_read_retries_with_client_go_lock_hints() {
+        let get_attempts = Arc::new(AtomicUsize::new(0));
+        let get_attempts_by_hook = Arc::clone(&get_attempts);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::GetRequest>() {
+                    let attempt = get_attempts_by_hook.fetch_add(1, Ordering::SeqCst);
+                    let context = req.context.as_ref().unwrap();
+                    if attempt == 0 {
+                        assert!(context.resolved_locks.is_empty());
+                        assert!(context.committed_locks.is_empty());
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: b"read".to_vec(),
+                                    primary_lock: b"read".to_vec(),
+                                    lock_version: 1,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    assert_eq!(context.committed_locks, [1]);
+                    assert!(context.resolved_locks.is_empty());
+                    return Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request while resolving a transactional read lock");
+            },
+        )));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(3),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        assert_eq!(txn.get("read".to_owned()).await.unwrap(), Some(Vec::new()));
+        assert_eq!(get_attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
     async fn transaction_rpc_interceptor_wraps_each_commit_rpc() {
         let intercepted = Arc::new(Mutex::new(Vec::new()));
         let observed = Arc::clone(&intercepted);
