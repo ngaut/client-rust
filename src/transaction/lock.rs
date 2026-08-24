@@ -157,6 +157,12 @@ pub(crate) async fn resolve_locks_with_context(
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
     reject_shared_locks(&locks)?;
+    // client-go ResolveLocksWithOpts returns before consulting the oracle when
+    // no locks were supplied. This also keeps an empty retry path independent
+    // of PD availability.
+    if locks.is_empty() {
+        return Ok(Vec::new());
+    }
     let ts = pd_client.clone().get_timestamp().await?;
     let caller_start_ts = timestamp.version();
     let current_ts = ts.version();
