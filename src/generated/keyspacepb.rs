@@ -2,8 +2,6 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyspaceMeta {
-    #[prost(uint32, tag = "1")]
-    pub id: u32,
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
     #[prost(enumeration = "KeyspaceState", tag = "3")]
@@ -17,6 +15,21 @@ pub struct KeyspaceMeta {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
+    #[prost(oneof = "keyspace_meta::Keyspace", tags = "1, 8")]
+    pub keyspace: ::core::option::Option<keyspace_meta::Keyspace>,
+}
+/// Nested message and enum types in `KeyspaceMeta`.
+pub mod keyspace_meta {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should read keyspace_identity instead.
+        #[prost(uint32, tag = "1")]
+        Id(u32),
+        /// Canonical V3 keyspace identity.
+        #[prost(message, tag = "8")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
