@@ -34,7 +34,8 @@ use crate::request::{KvRequest, StoreRequest};
 use crate::retry::{
     RetryBackoffer, RetryConfig, BO_IS_WITNESS, BO_MAX_REGION_NOT_INITIALIZED,
     BO_MAX_TS_NOT_SYNCED, BO_REGION_MISS, BO_REGION_RECOVERY_IN_PROGRESS, BO_REGION_SCHEDULING,
-    BO_STALE_CMD, BO_TIFLASH_RPC, BO_TIKV_DISK_FULL, BO_TIKV_RPC, BO_TIKV_SERVER_BUSY,
+    BO_STALE_CMD, BO_TIFLASH_RPC, BO_TIFLASH_SERVER_BUSY, BO_TIKV_DISK_FULL, BO_TIKV_RPC,
+    BO_TIKV_SERVER_BUSY,
 };
 use crate::stats::tikv_stats;
 use crate::store::HasRegionError;
@@ -771,6 +772,17 @@ fn source_transport_backoff_config(route: Option<&RegionStore>) -> RetryConfig {
         .unwrap_or(BO_TIKV_RPC)
 }
 
+/// Source `onRegionError` also distinguishes a TiFlash physical destination
+/// for a server-busy reply. This path has no route absence because it runs
+/// after the request has been dispatched to a concrete region store.
+fn source_server_busy_backoff_config(route: &RegionStore) -> RetryConfig {
+    route
+        .physical_endpoint_type
+        .is_tiflash_related()
+        .then_some(BO_TIFLASH_SERVER_BUSY)
+        .unwrap_or(BO_TIKV_SERVER_BUSY)
+}
+
 /// `replicaSelector.onRegionError` handles stale-command replies by selecting
 /// again without waiting. Server-busy uses the narrower policy above.
 fn source_fast_selector_retry(error: &errorpb::Error, fast_server_busy_retry: bool) -> bool {
@@ -955,11 +967,13 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         Ok(RegionErrorRetry::Backoff(BO_STALE_CMD))
     } else if let Some(server_is_busy) = e.server_is_busy.as_ref() {
         if server_is_busy.estimated_wait_ms == 0 {
-            if let Some(health_status) = region_store.health_status {
+            if let Some(health_status) = region_store.health_status.as_ref() {
                 health_status.mark_already_slow();
             }
         }
-        Ok(RegionErrorRetry::Backoff(BO_TIKV_SERVER_BUSY))
+        Ok(RegionErrorRetry::Backoff(
+            source_server_busy_backoff_config(&region_store),
+        ))
     } else if e.max_timestamp_not_synced.is_some() {
         Ok(RegionErrorRetry::Backoff(BO_MAX_TS_NOT_SYNCED))
     } else if e.region_not_initialized.is_some() {
@@ -1908,6 +1922,26 @@ mod test {
         assert_eq!(
             source_transport_backoff_config(Some(&tiflash_compute)),
             BO_TIFLASH_RPC
+        );
+    }
+
+    #[test]
+    fn source_server_busy_uses_tiflash_retry_class_only_for_tiflash_endpoints() {
+        let region = region_store();
+        assert_eq!(
+            source_server_busy_backoff_config(&region),
+            BO_TIKV_SERVER_BUSY
+        );
+        let tiflash = region.with_physical_store(1, crate::store::EndpointType::TiFlash);
+        assert_eq!(
+            source_server_busy_backoff_config(&tiflash),
+            BO_TIFLASH_SERVER_BUSY
+        );
+        let tiflash_compute =
+            region_store().with_physical_store(1, crate::store::EndpointType::TiFlashCompute);
+        assert_eq!(
+            source_server_busy_backoff_config(&tiflash_compute),
+            BO_TIFLASH_SERVER_BUSY
         );
     }
 
