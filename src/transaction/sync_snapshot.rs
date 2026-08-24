@@ -30,6 +30,11 @@ impl SyncSnapshot {
         self.inner.set_sample_step(sample_step);
     }
 
+    /// Return only keys from subsequent snapshot scans.
+    pub fn set_key_only(&mut self, key_only: bool) {
+        self.inner.set_key_only(key_only);
+    }
+
     /// Control whether TiKV should bypass cache population for subsequent
     /// snapshot reads.
     pub fn set_not_fill_cache(&mut self, not_fill_cache: bool) {

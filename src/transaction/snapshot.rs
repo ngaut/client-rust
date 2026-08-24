@@ -97,6 +97,12 @@ impl Snapshot {
         self.transaction.set_sample_step(sample_step);
     }
 
+    /// Return only keys from subsequent snapshot scans, matching client-go
+    /// `KVSnapshot.SetKeyOnly`.
+    pub fn set_key_only(&mut self, key_only: bool) {
+        self.transaction.set_snapshot_key_only(key_only);
+    }
+
     /// Control whether TiKV should bypass cache population for subsequent
     /// snapshot reads, matching client-go `KVSnapshot.SetNotFillCache`.
     pub fn set_not_fill_cache(&mut self, not_fill_cache: bool) {

@@ -112,6 +112,9 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// Number of keys TiKV skips after each scan result. Zero disables
     /// sampling, matching client-go `KVSnapshot.sampleStep`.
     sample_step: u32,
+    /// Forces TiKV scan requests to return keys without values, matching
+    /// client-go `KVSnapshot.keyOnly`.
+    snapshot_key_only: bool,
     /// Snapshot-only request-context settings retained through physical read
     /// retries, matching client-go `KVSnapshot`.
     not_fill_cache: bool,
@@ -182,6 +185,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
             sample_step: 0,
+            snapshot_key_only: false,
             not_fill_cache: false,
             isolation_level: kvrpcpb::IsolationLevel::Si,
             task_id: 0,
@@ -245,6 +249,10 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub(crate) fn set_sample_step(&mut self, sample_step: u32) {
         self.sample_step = sample_step;
+    }
+
+    pub(crate) fn set_snapshot_key_only(&mut self, key_only: bool) {
+        self.snapshot_key_only = key_only;
     }
 
     pub(crate) fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
@@ -1131,6 +1139,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
         let sample_step = self.sample_step;
+        let key_only = key_only || self.snapshot_key_only;
         let not_fill_cache = self.not_fill_cache;
         let isolation_level = self.isolation_level;
         let task_id = self.task_id;
@@ -2336,6 +2345,34 @@ mod tests {
             Keyspace::Disable,
         );
         transaction.set_sample_step(3);
+
+        let pairs: Vec<_> = transaction
+            .scan(b"a".to_vec()..b"b".to_vec(), 1)
+            .await
+            .unwrap()
+            .collect();
+
+        assert!(pairs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_key_only_forces_scan_requests_to_omit_values() {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::ScanRequest>()
+                    .expect("snapshot scan should dispatch ScanRequest");
+                assert!(request.key_only);
+                Ok(Box::new(kvrpcpb::ScanResponse::default()) as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_snapshot_key_only(true);
 
         let pairs: Vec<_> = transaction
             .scan(b"a".to_vec()..b"b".to_vec(), 1)
