@@ -12,14 +12,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use futures::StreamExt;
 use log::info;
 use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
 use tokio::task::JoinSet;
 
 use crate::async_util::Cancellation;
 use crate::pd::PdClient;
-use crate::store::region_stream_for_range;
 use crate::Result;
 
 pub(crate) const DEFAULT_REGIONS_PER_TASK: usize = 128;
@@ -157,19 +155,16 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
             ));
         }
 
-        let tasks = region_stream_for_range((start_key, end_key), self.pd_client.clone())
-            .map(|result| result.map(|(range, _)| range))
-            .chunks(self.regions_per_task);
-        futures::pin_mut!(tasks);
-
         let started_at = Instant::now();
         let mut progress_ticker = tokio::time::interval(self.stat_log_interval);
         // Tokio's first interval tick is immediate, unlike Go's `NewTicker`.
         progress_ticker.tick().await;
         let mut stop_producer = stop.subscribe();
+        let mut next_key = start_key;
         let producer_result = loop {
-            let next_ranges = tokio::select! {
-                next_ranges = tasks.next() => next_ranges,
+            let load_key = next_key.clone().into();
+            let loaded_regions = tokio::select! {
+                loaded = self.pd_client.batch_load_regions_from_key(&load_key, self.regions_per_task) => loaded,
                 _ = progress_ticker.tick() => {
                     info!(
                         "range task in progress; name={}, elapsed_ms={}, completed_regions={}",
@@ -180,16 +175,20 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
                     continue;
                 }
             };
-            let Some(ranges) = next_ranges else {
-                break Ok(());
-            };
-            let ranges = match ranges.into_iter().collect::<Result<Vec<_>>>() {
-                Ok(ranges) => ranges,
+            let regions = match loaded_regions {
+                Ok(regions) => regions,
                 Err(error) => break Err(error),
             };
-            let first = ranges.first().expect("region task chunk cannot be empty");
-            let last = ranges.last().expect("region task chunk cannot be empty");
-            let task = (first.0.clone(), last.1.clone());
+            let mut task_end: Vec<u8> = regions
+                .last()
+                .expect("batch-loaded region list cannot be empty")
+                .end_key()
+                .into();
+            let is_last = task_end.is_empty() || (!end_key.is_empty() && task_end >= end_key);
+            if is_last {
+                task_end = end_key.clone();
+            }
+            let task = (next_key.clone(), task_end.clone());
             let push_started = Instant::now();
             let sent = tokio::select! {
                 result = sender.send(task) => Some(result),
@@ -202,6 +201,10 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
             if sent.is_err() {
                 break Ok(());
             }
+            if is_last {
+                break Ok(());
+            }
+            next_key = task_end;
         };
         drop(sender);
 
