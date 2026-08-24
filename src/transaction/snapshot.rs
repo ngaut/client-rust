@@ -1,11 +1,14 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
+use std::ops::Bound;
 use std::time::Duration;
 
 use derive_new::new;
 use log::{debug, trace};
 
+use crate::pd::{PdClient, PdRpcClient};
 use crate::BoundRange;
 use crate::GetOption;
 use crate::Key;
@@ -26,11 +29,95 @@ use crate::{ReplicaReadAdjuster, ReplicaReadConfig, ReplicaReadType};
 ///
 /// See the [Transaction](struct@crate::Transaction) docs for more information on the methods.
 #[derive(new)]
-pub struct Snapshot {
-    transaction: Transaction,
+pub struct Snapshot<PdC: PdClient = PdRpcClient> {
+    transaction: Transaction<PdC>,
 }
 
-impl Snapshot {
+/// Stateful counterpart of client-go's `txnkv/txnsnapshot.Scanner`.
+///
+/// The iterator borrows its snapshot for its lifetime and fetches at most one
+/// configured scanner batch whenever its local buffer becomes empty.
+pub struct SnapshotIterator<'a, PdC: PdClient = PdRpcClient> {
+    snapshot: &'a mut Snapshot<PdC>,
+    range: BoundRange,
+    reverse: bool,
+    batch_size: u32,
+    buffered: VecDeque<KvPair>,
+    exhausted: bool,
+    valid: bool,
+}
+
+impl<'a, PdC: PdClient> SnapshotIterator<'a, PdC> {
+    fn new(snapshot: &'a mut Snapshot<PdC>, range: BoundRange, reverse: bool) -> Self {
+        Self {
+            batch_size: snapshot.transaction.snapshot_scan_batch_size(),
+            snapshot,
+            range,
+            reverse,
+            buffered: VecDeque::new(),
+            exhausted: false,
+            valid: true,
+        }
+    }
+
+    /// Fetch and return the next pair, or `None` after the scan is exhausted.
+    pub async fn next(&mut self) -> Result<Option<KvPair>> {
+        if !self.valid {
+            return Ok(None);
+        }
+        if let Some(pair) = self.buffered.pop_front() {
+            return Ok(Some(pair));
+        }
+        if self.exhausted {
+            self.valid = false;
+            return Ok(None);
+        }
+
+        let pairs = if self.reverse {
+            self.snapshot
+                .scan_reverse(self.range.clone(), self.batch_size)
+                .await?
+                .collect::<Vec<_>>()
+        } else {
+            self.snapshot
+                .scan(self.range.clone(), self.batch_size)
+                .await?
+                .collect::<Vec<_>>()
+        };
+        if pairs.is_empty() {
+            self.exhausted = true;
+            self.valid = false;
+            return Ok(None);
+        }
+        self.exhausted = pairs.len() < self.batch_size as usize;
+        let last_key = pairs.last().expect("non-empty scan batch").key().clone();
+        if self.reverse {
+            self.range.to = Bound::Excluded(last_key);
+        } else {
+            self.range.from = Bound::Included(last_key.next_key());
+        }
+        self.buffered = pairs.into();
+        Ok(self.buffered.pop_front())
+    }
+
+    /// Whether the iterator can still yield a pair.
+    pub fn is_valid(&self) -> bool {
+        self.valid
+    }
+
+    /// End the scan early. Dropping the iterator has the same effect.
+    pub fn close(&mut self) {
+        self.buffered.clear();
+        self.exhausted = true;
+        self.valid = false;
+    }
+}
+
+impl<PdC: PdClient> Snapshot<PdC> {
+    pub(crate) fn iterator_batch_size(&self) -> u32 {
+        self.transaction.snapshot_scan_batch_size()
+    }
+
     /// Reset the read timestamp for subsequent snapshot operations.
     ///
     /// This is the Rust counterpart of client-go `KVSnapshot.SetSnapshotTS`.
@@ -317,6 +404,17 @@ impl Snapshot {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         self.transaction.batch_get_from_buffer(keys).await
+    }
+
+    /// Create a stateful forward scanner, matching client-go `KVSnapshot.Iter`.
+    pub fn iter(&mut self, range: impl Into<BoundRange>) -> SnapshotIterator<'_, PdC> {
+        SnapshotIterator::new(self, range.into(), false)
+    }
+
+    /// Create a stateful reverse scanner, matching client-go
+    /// `KVSnapshot.IterReverse`.
+    pub fn iter_reverse(&mut self, range: impl Into<BoundRange>) -> SnapshotIterator<'_, PdC> {
+        SnapshotIterator::new(self, range.into(), true)
     }
 
     /// Scan a range, return at most `limit` key-value pairs that lying in the range.

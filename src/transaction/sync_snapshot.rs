@@ -4,6 +4,8 @@ use crate::{
     ReplicaReadType, Result, RpcInterceptorHandle, RuDetails, Snapshot, Value, ValueEntry,
 };
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
+use std::ops::Bound;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,6 +16,86 @@ use std::time::Duration;
 pub struct SyncSnapshot {
     inner: Snapshot,
     runtime: Arc<tokio::runtime::Runtime>,
+}
+
+/// Blocking counterpart of [`crate::SnapshotIterator`].
+pub struct SyncSnapshotIterator<'a> {
+    snapshot: &'a mut SyncSnapshot,
+    range: BoundRange,
+    reverse: bool,
+    batch_size: u32,
+    buffered: VecDeque<KvPair>,
+    exhausted: bool,
+    valid: bool,
+}
+
+impl<'a> SyncSnapshotIterator<'a> {
+    fn new(snapshot: &'a mut SyncSnapshot, range: BoundRange, reverse: bool) -> Self {
+        Self {
+            batch_size: snapshot.inner.iterator_batch_size(),
+            snapshot,
+            range,
+            reverse,
+            buffered: VecDeque::new(),
+            exhausted: false,
+            valid: true,
+        }
+    }
+
+    /// Fetch and return the next pair, or `None` after the scan is exhausted.
+    pub fn next(&mut self) -> Result<Option<KvPair>> {
+        if !self.valid {
+            return Ok(None);
+        }
+        if let Some(pair) = self.buffered.pop_front() {
+            return Ok(Some(pair));
+        }
+        if self.exhausted {
+            self.valid = false;
+            return Ok(None);
+        }
+        let pairs = if self.reverse {
+            safe_block_on(
+                &self.snapshot.runtime,
+                self.snapshot
+                    .inner
+                    .scan_reverse(self.range.clone(), self.batch_size),
+            )?
+            .collect::<Vec<_>>()
+        } else {
+            safe_block_on(
+                &self.snapshot.runtime,
+                self.snapshot
+                    .inner
+                    .scan(self.range.clone(), self.batch_size),
+            )?
+            .collect::<Vec<_>>()
+        };
+        if pairs.is_empty() {
+            self.exhausted = true;
+            self.valid = false;
+            return Ok(None);
+        }
+        self.exhausted = pairs.len() < self.batch_size as usize;
+        let last_key = pairs.last().expect("non-empty scan batch").key().clone();
+        if self.reverse {
+            self.range.to = Bound::Excluded(last_key);
+        } else {
+            self.range.from = Bound::Included(last_key.next_key());
+        }
+        self.buffered = pairs.into();
+        Ok(self.buffered.pop_front())
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.valid
+    }
+
+    pub fn close(&mut self) {
+        self.buffered.clear();
+        self.exhausted = true;
+        self.valid = false;
+    }
 }
 
 impl SyncSnapshot {
@@ -249,6 +331,16 @@ impl SyncSnapshot {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         safe_block_on(&self.runtime, self.inner.batch_get_from_buffer(keys))
+    }
+
+    /// Create a blocking stateful forward scanner.
+    pub fn iter(&mut self, range: impl Into<BoundRange>) -> SyncSnapshotIterator<'_> {
+        SyncSnapshotIterator::new(self, range.into(), false)
+    }
+
+    /// Create a blocking stateful reverse scanner.
+    pub fn iter_reverse(&mut self, range: impl Into<BoundRange>) -> SyncSnapshotIterator<'_> {
+        SyncSnapshotIterator::new(self, range.into(), true)
     }
 
     /// Scan a range, return at most `limit` key-value pairs that lie in the range.

@@ -234,6 +234,7 @@ pub use crate::transaction::Priority;
 pub use crate::transaction::ProtoLockInfo;
 #[doc(inline)]
 pub use crate::transaction::Snapshot;
+pub use crate::transaction::SnapshotIterator;
 #[doc(inline)]
 pub use crate::transaction::SnapshotRequestType;
 #[doc(inline)]
@@ -248,6 +249,7 @@ pub use crate::transaction::SnapshotScanDetail;
 pub use crate::transaction::SnapshotTimeDetail;
 #[doc(inline)]
 pub use crate::transaction::SyncSnapshot;
+pub use crate::transaction::SyncSnapshotIterator;
 #[doc(inline)]
 pub use crate::transaction::SyncTransaction;
 #[doc(inline)]

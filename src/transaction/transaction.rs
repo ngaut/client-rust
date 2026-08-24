@@ -371,6 +371,14 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.snapshot_scan_batch_size = batch_size;
     }
 
+    pub(crate) fn snapshot_scan_batch_size(&self) -> u32 {
+        if self.snapshot_scan_batch_size <= 1 {
+            DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE
+        } else {
+            self.snapshot_scan_batch_size
+        }
+    }
+
     pub(crate) fn set_snapshot_runtime_stats(&mut self, stats: Option<Arc<SnapshotRuntimeStats>>) {
         self.snapshot_runtime_stats = stats;
     }
@@ -3402,6 +3410,77 @@ mod tests {
         assert_eq!(
             *requests.lock().unwrap(),
             [(b"a".to_vec(), 2, false), (b"b\0".to_vec(), 2, false)]
+        );
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_iterator_fetches_and_advances_one_batch_at_a_time() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured_requests = Arc::clone(&requests);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::ScanRequest>()
+                    .expect("snapshot iterator should dispatch ScanRequest");
+                captured_requests
+                    .lock()
+                    .unwrap()
+                    .push((request.start_key.clone(), request.limit));
+                let pairs = match request.start_key.as_slice() {
+                    b"a" => vec![
+                        kvrpcpb::KvPair {
+                            key: b"a".to_vec(),
+                            value: b"a-value".to_vec(),
+                            ..Default::default()
+                        },
+                        kvrpcpb::KvPair {
+                            key: b"b".to_vec(),
+                            value: b"b-value".to_vec(),
+                            ..Default::default()
+                        },
+                    ],
+                    b"b\0" => vec![kvrpcpb::KvPair {
+                        key: b"c".to_vec(),
+                        value: b"c-value".to_vec(),
+                        ..Default::default()
+                    }],
+                    start => panic!("unexpected iterator scan start key: {start:?}"),
+                };
+                Ok(Box::new(kvrpcpb::ScanResponse {
+                    pairs,
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_snapshot_scan_batch_size(2);
+        let mut snapshot = crate::Snapshot::new(transaction);
+
+        let mut iterator = snapshot.iter(b"a".to_vec()..b"z".to_vec());
+        assert!(iterator.is_valid());
+        assert_eq!(
+            iterator.next().await.unwrap().unwrap().key(),
+            &Key::from(b"a".to_vec())
+        );
+        assert_eq!(
+            iterator.next().await.unwrap().unwrap().key(),
+            &Key::from(b"b".to_vec())
+        );
+        assert_eq!(*requests.lock().unwrap(), [(b"a".to_vec(), 2)]);
+        assert_eq!(
+            iterator.next().await.unwrap().unwrap().key(),
+            &Key::from(b"c".to_vec())
+        );
+        assert!(iterator.next().await.unwrap().is_none());
+        assert!(!iterator.is_valid());
+        assert_eq!(
+            *requests.lock().unwrap(),
+            [(b"a".to_vec(), 2), (b"b\0".to_vec(), 2)]
         );
     }
 
