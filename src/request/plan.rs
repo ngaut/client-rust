@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
@@ -46,8 +46,8 @@ use crate::store::KvClient;
 use crate::store::RegionStore;
 use crate::store::{HasKeyErrors, Store};
 use crate::timestamp::TimestampExt;
-use crate::transaction::resolve_locks_for_read_with_context;
-use crate::transaction::resolve_locks_with_context;
+use crate::transaction::resolve_locks_for_read_with_context_result;
+use crate::transaction::resolve_locks_with_context_result;
 use crate::transaction::HasLocks;
 use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
@@ -1475,9 +1475,9 @@ where
             clone.disable_stale_read_after_lock();
 
             let pd_client = self.pd_client.clone();
-            let live_locks = match &self.read_lock_context {
+            let lock_result = match &self.read_lock_context {
                 Some(read_lock_context) => {
-                    resolve_locks_for_read_with_context(
+                    resolve_locks_for_read_with_context_result(
                         locks,
                         self.timestamp.clone(),
                         pd_client.clone(),
@@ -1489,7 +1489,7 @@ where
                     .await?
                 }
                 None => {
-                    resolve_locks_with_context(
+                    resolve_locks_with_context_result(
                         locks,
                         self.timestamp.clone(),
                         pd_client.clone(),
@@ -1500,12 +1500,20 @@ where
                     .await?
                 }
             };
+            let live_locks = lock_result.live_locks;
             if live_locks.is_empty() {
                 result = clone.execute_inner().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError(live_locks)),
                     Some(delay_duration) => {
+                        let delay_duration = u64::try_from(lock_result.ms_before_expired)
+                            .ok()
+                            .map(Duration::from_millis)
+                            .map_or(delay_duration, |ttl| delay_duration.min(ttl));
+                        if lock_result.ms_before_expired > 0 {
+                            crate::stats::increment_lock_resolver_action("wait_expired");
+                        }
                         sleep(delay_duration).await;
                         result = clone.execute_inner().await?;
                     }

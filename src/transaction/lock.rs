@@ -185,6 +185,27 @@ pub(crate) async fn resolve_locks_with_context(
     keyspace_name: Option<&str>,
     context: ResolveLocksContext,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
+    resolve_locks_with_context_result(
+        locks,
+        timestamp,
+        pd_client,
+        keyspace,
+        keyspace_name,
+        context,
+    )
+    .await
+    .map(|result| result.live_locks)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resolve_locks_with_context_result(
+    locks: Vec<kvrpcpb::LockInfo>,
+    timestamp: Timestamp,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: ResolveLocksContext,
+) -> Result<ResolveLocksResult> {
     resolve_locks_with_context_inner(
         locks,
         timestamp,
@@ -209,6 +230,29 @@ pub(crate) async fn resolve_locks_for_read_with_context(
     context: ResolveLocksContext,
     read_lock_context: &ReadLockContext,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
+    resolve_locks_for_read_with_context_result(
+        locks,
+        timestamp,
+        pd_client,
+        keyspace,
+        keyspace_name,
+        context,
+        read_lock_context,
+    )
+    .await
+    .map(|result| result.live_locks)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resolve_locks_for_read_with_context_result(
+    locks: Vec<kvrpcpb::LockInfo>,
+    timestamp: Timestamp,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: ResolveLocksContext,
+    read_lock_context: &ReadLockContext,
+) -> Result<ResolveLocksResult> {
     resolve_locks_with_context_inner(
         locks,
         timestamp,
@@ -221,6 +265,14 @@ pub(crate) async fn resolve_locks_for_read_with_context(
     .await
 }
 
+/// The native form of client-go's `ResolveLockResult` used by retry owners.
+/// Public Rust compatibility APIs still expose only the live locks.
+#[derive(Debug, Default)]
+pub(crate) struct ResolveLocksResult {
+    pub(crate) live_locks: Vec<kvrpcpb::LockInfo>,
+    pub(crate) ms_before_expired: i64,
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn resolve_locks_with_context_inner(
     locks: Vec<kvrpcpb::LockInfo>,
@@ -230,7 +282,7 @@ async fn resolve_locks_with_context_inner(
     keyspace_name: Option<&str>,
     context: ResolveLocksContext,
     read_lock_context: Option<&ReadLockContext>,
-) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
+) -> Result<ResolveLocksResult> {
     debug!("resolving locks");
     stats::increment_lock_resolver_action("resolve");
     reject_shared_locks(&locks)?;
@@ -238,13 +290,14 @@ async fn resolve_locks_with_context_inner(
     // no locks were supplied. This also keeps an empty retry path independent
     // of PD availability.
     if locks.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ResolveLocksResult::default());
     }
     let ts = pd_client.clone().get_timestamp().await?;
     let caller_start_ts = timestamp.version();
     let current_ts = ts.version();
 
     let mut live_locks = Vec::new();
+    let mut ms_before_expired = None;
     let mut lock_resolver = LockResolver::new(context);
     let mut read_lite_cleanups = HashMap::new();
 
@@ -415,6 +468,14 @@ async fn resolve_locks_with_context_inner(
                         .await?;
                     if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {
                         live_locks.push(lock_info.clone());
+                        update_ms_before_expired(
+                            &mut ms_before_expired,
+                            lock_until_expired_ms(
+                                lock.lock_version,
+                                lock.lock_ttl,
+                                Timestamp::from_version(current_ts),
+                            ),
+                        );
                     }
                     continue;
                 }
@@ -464,7 +525,7 @@ async fn resolve_locks_with_context_inner(
                         commit_versions.insert(lock.lock_version, 0);
                         Some(0)
                     }
-                    TransactionStatusKind::Locked(_, lock_info) => {
+                    TransactionStatusKind::Locked(ttl, lock_info) => {
                         if let Some(read_lock_context) = read_lock_context {
                             if status.action == kvrpcpb::Action::MinCommitTsPushed {
                                 read_lock_context.add_resolved(lock.lock_version);
@@ -476,6 +537,14 @@ async fn resolve_locks_with_context_inner(
                         } else {
                             stats::increment_lock_resolver_action("not_expired");
                         }
+                        update_ms_before_expired(
+                            &mut ms_before_expired,
+                            lock_until_expired_ms(
+                                lock.lock_version,
+                                *ttl,
+                                Timestamp::from_version(current_ts),
+                            ),
+                        );
                         live_locks.push(lock_info.clone());
                         None
                     }
@@ -543,7 +612,15 @@ async fn resolve_locks_with_context_inner(
         )
         .await;
     }
-    Ok(live_locks)
+    Ok(ResolveLocksResult {
+        live_locks,
+        ms_before_expired: ms_before_expired.unwrap_or(0),
+    })
+}
+
+fn update_ms_before_expired(current: &mut Option<i64>, remaining_ms: i64) {
+    let remaining_ms = remaining_ms.max(0);
+    *current = Some(current.map_or(remaining_ms, |existing| existing.min(remaining_ms)));
 }
 
 struct ReadLiteCleanup {
@@ -2728,6 +2805,48 @@ mod tests {
         resolved.sort_unstable();
         assert_eq!(resolved, [2, 3]);
         assert_eq!(committed, [1]);
+    }
+
+    #[tokio::test]
+    async fn source_live_lock_result_uses_the_minimum_remaining_ttl() {
+        let lock = kvrpcpb::LockInfo {
+            key: b"locked".to_vec(),
+            primary_lock: b"primary".to_vec(),
+            lock_version: Timestamp {
+                physical: 10,
+                logical: 0,
+                ..Default::default()
+            }
+            .version(),
+            lock_ttl: 300,
+            ..Default::default()
+        };
+        let status_lock = lock.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                assert!(req.is::<kvrpcpb::CheckTxnStatusRequest>());
+                Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                    lock_ttl: 300,
+                    lock_info: Some(status_lock.clone()),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let current = Timestamp::default();
+        let expected = lock_until_expired_ms(lock.lock_version, 300, current.clone());
+        let result = resolve_locks_with_context_result(
+            vec![lock],
+            current,
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.live_locks.len(), 1);
+        assert_eq!(result.ms_before_expired, expected);
     }
 
     #[tokio::test]
