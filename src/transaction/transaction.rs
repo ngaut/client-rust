@@ -3586,6 +3586,9 @@ mod tests {
                                 processed_versions: 9,
                                 processed_versions_size: 10,
                                 rocksdb_block_read_nanos: 11,
+                                read_index_propose_wait_nanos: 12,
+                                read_index_confirm_wait_nanos: 13,
+                                read_pool_schedule_wait_nanos: 14,
                                 ia_remote_read_segment_nanos: 12,
                                 ..Default::default()
                             }),
@@ -3647,6 +3650,18 @@ mod tests {
         assert_eq!(
             stats.scan_detail().rocksdb_block_read_duration,
             Duration::from_nanos(11)
+        );
+        assert_eq!(
+            stats.scan_detail().read_index_propose_wait_duration,
+            Duration::from_nanos(12)
+        );
+        assert_eq!(
+            stats.scan_detail().read_index_confirm_wait_duration,
+            Duration::from_nanos(13)
+        );
+        assert_eq!(
+            stats.scan_detail().read_pool_schedule_wait_duration,
+            Duration::from_nanos(14)
         );
         assert_eq!(
             stats.scan_detail().ia_remote_read_segment_duration,

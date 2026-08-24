@@ -74,6 +74,9 @@ pub struct SnapshotScanDetail {
     pub rocksdb_block_read_byte: u64,
     pub rocksdb_block_read_duration: Duration,
     pub get_snapshot_duration: Duration,
+    pub read_index_propose_wait_duration: Duration,
+    pub read_index_confirm_wait_duration: Duration,
+    pub read_pool_schedule_wait_duration: Duration,
     pub ia_cache_hit_count: u64,
     pub ia_remote_read_segment_count: u64,
     pub ia_remote_read_segment_bytes: u64,
@@ -92,6 +95,12 @@ impl SnapshotScanDetail {
         self.rocksdb_block_read_byte += detail.rocksdb_block_read_byte;
         self.rocksdb_block_read_duration += Duration::from_nanos(detail.rocksdb_block_read_nanos);
         self.get_snapshot_duration += Duration::from_nanos(detail.get_snapshot_nanos);
+        self.read_index_propose_wait_duration +=
+            Duration::from_nanos(detail.read_index_propose_wait_nanos);
+        self.read_index_confirm_wait_duration +=
+            Duration::from_nanos(detail.read_index_confirm_wait_nanos);
+        self.read_pool_schedule_wait_duration +=
+            Duration::from_nanos(detail.read_pool_schedule_wait_nanos);
         self.ia_cache_hit_count += detail.ia_cache_hit_count;
         self.ia_remote_read_segment_count += detail.ia_remote_read_segment_count;
         self.ia_remote_read_segment_bytes += detail.ia_remote_read_segment_bytes;
@@ -110,6 +119,9 @@ impl SnapshotScanDetail {
         self.rocksdb_block_read_byte += other.rocksdb_block_read_byte;
         self.rocksdb_block_read_duration += other.rocksdb_block_read_duration;
         self.get_snapshot_duration += other.get_snapshot_duration;
+        self.read_index_propose_wait_duration += other.read_index_propose_wait_duration;
+        self.read_index_confirm_wait_duration += other.read_index_confirm_wait_duration;
+        self.read_pool_schedule_wait_duration += other.read_pool_schedule_wait_duration;
         self.ia_cache_hit_count += other.ia_cache_hit_count;
         self.ia_remote_read_segment_count += other.ia_remote_read_segment_count;
         self.ia_remote_read_segment_bytes += other.ia_remote_read_segment_bytes;
