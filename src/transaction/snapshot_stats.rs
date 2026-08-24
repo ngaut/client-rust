@@ -44,11 +44,18 @@ struct RpcRuntimeStat {
 }
 
 #[derive(Clone, Default)]
+struct BackoffRuntimeStat {
+    count: u64,
+    duration: Duration,
+}
+
+#[derive(Clone, Default)]
 struct SnapshotRuntimeStatsInner {
     rpc: BTreeMap<SnapshotRpcCommand, RpcRuntimeStat>,
     scan_detail: SnapshotScanDetail,
     time_detail: SnapshotTimeDetail,
     resolve_lock_duration: Duration,
+    backoff: BTreeMap<&'static str, BackoffRuntimeStat>,
 }
 
 /// Aggregated TiKV MVCC/RocksDB scan details returned with snapshot reads.
@@ -233,6 +240,27 @@ impl SnapshotRuntimeStats {
             .resolve_lock_duration
     }
 
+    /// Return the number of completed snapshot backoff sleeps for a
+    /// client-go retry class such as `regionMiss` or `txnLockFast`.
+    pub fn backoff_count(&self, retry_type: &str) -> u64 {
+        self.inner
+            .lock()
+            .expect("snapshot stats lock poisoned")
+            .backoff
+            .get(retry_type)
+            .map_or(0, |stat| stat.count)
+    }
+
+    /// Return the scheduled sleep accumulated for a client-go retry class.
+    pub fn backoff_duration(&self, retry_type: &str) -> Duration {
+        self.inner
+            .lock()
+            .expect("snapshot stats lock poisoned")
+            .backoff
+            .get(retry_type)
+            .map_or(Duration::ZERO, |stat| stat.duration)
+    }
+
     /// Merge another collector into this one, matching client-go's
     /// `SnapshotRuntimeStats.Merge` ownership model.
     pub fn merge(&self, other: &Self) {
@@ -250,6 +278,11 @@ impl SnapshotRuntimeStats {
         inner.scan_detail.merge(&other.scan_detail);
         inner.time_detail.merge(&other.time_detail);
         inner.resolve_lock_duration += other.resolve_lock_duration;
+        for (retry_type, stat) in other.backoff {
+            let merged = inner.backoff.entry(retry_type).or_default();
+            merged.count += stat.count;
+            merged.duration += stat.duration;
+        }
     }
 
     pub(crate) fn interceptor(self: &Arc<Self>) -> Arc<dyn RpcInterceptor> {
@@ -280,6 +313,13 @@ impl SnapshotRuntimeStats {
             .lock()
             .expect("snapshot stats lock poisoned")
             .resolve_lock_duration += duration;
+    }
+
+    pub(crate) fn record_backoff(&self, retry_type: &'static str, duration: Duration) {
+        let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
+        let stat = inner.backoff.entry(retry_type).or_default();
+        stat.count += 1;
+        stat.duration += duration;
     }
 }
 
@@ -396,6 +436,7 @@ mod tests {
             ..Default::default()
         });
         stats.record_resolve_lock(Duration::from_millis(6));
+        stats.record_backoff("regionMiss", Duration::from_millis(7));
         let cloned = stats.clone();
         stats.record_rpc(SnapshotRpcCommand::Get, Duration::from_millis(2));
 
@@ -407,6 +448,11 @@ mod tests {
         assert_eq!(cloned.time_detail().process_time, Duration::from_millis(4));
         assert_eq!(cloned.scan_detail().processed_keys, 5);
         assert_eq!(cloned.resolve_lock_duration(), Duration::from_millis(6));
+        assert_eq!(cloned.backoff_count("regionMiss"), 1);
+        assert_eq!(
+            cloned.backoff_duration("regionMiss"),
+            Duration::from_millis(7)
+        );
 
         cloned.merge(&stats);
         assert_eq!(cloned.rpc_count(SnapshotRpcCommand::Get), 3);
@@ -417,5 +463,10 @@ mod tests {
         assert_eq!(cloned.time_detail().process_time, Duration::from_millis(8));
         assert_eq!(cloned.scan_detail().processed_keys, 10);
         assert_eq!(cloned.resolve_lock_duration(), Duration::from_millis(12));
+        assert_eq!(cloned.backoff_count("regionMiss"), 2);
+        assert_eq!(
+            cloned.backoff_duration("regionMiss"),
+            Duration::from_millis(14)
+        );
     }
 }

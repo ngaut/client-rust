@@ -10,6 +10,7 @@ use crate::backoff::Backoff;
 use crate::interceptor::RpcInterceptorChain;
 use crate::kv::ReplicaReadConfig;
 use crate::pd::PdClient;
+use crate::request::plan::SnapshotRegionBackoff;
 use crate::request::plan::{CleanupLocks, RegionRetryState, RetryableAllStores};
 use crate::request::shard::HasNextBatch;
 use crate::request::Dispatch;
@@ -508,6 +509,16 @@ where
         backoff: Backoff,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
         self.make_retry_multi_region(backoff, true)
+    }
+
+    /// Retry a snapshot read with the ordinary schedule while optionally
+    /// reporting source retry-class sleeps to snapshot runtime statistics.
+    pub(crate) fn retry_multi_region_with_snapshot_stats(
+        self,
+        backoff: Backoff,
+        stats: Option<Arc<crate::SnapshotRuntimeStats>>,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        self.make_retry_multi_region(SnapshotRegionBackoff::new(backoff, stats), false)
     }
 
     /// Use client-go's cumulative retry accounting for a request path that

@@ -371,6 +371,42 @@ impl RegionRetryState for Backoff {
     fn update_using_forked(&mut self, _forked: &Self) {}
 }
 
+/// Snapshot-read retry state that retains the legacy retry schedule while
+/// reporting client-go retry-class sleep totals to an optional collector.
+#[derive(Clone)]
+pub(crate) struct SnapshotRegionBackoff {
+    backoff: Backoff,
+    stats: Option<Arc<SnapshotRuntimeStats>>,
+}
+
+impl SnapshotRegionBackoff {
+    pub(crate) fn new(backoff: Backoff, stats: Option<Arc<SnapshotRuntimeStats>>) -> Self {
+        Self { backoff, stats }
+    }
+}
+
+#[async_trait]
+impl RegionRetryState for SnapshotRegionBackoff {
+    async fn backoff(&mut self, config: RetryConfig, _reason: String) -> Result<bool> {
+        match self.backoff.next_delay_duration() {
+            Some(duration) => {
+                sleep(duration).await;
+                if let Some(stats) = &self.stats {
+                    stats.record_backoff(config.name, duration);
+                }
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    fn fork(&self) -> (Self, Cancellation) {
+        (self.clone(), Cancellation::default())
+    }
+
+    fn update_using_forked(&mut self, _forked: &Self) {}
+}
+
 #[async_trait]
 impl RegionRetryState for RetryBackoffer {
     async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool> {
@@ -1557,6 +1593,9 @@ where
                             crate::stats::increment_lock_resolver_action("wait_expired");
                         }
                         sleep(delay_duration).await;
+                        if let Some(stats) = &self.snapshot_runtime_stats {
+                            stats.record_backoff("txnLockFast", delay_duration);
+                        }
                         result = clone.execute_inner().await?;
                     }
                 }

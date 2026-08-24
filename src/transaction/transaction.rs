@@ -554,9 +554,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                     keyspace,
                     read_lock_context,
                     lock_resolver_context,
-                    snapshot_runtime_stats,
+                    snapshot_runtime_stats.clone(),
                 )
-                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .retry_multi_region_with_snapshot_stats(
+                    DEFAULT_REGION_BACKOFF,
+                    snapshot_runtime_stats.clone(),
+                )
                 .merge(CollectSingle)
                 .post_process_default()
                 .plan();
@@ -648,9 +651,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                         keyspace,
                         read_lock_context,
                         lock_resolver_context,
-                        snapshot_runtime_stats,
+                        snapshot_runtime_stats.clone(),
                     )
-                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                    .retry_multi_region_with_snapshot_stats(
+                        DEFAULT_REGION_BACKOFF,
+                        snapshot_runtime_stats.clone(),
+                    )
                     .merge(CollectSingle)
                     .plan();
                     let response = plan.execute().await?;
@@ -851,9 +857,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                     keyspace,
                     read_lock_context,
                     lock_resolver_context,
-                    snapshot_runtime_stats,
+                    snapshot_runtime_stats.clone(),
                 )
-                .retry_multi_region(retry_options.region_backoff)
+                .retry_multi_region_with_snapshot_stats(
+                    retry_options.region_backoff,
+                    snapshot_runtime_stats.clone(),
+                )
                 .merge(Collect)
                 .plan();
                 plan.execute().await.map(|pairs| {
@@ -960,9 +969,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                         keyspace,
                         read_lock_context,
                         lock_resolver_context,
-                        snapshot_runtime_stats,
+                        snapshot_runtime_stats.clone(),
                     )
-                    .retry_multi_region(retry_options.region_backoff)
+                    .retry_multi_region_with_snapshot_stats(
+                        retry_options.region_backoff,
+                        snapshot_runtime_stats.clone(),
+                    )
                     .plan();
                     let responses = plan.execute().await?;
                     let responses = responses.into_iter().collect::<Result<Vec<_>>>()?;
@@ -1075,9 +1087,12 @@ impl<PdC: PdClient> Transaction<PdC> {
             keyspace,
             read_lock_context,
             lock_resolver_context,
-            snapshot_runtime_stats,
+            snapshot_runtime_stats.clone(),
         )
-        .retry_multi_region(retry_options.region_backoff)
+        .retry_multi_region_with_snapshot_stats(
+            retry_options.region_backoff,
+            snapshot_runtime_stats.clone(),
+        )
         .merge(Collect)
         .plan();
         plan.execute().await.map(|pairs| {
@@ -1740,7 +1755,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                             lock_resolver_context.clone(),
                             snapshot_runtime_stats.clone(),
                         )
-                        .retry_multi_region(retry_options.region_backoff.clone())
+                        .retry_multi_region_with_snapshot_stats(
+                            retry_options.region_backoff.clone(),
+                            snapshot_runtime_stats.clone(),
+                        )
                         .merge(Collect)
                         .plan();
                         let mut batch: Vec<_> = plan
@@ -3530,6 +3548,49 @@ mod tests {
         transaction.set_snapshot_runtime_stats(None);
         transaction.get("later".to_owned()).await.unwrap();
         assert_eq!(stats.rpc_count(crate::SnapshotRpcCommand::Get), 1);
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_runtime_stats_record_region_retry_classes() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let captured_attempts = Arc::clone(&attempts);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                assert!(request.is::<kvrpcpb::GetRequest>());
+                if captured_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        region_error: Some(crate::proto::errorpb::Error {
+                            server_is_busy: Some(Default::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    value: b"value".to_vec(),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        let stats = Arc::new(crate::SnapshotRuntimeStats::new());
+        transaction.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
+
+        assert_eq!(
+            transaction.get("key".to_owned()).await.unwrap(),
+            Some(b"value".to_vec())
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(stats.backoff_count("tikvServerBusy"), 1);
+        assert_eq!(
+            stats.backoff_duration("tikvServerBusy"),
+            Duration::from_millis(2)
+        );
     }
 
     #[tokio::test]
