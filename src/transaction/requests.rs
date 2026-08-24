@@ -2560,7 +2560,10 @@ mod tests {
             codec.encode_key(b"region-end")
         );
         let meta = mpp.meta.unwrap();
-        assert_eq!(meta.keyspace_id, 7);
+        assert_eq!(
+            meta.keyspace,
+            Some(crate::proto::mpp::task_meta::Keyspace::KeyspaceId(7))
+        );
         assert_eq!(meta.api_version, kvrpcpb::ApiVersion::V2 as i32);
 
         let mut dispatch_request = crate::proto::mpp::DispatchTaskRequest {
@@ -2571,7 +2574,10 @@ mod tests {
         dispatch_request.set_keyspace_id(Some(9));
         assert_eq!(dispatch_request.label(), "dispatch_mpp_task");
         let meta = dispatch_request.meta.unwrap();
-        assert_eq!(meta.keyspace_id, 9);
+        assert_eq!(
+            meta.keyspace,
+            Some(crate::proto::mpp::task_meta::Keyspace::KeyspaceId(9))
+        );
         assert_eq!(meta.api_version, kvrpcpb::ApiVersion::V2 as i32);
     }
 

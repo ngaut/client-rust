@@ -921,7 +921,23 @@ mod tests {
 
         let context = builder.plan.request.context.unwrap();
         assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-        assert_eq!(context.keyspace_id, 4242);
+        assert_eq!(crate::request::context_keyspace_id(&context), Some(4242));
+    }
+
+    #[test]
+    fn api_v1_writes_the_source_null_keyspace_oneof() {
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        );
+
+        let context = builder.plan.request.context.unwrap();
+        assert_eq!(context.api_version, kvrpcpb::ApiVersion::V1 as i32);
+        assert_eq!(
+            crate::request::context_keyspace_id(&context),
+            Some(crate::request::NULL_KEYSPACE_ID)
+        );
     }
 
     #[test]

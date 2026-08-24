@@ -3,15 +3,20 @@
 use async_trait::async_trait;
 use derive_new::new;
 
+#[cfg(test)]
+pub(crate) use self::keyspace::context_keyspace_id;
 pub use self::keyspace::EncodeKeyspace;
 pub use self::keyspace::KeyMode;
 pub use self::keyspace::Keyspace;
 pub use self::keyspace::TruncateKeyspace;
 pub use self::keyspace::{
-    api_v2_prefixes, build_keyspace_name, decode_api_key, parse_keyspace_id, ApiV1Codec,
-    ApiV2Codec, DEFAULT_KEYSPACE_NAME, MAX_KEYSPACE_ID,
+    api_v1_excluded_prefixes, api_v2_prefixes, build_keyspace_name, decode_api_key,
+    is_decode_error, parse_keyspace_id, ApiV1Codec, ApiV2Codec, DEFAULT_KEYSPACE_ID,
+    DEFAULT_KEYSPACE_NAME, MAX_KEYSPACE_ID, NULL_KEYSPACE_ID,
 };
-pub(crate) use self::keyspace::{keyspace_from_pd_meta, keyspace_id_from_pd_meta};
+pub(crate) use self::keyspace::{
+    keyspace_from_pd_meta, keyspace_id_from_pd_meta, set_context_keyspace_id,
+};
 pub use self::plan::Collect;
 pub use self::plan::CollectError;
 pub use self::plan::CollectSingle;

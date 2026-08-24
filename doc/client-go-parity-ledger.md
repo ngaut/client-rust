@@ -11,7 +11,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `config` | `src/config.rs`, `src/config/client_go.rs`, client constructors | complete | Receipt below; all defaults, nested sections, validation, global snapshot/restore, path parsing, TLS material behavior, RU-v2 accounting, and both `nextgen` build selections are covered. |
 | `config/retry` | `src/retry.rs`, `src/async_util.rs`, `src/kv/variables.rs`, `src/request/plan.rs`, `src/stats.rs` | complete | Complete package receipt below and full artifact/symbol/test/consumer mapping in [`config-retry-source-artifact-audit.md`](config-retry-source-artifact-audit.md). Both production files, the original test file, goleak harness, all 17 retry classes, every state/error/cancellation/fork branch, native context/error decisions, metrics/runtime-stat boundaries, and validation gates are accounted for. Each unfinished caller loop remains explicitly owned by its own package row. |
 | `error` | `src/error.rs`, `src/common/errors.rs`, `src/stats.rs` | complete | Receipt below; every singleton and typed wrapper, predicates, constructors, extraction precedence/failpoint/redaction, protobuf text/debug JSON, logging, and write-conflict metric side effect are covered. |
-| `internal/apicodec` | `src/request/keyspace.rs`, `src/kv/codec.rs`, request/response transforms, `proto/{apipb,keyspacepb}.proto` | in-progress | Full four-production/three-test inventory audited. Reusable V1/V2 codecs, source-exact V1 command response matrix, ID/name request context fields, region/error transforms, raw/transaction/lock context propagation, deprecated Cleanup and legacy GC decoding, transactional DeleteRange, Flashback, PrepareFlashback, pipelined Flush/BufferBatchGet, PhysicalScanLock, MvccGetByKey/MvccGetByStartTs, CheckLockObserver, GetLockWaitInfo, SplitRegion, StoreSafeTS, ordinary Coprocessor, and TiFlash BatchCop/MPP request transforms (including MPP TaskMeta keyspace/API metadata) are implemented. The pinned API-v3 `KeyspaceIdentity` input and `KeyspaceMeta` oneof now prevent V2 RawKV/transaction clients from silently treating V3 metadata as numeric ID zero. Completion still requires the complete cloned request/response transform matrix, remaining keyspace/namespace generated service inputs, and unsupported-command integration. |
+| `internal/apicodec` | `src/{common/errors,request/keyspace,request/mod,request/plan_builder,store/request,raw/client,raw/requests,transaction/{lock,requests,transaction}}.rs`, directly required proto/generated inputs | complete | Complete package receipt below and full seven-artifact/schema/symbol/test/consumer mapping in [`internal-apicodec-source-artifact-audit.md`](internal-apicodec-source-artifact-audit.md). V1/V2 byte, region, request, response, context, error, bucket, MPP/Compact, API V3 rejection, typed decode-error, and exact unsupported-command behavior are covered. Each high-level routing/raw/transaction consumer retains its own package status. |
 | `internal/client` | `src/store`, `src/pd`, transport | complete | Complete package receipt below and full per-artifact/test mapping in [`internal-client-source-artifact-audit.md`](internal-client-source-artifact-audit.md). All ten production files, the mockserver support dependency, six ordinary test files, goleak harness, metadata-only `OWNERS`, typed command matrix, native API-codec boundary, and validation gates are accounted for. Proxy selection remains correctly owned by the separate `internal/locate` row. |
 | `internal/client/mockserver` | `src/store/mockserver.rs`, generated Tonic server bindings | complete | Receipt below. The source's narrow test-server RPC and lifecycle surface is transcreated as test-only Rust support, independently reusable by the parent `internal/client` transport tests. |
 | `internal/kvrpc` | `src/request/shard.rs`, `src/raw/requests.rs` | complete | Receipt below; size/count boundaries, aligned payloads, region association, and typed result mapping are covered. |
@@ -53,7 +53,48 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 
 ## Non-package artifacts still required
 
-The final repository claim must additionally account for root build and policy files, `go.mod`/`go.sum` dependencies, `.github` CI, `examples`, `integration_tests` including its separate Go module, generated protobuf inputs and outputs, configuration fixtures, and client-rust's `proto-build`, `proto`, `tests`, examples, Cargo features, and toolchain files. `proto/keyspacepb.proto` now carries the pinned V3 identity oneof required by `internal/apicodec`, but the same pinned schema's namespace and lookup service expansion remains an explicit generated-input artifact. These artifacts are not package rows, but no full parity claim is possible without their final receipt.
+The final repository claim must additionally account for root build and policy files, `go.mod`/`go.sum` dependencies, `.github` CI, `examples`, `integration_tests` including its separate Go module, generated protobuf inputs and outputs, configuration fixtures, and client-rust's `proto-build`, `proto`, `tests`, examples, Cargo features, and toolchain files. The eight directly key-bearing `internal/apicodec` protobuf inputs now match pinned kvproto and include the namespace/lookup/V3 identity expansion, but unrelated generated-root inputs still drift and remain an explicit final artifact gate. These artifacts are not package rows, but no full parity claim is possible without their final receipt.
+
+## Complete package receipt: `internal/apicodec`
+
+Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`; required protocol pin: `kvproto@059694ae4472276644613acccefa24cbc89d959f`.
+
+The complete four-production-file/three-test-file source inventory, SHA-256 identities, eight directly required protocol inputs, generated-output decision, per-symbol mapping, complete V1/V2 command matrices, native typed-request ownership, all original tests, and source-consumer audit are recorded in [`internal-apicodec-source-artifact-audit.md`](internal-apicodec-source-artifact-audit.md). The package has no other source, build/platform variant, fixture, benchmark, example, metadata, or package-generated artifact.
+
+Rust now preserves V1 raw identity and transactional memcomparable region keys; V2 uint24 prefixes and maximum-ID carry; point/range/reverse/region/bucket transforms; exact API version and numeric keyspace oneofs including V1's all-ones null ID; canonical names; Compact/MPP metadata; API V3 identity rejection; every transactional/raw/Cop/TiFlash/other request and response branch; nested region/key/lock/MVCC transforms; source sibling/edge suppression; and CopStream's exact unsupported-decode error. The completion audit exposed and fixed an untyped malformed-region-key path: V1/V2 failures now carry `ApiCodecDecode`, and public `is_decode_error` traverses native wrapper chains like client-go's `IsDecodeError`. BucketVersionNotMatch keys deliberately remain physical in region errors because neither source response switch decodes them.
+
+The required `keyspacepb`, `kvrpcpb`, and `mpp` schemas were updated from the pinned kvproto checkout and regenerated. Namespace/LookupKeyspace, V3 metadata/context/Compact/MPP identities, and pinned execution-detail fields are compile-tested. Other unrelated kvproto inputs remain on the final generated-artifact gate; this package receipt does not overclaim the whole generated root.
+
+Validation on `nightly-2026-08-22`:
+
+    cargo +nightly-2026-08-22 test -p tikv-client request::keyspace::tests --lib
+    # 27 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client request::keyspace::tests --lib --all-features
+    # 27 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet
+    # 534 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet
+    # 534 passed; 0 failed
+
+    cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features
+    # passed with the existing warning backlog
+
+    cargo +nightly-2026-08-22 doc -p tikv-client --all-features --no-deps
+    # passed with two pre-existing unrelated rustdoc warnings
+
+    cargo +nightly-2026-08-22 fmt --all -- --check
+    git diff --check
+    # passed
+
+    for proto in apipb coprocessor errorpb keyspacepb kvrpcpb metapb mpp tikvpb; do
+        cmp "proto/$proto.proto" "/private/tmp/kvproto-client-go-pin/proto/$proto.proto"
+    done
+    # all eight inputs byte-identical
+
+The pinned Go tests were inspected but not re-executed because this host has no Go toolchain. Deterministic byte/protobuf behavior needs no live cluster; final API-v1/API-v2 cross-client validation remains mandatory on the incomplete high-level `tikv`, `rawkv`, locate, snapshot, and transaction rows.
 
 ## Complete package receipt: `config/retry`
 
@@ -175,7 +216,7 @@ Validation on `nightly-2026-08-22`:
     cargo +nightly-2026-08-22 test --all-features --lib --quiet
     # 474 passed; 0 failed
 
-Strict all-feature Clippy was attempted but remains blocked by the repository's pre-existing generated-code and unrelated lint backlog; the new structured connection helper carries the same local `too_many_arguments` allowance as adjacent constructors. The original Go tests were not run because this host has no Go toolchain. Real loopback Tonic tests cover package-owned network behavior; a live TiKV/PD cluster is not required for this transport package. `internal/locate` proxy/replica selection and the remaining `internal/apicodec` transform inventory retain independent non-complete rows and are not implied complete by this receipt.
+Strict all-feature Clippy was attempted but remains blocked by the repository's pre-existing generated-code and unrelated lint backlog; the new structured connection helper carries the same local `too_many_arguments` allowance as adjacent constructors. The original Go tests were not run because this host has no Go toolchain. Real loopback Tonic tests cover package-owned network behavior; a live TiKV/PD cluster is not required for this transport package. `internal/locate` proxy/replica selection retains its independent non-complete row; the now-complete `internal/apicodec` package has its own later receipt and was not implied complete by this transport receipt.
 
 ## Complete package receipt: `internal/client/mockserver`
 

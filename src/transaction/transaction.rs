@@ -5034,7 +5034,7 @@ mod tests {
                     panic!("unexpected request while testing transaction keyspace context")
                 };
                 assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                assert_eq!(context.keyspace_id, 7);
+                assert_eq!(crate::request::context_keyspace_id(context), Some(7));
                 assert_eq!(context.keyspace_name, "tenant");
 
                 if req.is::<kvrpcpb::GetRequest>() {
@@ -5074,7 +5074,7 @@ mod tests {
                     assert_eq!(req.keys, vec![b"x\0\0\x07a"]);
                     let context = req.context.as_ref().unwrap();
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                    assert_eq!(context.keyspace_id, 7);
+                    assert_eq!(crate::request::context_keyspace_id(context), Some(7));
                     return Ok(Box::new(kvrpcpb::BatchGetResponse {
                         pairs: vec![kvrpcpb::KvPair {
                             key: req.keys[0].clone(),

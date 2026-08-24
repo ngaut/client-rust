@@ -15,7 +15,7 @@ use crate::proto::debugpb;
 use crate::proto::kvrpcpb;
 use crate::proto::mpp;
 use crate::proto::tikvpb::{self, tikv_client::TikvClient};
-use crate::request::ApiV2Codec;
+use crate::request::{set_context_keyspace_id, ApiV2Codec};
 use crate::store::RegionWithLeader;
 use crate::Error;
 use crate::Result;
@@ -135,7 +135,7 @@ impl CoprocessorStreamRequest {
             .context
             .get_or_insert_with(kvrpcpb::Context::default);
         context.api_version = kvrpcpb::ApiVersion::V2 as i32;
-        context.keyspace_id = codec.keyspace_id();
+        set_context_keyspace_id(context, codec.keyspace_id());
         request
     }
 }
@@ -171,7 +171,7 @@ impl BatchCoprocessorStreamRequest {
             .context
             .get_or_insert_with(kvrpcpb::Context::default);
         context.api_version = kvrpcpb::ApiVersion::V2 as i32;
-        context.keyspace_id = codec.keyspace_id();
+        set_context_keyspace_id(context, codec.keyspace_id());
         request
     }
 }
@@ -567,7 +567,7 @@ macro_rules! impl_request {
             fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
                 if let Some(keyspace_id) = keyspace_id {
                     let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
-                    ctx.keyspace_id = keyspace_id;
+                    set_context_keyspace_id(ctx, keyspace_id);
                 }
             }
 
@@ -984,7 +984,7 @@ impl Request for kvrpcpb::CompactRequest {
 
     fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
         if let Some(keyspace_id) = keyspace_id {
-            self.keyspace_id = keyspace_id;
+            self.keyspace = Some(kvrpcpb::compact_request::Keyspace::KeyspaceId(keyspace_id));
         }
     }
 }
@@ -1103,9 +1103,10 @@ impl Request for coprocessor::Request {
 
     fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
         if let Some(keyspace_id) = keyspace_id {
-            self.context
-                .get_or_insert(kvrpcpb::Context::default())
-                .keyspace_id = keyspace_id;
+            set_context_keyspace_id(
+                self.context.get_or_insert(kvrpcpb::Context::default()),
+                keyspace_id,
+            );
         }
     }
 
@@ -1321,10 +1322,12 @@ impl Request for BatchCoprocessorStreamRequest {
 
     fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
         if let Some(keyspace_id) = keyspace_id {
-            self.request
-                .context
-                .get_or_insert(kvrpcpb::Context::default())
-                .keyspace_id = keyspace_id;
+            set_context_keyspace_id(
+                self.request
+                    .context
+                    .get_or_insert(kvrpcpb::Context::default()),
+                keyspace_id,
+            );
         }
     }
 
@@ -1471,7 +1474,7 @@ impl Request for mpp::DispatchTaskRequest {
 
     fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
         if let (Some(meta), Some(keyspace_id)) = (&mut self.meta, keyspace_id) {
-            meta.keyspace_id = keyspace_id;
+            meta.keyspace = Some(mpp::task_meta::Keyspace::KeyspaceId(keyspace_id));
         }
     }
 }
@@ -1596,7 +1599,7 @@ mod tests {
                 .flatten()
                 .expect("source context-bearing RPC");
             assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-            assert_eq!(context.keyspace_id, 42);
+            assert_eq!(crate::request::context_keyspace_id(context), Some(42));
             assert_eq!(context.keyspace_name, "tenant");
             assert_eq!(context.priority, kvrpcpb::CommandPri::High as i32);
             assert_eq!(context.max_execution_duration_ms, 99);
@@ -1662,7 +1665,10 @@ mod tests {
         assert!(compact.set_leader(&RegionWithLeader::default()).is_ok());
 
         assert_eq!(compact.api_version, kvrpcpb::ApiVersion::V2 as i32);
-        assert_eq!(compact.keyspace_id, 42);
+        assert_eq!(
+            compact.keyspace,
+            Some(kvrpcpb::compact_request::Keyspace::KeyspaceId(42))
+        );
         assert_eq!(compact.label(), "compact");
     }
 
@@ -1683,7 +1689,7 @@ mod tests {
         assert_eq!(encoded.ranges[0].end, b"x\0\0\x07z");
         let context = encoded.context.unwrap();
         assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-        assert_eq!(context.keyspace_id, 7);
+        assert_eq!(crate::request::context_keyspace_id(&context), Some(7));
         assert!(matches!(
             cop.decode_transport_response(&mut ()),
             Err(Error::StringError(message)) if message == "streaming coprocessor is not supported yet"
@@ -1702,7 +1708,7 @@ mod tests {
         assert_eq!(encoded.regions[0].ranges[0].end, b"x\0\0\x07z");
         let context = encoded.context.unwrap();
         assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-        assert_eq!(context.keyspace_id, 7);
+        assert_eq!(crate::request::context_keyspace_id(&context), Some(7));
         assert!(batch.decode_transport_response(&mut ()).is_ok());
     }
 
