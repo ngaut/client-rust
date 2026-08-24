@@ -221,9 +221,15 @@ pub(crate) struct StoreToken {
 }
 
 impl StoreToken {
-    pub(crate) fn acquire(count: Arc<AtomicI64>, store_id: StoreId, limit: i64) -> Result<Self> {
+    pub(crate) fn acquire(
+        count: Arc<AtomicI64>,
+        store_id: StoreId,
+        store_addr: &str,
+        limit: i64,
+    ) -> Result<Self> {
         let current = count.load(Ordering::Relaxed);
         if current >= limit {
+            crate::stats::increment_store_limit_error(store_addr, store_id);
             return Err(crate::Error::TokenLimit(crate::error::TokenLimitError {
                 store_id,
             }));
@@ -478,12 +484,18 @@ mod tests {
     #[test]
     fn source_store_token_limit_rejects_and_releases() {
         let count = Arc::new(AtomicI64::new(0));
-        let token = StoreToken::acquire(count.clone(), 42, 1).unwrap();
+        let address = "store-42:20160";
+        let metric_before = crate::stats::store_limit_error_count(address, 42);
+        let token = StoreToken::acquire(count.clone(), 42, address, 1).unwrap();
         assert_eq!(count.load(Ordering::Relaxed), 1);
         assert!(matches!(
-            StoreToken::acquire(count.clone(), 42, 1),
+            StoreToken::acquire(count.clone(), 42, address, 1),
             Err(crate::Error::TokenLimit(error)) if error.store_id == 42
         ));
+        assert_eq!(
+            crate::stats::store_limit_error_count(address, 42),
+            metric_before + 1
+        );
 
         drop(token);
         assert_eq!(count.load(Ordering::Relaxed), 0);

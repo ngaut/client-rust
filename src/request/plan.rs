@@ -102,11 +102,17 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
 
     async fn execute(&self) -> Result<Self::Result> {
         let store_token_limit = crate::kv::STORE_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
+        let store_token_addr = if self.forwarded_host.is_empty() {
+            self.target.as_str()
+        } else {
+            self.forwarded_host.as_str()
+        };
         let _store_token = (store_token_limit > 0)
             .then(|| {
                 crate::store::StoreToken::acquire(
                     self.store_token_count.clone(),
                     self.store_token_store_id,
+                    store_token_addr,
                     store_token_limit,
                 )
             })
