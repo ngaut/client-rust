@@ -130,6 +130,33 @@ impl Cluster {
         req.send(&mut self.client, timeout).await
     }
 
+    pub async fn batch_scan_regions(
+        &mut self,
+        ranges: Vec<pdpb::KeyRange>,
+        limit: usize,
+        options: super::retry::RegionScanOptions,
+        timeout: Duration,
+    ) -> Result<pdpb::BatchScanRegionsResponse> {
+        let mut req = pd_request!(self.id, pdpb::BatchScanRegionsRequest);
+        req.ranges = ranges;
+        req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
+        req.need_buckets = options.need_buckets;
+        req.contain_all_key_range = options.contain_all_key_range;
+        req.send(&mut self.client, timeout).await
+    }
+
+    pub async fn split_regions(
+        &mut self,
+        split_keys: Vec<Vec<u8>>,
+        retry_limit: u64,
+        timeout: Duration,
+    ) -> Result<pdpb::SplitRegionsResponse> {
+        let mut req = pd_request!(self.id, pdpb::SplitRegionsRequest);
+        req.split_keys = split_keys;
+        req.retry_limit = retry_limit;
+        req.send(&mut self.client, timeout).await
+    }
+
     pub async fn get_store(
         &mut self,
         id: u64,
@@ -493,6 +520,26 @@ impl PdMessage for pdpb::ScanRegionsRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::BatchScanRegionsRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::BatchScanRegionsResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.batch_scan_regions(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::SplitRegionsRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::SplitRegionsResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.split_regions(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for pdpb::GetStoreRequest {
     type Client = pdpb::pd_client::PdClient<Channel>;
     type Response = pdpb::GetStoreResponse;
@@ -579,6 +626,18 @@ impl PdResponse for pdpb::GetRegionResponse {
 }
 
 impl PdResponse for pdpb::ScanRegionsResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for pdpb::BatchScanRegionsResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for pdpb::SplitRegionsResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.header.as_ref().unwrap()
     }

@@ -31,6 +31,13 @@ const RECONNECT_INTERVAL_SEC: u64 = 1;
 const MAX_REQUEST_COUNT: usize = 5;
 const LEADER_CHANGE_RETRY: usize = 10;
 
+/// Options carried by PD's `BatchScanRegions` request.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegionScanOptions {
+    pub need_buckets: bool,
+    pub contain_all_key_range: bool,
+}
+
 #[async_trait]
 pub trait RetryClientTrait {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
@@ -44,6 +51,13 @@ pub trait RetryClientTrait {
     }
 
     async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
+
+    async fn get_prev_region_with_buckets(
+        self: Arc<Self>,
+        key: Vec<u8>,
+    ) -> Result<RegionWithLeader> {
+        self.get_prev_region(key).await
+    }
 
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader>;
 
@@ -81,6 +95,27 @@ pub trait RetryClientTrait {
             next = region_end;
         }
         Ok(regions)
+    }
+
+    /// PD's multi-range region scan. Custom clients can explicitly retain an
+    /// unsupported result so callers can fall back to `ScanRegions`, as
+    /// client-go's region cache does for older PD servers.
+    async fn batch_scan_regions(
+        self: Arc<Self>,
+        _ranges: Vec<pdpb::KeyRange>,
+        _limit: usize,
+        _options: RegionScanOptions,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(Error::Unimplemented)
+    }
+
+    /// Requests PD to split at the supplied physical keys.
+    async fn split_regions(
+        self: Arc<Self>,
+        _split_keys: Vec<Vec<u8>>,
+        _retry_limit: u64,
+    ) -> Result<pdpb::SplitRegionsResponse> {
+        Err(Error::Unimplemented)
     }
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
@@ -253,6 +288,23 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
+    async fn get_prev_region_with_buckets(
+        self: Arc<Self>,
+        key: Vec<u8>,
+    ) -> Result<RegionWithLeader> {
+        retry_mut!(self, "get_prev_region_with_buckets", |cluster| {
+            let key = key.clone();
+            async {
+                cluster
+                    .get_prev_region_with_buckets(key.clone(), self.timeout, true)
+                    .await
+                    .and_then(|resp| {
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
+                    })
+            }
+        })
+    }
+
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
         retry_mut!(self, "get_region_by_id", |cluster| async {
             cluster
@@ -293,6 +345,34 @@ impl RetryClientTrait for RetryClient<Cluster> {
                     .await
                     .and_then(regions_from_scan_response)
             }
+        })
+    }
+
+    async fn batch_scan_regions(
+        self: Arc<Self>,
+        ranges: Vec<pdpb::KeyRange>,
+        limit: usize,
+        options: RegionScanOptions,
+    ) -> Result<Vec<RegionWithLeader>> {
+        retry_mut!(self, "batch_scan_regions", |cluster| {
+            let ranges = ranges.clone();
+            async {
+                cluster
+                    .batch_scan_regions(ranges, limit, options, self.timeout)
+                    .await
+                    .and_then(regions_from_batch_scan_response)
+            }
+        })
+    }
+
+    async fn split_regions(
+        self: Arc<Self>,
+        split_keys: Vec<Vec<u8>>,
+        retry_limit: u64,
+    ) -> Result<pdpb::SplitRegionsResponse> {
+        retry_mut!(self, "split_regions", |cluster| {
+            let split_keys = split_keys.clone();
+            cluster.split_regions(split_keys, retry_limit, self.timeout)
         })
     }
 
@@ -398,6 +478,26 @@ fn regions_from_scan_response(resp: pdpb::ScanRegionsResponse) -> Result<Vec<Reg
         .enumerate()
         .map(|(index, region)| RegionWithLeader::new(region, resp.leaders.get(index).cloned()))
         .collect())
+}
+
+fn regions_from_batch_scan_response(
+    resp: pdpb::BatchScanRegionsResponse,
+) -> Result<Vec<RegionWithLeader>> {
+    resp.regions
+        .into_iter()
+        .map(|mut entry| {
+            let region = entry.region.take().ok_or_else(|| {
+                Error::StringError("PD BatchScanRegions response has no region metadata".to_owned())
+            })?;
+            Ok(RegionWithLeader {
+                region,
+                leader: entry.leader.take(),
+                buckets: entry.buckets.take(),
+                pending_peers: std::mem::take(&mut entry.pending_peers),
+                down_peers: std::mem::take(&mut entry.down_peers),
+            })
+        })
+        .collect()
 }
 
 // A node-like thing that can be connected to.
