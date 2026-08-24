@@ -255,6 +255,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.snapshot_key_only = key_only;
     }
 
+    /// Source pipelined snapshots must read through locks flushed by their
+    /// own transaction rather than trying to resolve them.
+    pub(crate) fn set_snapshot_pipelined(&mut self, timestamp: u64) {
+        self.read_lock_context.add_resolved(timestamp);
+    }
+
     pub(crate) fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
         self.not_fill_cache = not_fill_cache;
     }
@@ -2381,6 +2387,23 @@ mod tests {
             .collect();
 
         assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn source_snapshot_pipelined_marks_its_flushed_lock_resolved() {
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        transaction.set_snapshot_pipelined(42);
+
+        assert_eq!(
+            transaction.read_lock_context.snapshot(),
+            (vec![42], Vec::new())
+        );
     }
 
     #[tokio::test]

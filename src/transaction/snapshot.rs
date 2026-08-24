@@ -103,6 +103,12 @@ impl Snapshot {
         self.transaction.set_snapshot_key_only(key_only);
     }
 
+    /// Allow reads to proceed through locks flushed by this pipelined
+    /// transaction, matching client-go `KVSnapshot.SetPipelined`.
+    pub fn set_pipelined(&mut self, timestamp: u64) {
+        self.transaction.set_snapshot_pipelined(timestamp);
+    }
+
     /// Control whether TiKV should bypass cache population for subsequent
     /// snapshot reads, matching client-go `KVSnapshot.SetNotFillCache`.
     pub fn set_not_fill_cache(&mut self, not_fill_cache: bool) {

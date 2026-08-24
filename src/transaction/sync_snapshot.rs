@@ -35,6 +35,11 @@ impl SyncSnapshot {
         self.inner.set_key_only(key_only);
     }
 
+    /// Allow reads to proceed through locks flushed by this pipelined transaction.
+    pub fn set_pipelined(&mut self, timestamp: u64) {
+        self.inner.set_pipelined(timestamp);
+    }
+
     /// Control whether TiKV should bypass cache population for subsequent
     /// snapshot reads.
     pub fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
