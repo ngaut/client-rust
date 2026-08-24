@@ -11,6 +11,7 @@ use crate::Key;
 use crate::KvPair;
 use crate::Result;
 use crate::Value;
+use crate::ValueEntry;
 
 use super::transaction::Mutation;
 
@@ -56,6 +57,45 @@ impl Buffer {
             .values()
             .filter(|entry| matches!(entry, BufferEntry::Cached(_)))
             .count()
+    }
+
+    pub(crate) fn snapshot_cache(&self) -> BTreeMap<Key, ValueEntry> {
+        self.entry_map
+            .iter()
+            .filter_map(|(key, entry)| match entry {
+                BufferEntry::Cached(Some(value)) => Some((key.clone(), value.clone())),
+                BufferEntry::Cached(None) => Some((key.clone(), ValueEntry::default())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn update_snapshot_cache(
+        &mut self,
+        keys: impl IntoIterator<Item = Key>,
+        values: &BTreeMap<Key, ValueEntry>,
+    ) {
+        for key in keys {
+            let value = values.get(&key).cloned();
+            match self.entry_map.get(&key) {
+                None | Some(BufferEntry::Cached(_)) => {
+                    self.entry_map.insert(key, BufferEntry::Cached(value));
+                }
+                // Snapshot instances are read-only, so source cache mutation
+                // never meets a write/lock entry. Preserve a transaction's
+                // higher-priority local state if this internal buffer is
+                // reused outside that facade.
+                Some(_) => {}
+            }
+        }
+    }
+
+    pub(crate) fn clean_snapshot_cache(&mut self, keys: impl IntoIterator<Item = Key>) {
+        for key in keys {
+            if matches!(self.entry_map.get(&key), Some(BufferEntry::Cached(_))) {
+                self.entry_map.remove(&key);
+            }
+        }
     }
 
     /// Set the primary key if it is not set
@@ -149,7 +189,7 @@ impl Buffer {
                 Some(BufferEntry::Cached(value)) => {
                     self.snapshot_cache_hits += 1;
                     if let Some(value) = value {
-                        cached_results.push(KvPair(key, value.clone()));
+                        cached_results.push(KvPair(key, value.value.clone()));
                     }
                 }
                 Some(entry) => match entry.get_value() {
@@ -352,6 +392,10 @@ impl Buffer {
     }
 
     fn update_cache(&mut self, key: Key, value: Option<Value>) {
+        self.update_cache_entry(key, value.map(|value| ValueEntry::new(value, 0)));
+    }
+
+    fn update_cache_entry(&mut self, key: Key, value: Option<ValueEntry>) {
         match self.entry_map.get(&key) {
             Some(BufferEntry::Locked(None)) => {
                 self.entry_map.insert(key, BufferEntry::Locked(Some(value)));
@@ -362,11 +406,15 @@ impl Buffer {
             Some(BufferEntry::Cached(v)) | Some(BufferEntry::Locked(Some(v))) => {
                 assert!(&value == v);
             }
-            Some(BufferEntry::Put(v)) => assert!(value.as_ref() == Some(v)),
+            Some(BufferEntry::Put(v)) => {
+                assert!(value.as_ref().map(|entry| &entry.value) == Some(v))
+            }
             Some(BufferEntry::Del) => {
                 assert!(value.is_none());
             }
-            Some(BufferEntry::Insert(v)) => assert!(value.as_ref() == Some(v)),
+            Some(BufferEntry::Insert(v)) => {
+                assert!(value.as_ref().map(|entry| &entry.value) == Some(v))
+            }
             Some(BufferEntry::CheckNotExist) => {
                 assert!(value.is_none());
             }
@@ -398,7 +446,7 @@ impl Buffer {
 enum BufferEntry {
     // The value has been read from the server. None means there is no entry.
     // Also means the entry isn't locked.
-    Cached(Option<Value>),
+    Cached(Option<ValueEntry>),
     // Key is locked.
     //
     // Cached value:
@@ -412,7 +460,7 @@ enum BufferEntry {
     //
     // In pessimistic transaction:
     //   The key is locked by `get_for_update` or `batch_get_for_update`
-    Locked(Option<Option<Value>>),
+    Locked(Option<Option<ValueEntry>>),
     // Value has been written.
     Put(Value),
     // Value has been deleted.
@@ -446,11 +494,15 @@ impl BufferEntry {
 
     fn get_value(&self) -> MutationValue {
         match self {
-            BufferEntry::Cached(value) => MutationValue::Determined(value.clone()),
+            BufferEntry::Cached(value) => {
+                MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
+            }
             BufferEntry::Put(value) => MutationValue::Determined(Some(value.clone())),
             BufferEntry::Del => MutationValue::Determined(None),
             BufferEntry::Locked(None) => MutationValue::Undetermined,
-            BufferEntry::Locked(Some(value)) => MutationValue::Determined(value.clone()),
+            BufferEntry::Locked(Some(value)) => {
+                MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
+            }
             BufferEntry::Insert(value) => MutationValue::Determined(Some(value.clone())),
             BufferEntry::CheckNotExist => MutationValue::Determined(None),
         }
@@ -599,6 +651,36 @@ mod tests {
         buffer.clear_cached_reads();
         assert_eq!(buffer.snapshot_cache_hit_count(), 1);
         assert_eq!(buffer.snapshot_cache_size(), 0);
+    }
+
+    #[test]
+    fn source_snapshot_cache_mutation_preserves_entries_and_cached_misses() {
+        let present: Key = b"present".to_vec().into();
+        let missing: Key = b"missing".to_vec().into();
+        let mut buffer = Buffer::new(false);
+        let values = BTreeMap::from([(present.clone(), ValueEntry::new(b"first".to_vec(), 41))]);
+
+        buffer.update_snapshot_cache(vec![present.clone(), missing.clone()], &values);
+        assert_eq!(
+            buffer.snapshot_cache(),
+            BTreeMap::from([
+                (present.clone(), ValueEntry::new(b"first".to_vec(), 41)),
+                (missing.clone(), ValueEntry::default()),
+            ])
+        );
+
+        let replacement =
+            BTreeMap::from([(present.clone(), ValueEntry::new(b"second".to_vec(), 42))]);
+        buffer.update_snapshot_cache(vec![present.clone()], &replacement);
+        assert_eq!(
+            buffer.snapshot_cache().get(&present),
+            Some(&ValueEntry::new(b"second".to_vec(), 42))
+        );
+        buffer.clean_snapshot_cache(vec![present]);
+        assert_eq!(
+            buffer.snapshot_cache(),
+            BTreeMap::from([(missing, ValueEntry::default())])
+        );
     }
 
     #[test]

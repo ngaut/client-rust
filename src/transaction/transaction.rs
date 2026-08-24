@@ -1,5 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::collections::BTreeMap;
 use std::iter;
 use std::sync::atomic;
 use std::sync::atomic::AtomicU8;
@@ -16,7 +17,7 @@ use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::interceptor::RpcInterceptorChain;
 use crate::interceptor::RpcInterceptorHandle;
-use crate::kv::{ReplicaReadAdjuster, ReplicaReadConfig};
+use crate::kv::{ReplicaReadAdjuster, ReplicaReadConfig, ValueEntry};
 use crate::oracle::ReadTimestampValidator;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
@@ -274,6 +275,40 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub(crate) fn snapshot_cache_size(&self) -> usize {
         self.buffer.snapshot_cache_size()
+    }
+
+    pub(crate) fn snapshot_cache(&self) -> BTreeMap<Key, ValueEntry> {
+        self.buffer
+            .snapshot_cache()
+            .into_iter()
+            .map(|(key, value)| (key.truncate_keyspace(self.keyspace), value))
+            .collect()
+    }
+
+    pub(crate) fn update_snapshot_cache(
+        &mut self,
+        keys: impl IntoIterator<Item = Key>,
+        values: BTreeMap<Key, ValueEntry>,
+    ) {
+        if self.timestamp.version() == u64::MAX {
+            return;
+        }
+        let keys: Vec<_> = keys
+            .into_iter()
+            .map(|key| key.encode_keyspace(self.keyspace, KeyMode::Txn))
+            .collect();
+        let values = values
+            .into_iter()
+            .map(|(key, value)| (key.encode_keyspace(self.keyspace, KeyMode::Txn), value))
+            .collect();
+        self.buffer.update_snapshot_cache(keys, &values);
+    }
+
+    pub(crate) fn clean_snapshot_cache(&mut self, keys: impl IntoIterator<Item = Key>) {
+        self.buffer.clean_snapshot_cache(
+            keys.into_iter()
+                .map(|key| key.encode_keyspace(self.keyspace, KeyMode::Txn)),
+        );
     }
 
     pub(crate) fn set_stale_read(&mut self, stale_read: bool) {
@@ -2442,7 +2477,7 @@ mod tests {
     use super::TransactionStatus;
     use crate::transaction::ResolveLocksContext;
     use std::any::Any;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::io;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
@@ -2467,6 +2502,7 @@ mod tests {
     use crate::transaction::HeartbeatOption;
     use crate::unset_resource_control_interceptor;
     use crate::Error;
+    use crate::Key;
     use crate::KvPair;
     use crate::Priority;
     use crate::ReplicaReadAdjustment;
@@ -2554,6 +2590,7 @@ mod tests {
     use crate::TimestampExt;
     use crate::Transaction;
     use crate::TransactionOptions;
+    use crate::ValueEntry;
 
     #[test]
     fn source_snapshot_timestamp_reset_discards_only_resolved_lock_hints() {
@@ -2572,6 +2609,32 @@ mod tests {
         assert_eq!(
             transaction.read_lock_context.snapshot(),
             (Vec::new(), vec![12])
+        );
+    }
+
+    #[test]
+    fn source_snapshot_cache_mutation_skips_latest_timestamp_snapshots() {
+        let key: Key = b"key".to_vec().into();
+        let values = BTreeMap::from([(key.clone(), ValueEntry::new(b"value".to_vec(), 7))]);
+        let mut latest = Transaction::new(
+            Timestamp::from_version(u64::MAX),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        latest.update_snapshot_cache(vec![key.clone()], values.clone());
+        assert!(latest.snapshot_cache().is_empty());
+
+        let mut snapshot = Transaction::new(
+            Timestamp::from_version(1),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        snapshot.update_snapshot_cache(vec![key.clone()], values);
+        assert_eq!(
+            snapshot.snapshot_cache(),
+            BTreeMap::from([(key, ValueEntry::new(b"value".to_vec(), 7))])
         );
     }
 

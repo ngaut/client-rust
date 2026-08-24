@@ -1,5 +1,8 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::collections::BTreeMap;
+use std::time::Duration;
+
 use derive_new::new;
 use log::{debug, trace};
 
@@ -11,8 +14,8 @@ use crate::Result;
 use crate::RpcInterceptorHandle;
 use crate::Transaction;
 use crate::Value;
+use crate::ValueEntry;
 use crate::{ReplicaReadAdjuster, ReplicaReadConfig, ReplicaReadType};
-use std::time::Duration;
 
 /// A read-only transaction which reads at the given timestamp.
 ///
@@ -167,6 +170,32 @@ impl Snapshot {
     /// are included, matching client-go `KVSnapshot.SnapCacheSize`.
     pub fn snap_cache_size(&self) -> usize {
         self.transaction.snapshot_cache_size()
+    }
+
+    /// Return a copy of the snapshot cache, including cached missing keys as
+    /// default [`ValueEntry`] values. This is the native counterpart of
+    /// client-go `KVSnapshot.SnapCache`.
+    pub fn snap_cache(&self) -> BTreeMap<Key, ValueEntry> {
+        self.transaction.snapshot_cache()
+    }
+
+    /// Seed snapshot-cache entries for the supplied keys. Keys absent from
+    /// `values` are cached as missing; latest-timestamp snapshots deliberately
+    /// ignore this call, matching client-go `UpdateSnapshotCache`.
+    pub fn update_snapshot_cache(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        values: BTreeMap<Key, ValueEntry>,
+    ) {
+        self.transaction
+            .update_snapshot_cache(keys.into_iter().map(Into::into), values);
+    }
+
+    /// Remove only cached snapshot-read entries for the supplied keys. Local
+    /// transaction mutations and lock state are retained.
+    pub fn clean_snapshot_cache(&mut self, keys: impl IntoIterator<Item = impl Into<Key>>) {
+        self.transaction
+            .clean_snapshot_cache(keys.into_iter().map(Into::into));
     }
 
     /// Control whether TiKV should bypass cache population for subsequent
