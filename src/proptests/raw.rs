@@ -48,7 +48,7 @@ proptest! {
             ).unwrap();
 
             let out_value = block_on(
-                client.batch_get(keys.clone())
+                client.batch_get_pairs(keys.clone())
             ).unwrap();
             assert_eq!(kvs, out_value);
 

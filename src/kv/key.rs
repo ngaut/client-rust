@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::borrow::Borrow;
+use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Bound, Deref};
 
@@ -115,9 +116,14 @@ impl Key {
     ///
     /// Extending a zero makes the new key the smallest key that is greater than than the original one.
     #[inline]
-    pub(crate) fn next_key(mut self) -> Self {
+    pub fn next_key(mut self) -> Self {
         self.0.push(0);
         self
+    }
+
+    /// Return the smallest key which does not have this key as a prefix.
+    pub fn prefix_next(self) -> Self {
+        Key(prefix_next_key(&self.0))
     }
 
     /// Convert the key to a lower bound. The key is treated as inclusive.
@@ -155,6 +161,44 @@ impl Key {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+}
+
+/// Return the next key in byte order by appending a zero byte.
+pub fn next_key(key: &[u8]) -> Vec<u8> {
+    let mut next = Vec::with_capacity(key.len() + 1);
+    next.extend_from_slice(key);
+    next.push(0);
+    next
+}
+
+/// Return the smallest key which does not have `key` as a prefix.
+///
+/// As in client-go, an empty key or an all-`0xFF` key maps to an empty key.
+pub fn prefix_next_key(key: &[u8]) -> Vec<u8> {
+    let mut next = key.to_vec();
+    for byte in next.iter_mut().rev() {
+        *byte = byte.wrapping_add(1);
+        if *byte != 0 {
+            return next;
+        }
+    }
+    Vec::new()
+}
+
+/// Compare two keys, returning -1, 0, or 1.
+pub fn cmp_key(key: &[u8], other: &[u8]) -> i8 {
+    match key.cmp(other) {
+        Ordering::Less => -1,
+        Ordering::Equal => 0,
+        Ordering::Greater => 1,
+    }
+}
+
+/// A half-open key range where `start_key <= key < end_key`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct KeyRange {
+    pub start_key: Vec<u8>,
+    pub end_key: Vec<u8>,
 }
 
 impl AsRef<[u8]> for Key {
@@ -222,5 +266,28 @@ impl AsRef<Key> for Vec<u8> {
 impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Key({})", HexRepr(&self.0))
+    }
+}
+
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+
+    #[test]
+    fn next_prefix_next_and_compare_match_client_go() {
+        assert_eq!(next_key(b"row"), b"row\0");
+        assert_eq!(prefix_next_key(b"row"), b"rox");
+        assert_eq!(prefix_next_key(&[0x12, 0xff]), vec![0x13, 0]);
+        assert_eq!(prefix_next_key(&[]), Vec::<u8>::new());
+        for all_ff in [vec![0xff], vec![0xff, 0xff], vec![0xff; 4]] {
+            assert_eq!(prefix_next_key(&all_ff), Vec::<u8>::new());
+        }
+        assert_eq!(cmp_key(b"a", b"b"), -1);
+        assert_eq!(cmp_key(b"b", b"b"), 0);
+        assert_eq!(cmp_key(b"c", b"b"), 1);
+        assert_eq!(
+            Key::from(b"row".to_vec()).prefix_next(),
+            Key::from(b"rox".to_vec())
+        );
     }
 }

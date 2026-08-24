@@ -5,8 +5,12 @@
 //! The goal is to be able to test functionality independently of the rest of
 //! the system, in particular without requiring a TiKV or PD server, or RPC layer.
 
+pub(crate) mod cluster;
+pub(crate) mod deadlock;
+
 use std::any::Any;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use derive_new::new;
@@ -18,6 +22,7 @@ use crate::proto::keyspacepb;
 use crate::proto::metapb::RegionEpoch;
 use crate::proto::metapb::{self};
 use crate::region::RegionId;
+use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
@@ -75,6 +80,12 @@ pub struct MockCluster;
 #[derive(new)]
 pub struct MockPdClient {
     client: MockKvClient,
+    #[new(default)]
+    epoch_not_match_regions: Arc<Mutex<Vec<RegionWithLeader>>>,
+    #[new(default)]
+    invalidated_regions: Arc<Mutex<Vec<RegionVerId>>>,
+    #[new(default)]
+    bucket_updates: Arc<Mutex<Vec<(RegionVerId, u64, Vec<Vec<u8>>)>>>,
 }
 
 #[async_trait]
@@ -103,6 +114,9 @@ impl MockPdClient {
     pub fn default() -> MockPdClient {
         MockPdClient {
             client: MockKvClient::default(),
+            epoch_not_match_regions: Arc::default(),
+            invalidated_regions: Arc::default(),
+            bucket_updates: Arc::default(),
         }
     }
 
@@ -162,6 +176,18 @@ impl MockPdClient {
 
         region
     }
+
+    pub(crate) fn epoch_not_match_regions(&self) -> Vec<RegionWithLeader> {
+        self.epoch_not_match_regions.lock().unwrap().clone()
+    }
+
+    pub(crate) fn invalidated_regions(&self) -> Vec<RegionVerId> {
+        self.invalidated_regions.lock().unwrap().clone()
+    }
+
+    pub(crate) fn bucket_updates(&self) -> Vec<(RegionVerId, u64, Vec<Vec<u8>>)> {
+        self.bucket_updates.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -182,6 +208,18 @@ impl PdClient for MockPdClient {
             Self::region3()
         };
 
+        Ok(region)
+    }
+
+    async fn region_for_end_key(&self, key: &Key) -> Result<RegionWithLeader> {
+        let bytes: &[_] = key.into();
+        let region = if bytes.is_empty() || bytes <= &[10][..] {
+            Self::region1()
+        } else if bytes <= &[250, 250][..] {
+            Self::region2()
+        } else {
+            Self::region3()
+        };
         Ok(region)
     }
 
@@ -214,7 +252,21 @@ impl PdClient for MockPdClient {
         todo!()
     }
 
-    async fn invalidate_region_cache(&self, _ver_id: crate::region::RegionVerId) {}
+    async fn update_region_cache(&self, regions: Vec<RegionWithLeader>) -> Result<()> {
+        self.epoch_not_match_regions.lock().unwrap().extend(regions);
+        Ok(())
+    }
+
+    async fn update_buckets(&self, ver_id: RegionVerId, version: u64, keys: Vec<Vec<u8>>) {
+        self.bucket_updates
+            .lock()
+            .unwrap()
+            .push((ver_id, version, keys));
+    }
+
+    async fn invalidate_region_cache(&self, ver_id: crate::region::RegionVerId) {
+        self.invalidated_regions.lock().unwrap().push(ver_id);
+    }
 
     async fn invalidate_store_cache(&self, _store_id: crate::region::StoreId) {}
 

@@ -19,6 +19,17 @@ mod client;
 pub mod lowering;
 mod requests;
 
+/// Aggregate checksum for the key/value pairs in a raw-key range.
+///
+/// `crc64_xor` is the XOR of the per-pair CRC64 values. `total_bytes` includes
+/// any API V2 prefix bytes, matching TiKV's server-side accounting.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RawChecksum {
+    pub crc64_xor: u64,
+    pub total_kvs: u64,
+    pub total_bytes: u64,
+}
+
 /// A [`ColumnFamily`](ColumnFamily) is an optional parameter for [`raw::Client`](Client) requests.
 ///
 /// TiKV uses RocksDB's `ColumnFamily` support. You can learn more about RocksDB's `ColumnFamily`s [on their wiki](https://github.com/facebook/rocksdb/wiki/Column-Families).
@@ -31,7 +42,8 @@ mod requests;
 ///
 /// Not providing a call a `ColumnFamily` means it will use the default value of `default`.
 ///
-/// The best (and only) way to create a [`ColumnFamily`](ColumnFamily) is via the `From` implementation:
+/// Built-in families preserve their typed variants; other names are retained and
+/// passed through unchanged, matching client-go's raw option behavior.
 ///
 /// # Examples
 /// ```rust
@@ -50,6 +62,7 @@ pub enum ColumnFamily {
     Default,
     Lock,
     Write,
+    Custom(String),
 }
 
 impl TryFrom<&str> for ColumnFamily {
@@ -60,7 +73,7 @@ impl TryFrom<&str> for ColumnFamily {
             "default" => Ok(ColumnFamily::Default),
             "lock" => Ok(ColumnFamily::Lock),
             "write" => Ok(ColumnFamily::Write),
-            s => Err(Error::ColumnFamilyError(s.to_owned())),
+            custom => Ok(ColumnFamily::Custom(custom.to_owned())),
         }
     }
 }
@@ -79,7 +92,26 @@ impl fmt::Display for ColumnFamily {
             ColumnFamily::Default => f.write_str("default"),
             ColumnFamily::Lock => f.write_str("lock"),
             ColumnFamily::Write => f.write_str("write"),
+            ColumnFamily::Custom(name) => f.write_str(name),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ColumnFamily;
+    use std::convert::TryFrom;
+
+    #[test]
+    fn custom_column_families_are_preserved_for_raw_requests() {
+        assert_eq!(
+            ColumnFamily::try_from("write").unwrap().to_string(),
+            "write"
+        );
+        assert_eq!(
+            ColumnFamily::try_from("tenant_cf").unwrap().to_string(),
+            "tenant_cf"
+        );
     }
 }
 

@@ -18,11 +18,11 @@ use crate::request::Process;
 use crate::request::RangeRequest;
 use crate::request::Shardable;
 use crate::request::SingleKey;
-use crate::request::{Batchable, Collect};
+use crate::request::{key_batches, Batchable, Collect};
 use crate::shardable_key;
-use crate::shardable_keys;
 use crate::shardable_range;
 use crate::store::region_stream_for_keys;
+use crate::store::region_stream_for_range;
 use crate::store::region_stream_for_ranges;
 use crate::store::RegionStore;
 use crate::store::Request;
@@ -31,6 +31,7 @@ use crate::util::iter::FlatMapOkIterExt;
 use crate::ColumnFamily;
 use crate::Key;
 use crate::KvPair;
+use crate::RawChecksum;
 use crate::Result;
 use crate::Value;
 use async_trait::async_trait;
@@ -43,6 +44,41 @@ use std::time::Duration;
 use tonic::transport::Channel;
 
 const RAW_KV_REQUEST_BATCH_SIZE: u64 = 16 * 1024; // 16 KB
+const RAW_KV_REQUEST_KEY_BATCH_LIMIT: isize = 512;
+
+macro_rules! impl_raw_v2_response {
+    ($request:ty, $response:ty, $decode:expr) => {
+        impl KvRequest for $request {
+            type Response = $response;
+
+            fn key_mode(&self) -> Option<crate::request::KeyMode> {
+                Some(crate::request::KeyMode::Raw)
+            }
+
+            fn decode_response(
+                &self,
+                response: &mut Self::Response,
+                codec: Option<&crate::request::ApiV2Codec>,
+            ) -> Result<()> {
+                let Some(codec) = codec else {
+                    return Ok(());
+                };
+                $decode(codec, response)
+            }
+
+            fn decode_v1_response(
+                &self,
+                response: &mut Self::Response,
+                codec: Option<&crate::request::ApiV1Codec>,
+            ) -> Result<()> {
+                if let (Some(codec), Some(region_error)) = (codec, &mut response.region_error) {
+                    codec.decode_region_error(region_error)?;
+                }
+                Ok(())
+            }
+        }
+    };
+}
 
 pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::RawGetRequest {
     let mut req = kvrpcpb::RawGetRequest::default();
@@ -54,6 +90,32 @@ pub fn new_raw_get_request(key: Vec<u8>, cf: Option<ColumnFamily>) -> kvrpcpb::R
 
 impl KvRequest for kvrpcpb::RawGetRequest {
     type Response = kvrpcpb::RawGetResponse;
+
+    fn key_mode(&self) -> Option<crate::request::KeyMode> {
+        Some(crate::request::KeyMode::Raw)
+    }
+
+    fn decode_response(
+        &self,
+        response: &mut Self::Response,
+        codec: Option<&crate::request::ApiV2Codec>,
+    ) -> Result<()> {
+        if let (Some(codec), Some(region_error)) = (codec, &mut response.region_error) {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
+
+    fn decode_v1_response(
+        &self,
+        response: &mut Self::Response,
+        codec: Option<&crate::request::ApiV1Codec>,
+    ) -> Result<()> {
+        if let (Some(codec), Some(region_error)) = (codec, &mut response.region_error) {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
 }
 
 shardable_key!(kvrpcpb::RawGetRequest);
@@ -91,9 +153,69 @@ pub fn new_raw_batch_get_request(
 
 impl KvRequest for kvrpcpb::RawBatchGetRequest {
     type Response = kvrpcpb::RawBatchGetResponse;
+
+    fn key_mode(&self) -> Option<crate::request::KeyMode> {
+        Some(crate::request::KeyMode::Raw)
+    }
+
+    fn decode_response(
+        &self,
+        response: &mut Self::Response,
+        codec: Option<&crate::request::ApiV2Codec>,
+    ) -> Result<()> {
+        let Some(codec) = codec else {
+            return Ok(());
+        };
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        codec.decode_pairs(&mut response.pairs)
+    }
+
+    fn decode_v1_response(
+        &self,
+        response: &mut Self::Response,
+        codec: Option<&crate::request::ApiV1Codec>,
+    ) -> Result<()> {
+        if let (Some(codec), Some(region_error)) = (codec, &mut response.region_error) {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
 }
 
-shardable_keys!(kvrpcpb::RawBatchGetRequest);
+impl Shardable for kvrpcpb::RawBatchGetRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let mut keys = self.keys.clone();
+        keys.sort();
+        region_stream_for_keys(keys.into_iter(), pd_client.clone())
+            .flat_map(|result| match result {
+                Ok((keys, region)) => {
+                    stream::iter(key_batches(keys, RAW_KV_REQUEST_KEY_BATCH_LIMIT))
+                        .map(move |batch| Ok((batch, region.clone())))
+                        .boxed()
+                }
+                Err(error) => stream::iter(Err(error)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.keys = shard;
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        Ok(())
+    }
+}
 
 impl Merge<kvrpcpb::RawBatchGetResponse> for Collect {
     type Out = Vec<KvPair>;
@@ -117,9 +239,16 @@ pub fn new_raw_get_key_ttl_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawGetKeyTtlRequest {
-    type Response = kvrpcpb::RawGetKeyTtlResponse;
-}
+impl_raw_v2_response!(
+    kvrpcpb::RawGetKeyTtlRequest,
+    kvrpcpb::RawGetKeyTtlResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawGetKeyTtlResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
+);
 
 shardable_key!(kvrpcpb::RawGetKeyTtlRequest);
 collect_single!(kvrpcpb::RawGetKeyTtlResponse);
@@ -160,9 +289,16 @@ pub fn new_raw_put_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawPutRequest {
-    type Response = kvrpcpb::RawPutResponse;
-}
+impl_raw_v2_response!(
+    kvrpcpb::RawPutRequest,
+    kvrpcpb::RawPutResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawPutResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
+);
 
 shardable_key!(kvrpcpb::RawPutRequest);
 collect_single!(kvrpcpb::RawPutResponse);
@@ -172,6 +308,7 @@ impl SingleKey for kvrpcpb::RawPutRequest {
     }
 }
 
+#[allow(deprecated)]
 pub fn new_raw_batch_put_request(
     pairs: Vec<kvrpcpb::KvPair>,
     ttls: Vec<u64>,
@@ -180,6 +317,10 @@ pub fn new_raw_batch_put_request(
 ) -> kvrpcpb::RawBatchPutRequest {
     let mut req = kvrpcpb::RawBatchPutRequest::default();
     req.pairs = pairs;
+    // Keep the legacy single-TTL field in sync with client-go. TiKV uses the
+    // per-pair `ttls` field for mixed TTLs, but older servers still observe
+    // `ttl`, which client-go sets to the first batch item's value.
+    req.ttl = ttls.first().copied().unwrap_or_default();
     req.ttls = ttls;
     req.maybe_set_cf(cf);
     req.for_cas = atomic;
@@ -187,9 +328,16 @@ pub fn new_raw_batch_put_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawBatchPutRequest {
-    type Response = kvrpcpb::RawBatchPutResponse;
-}
+impl_raw_v2_response!(
+    kvrpcpb::RawBatchPutRequest,
+    kvrpcpb::RawBatchPutResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawBatchPutResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
+);
 
 impl Batchable for kvrpcpb::RawBatchPutRequest {
     type Item = (kvrpcpb::KvPair, u64);
@@ -231,6 +379,10 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
         let (pairs, ttls) = shard.into_iter().unzip();
         self.pairs = pairs;
         self.ttls = ttls;
+        #[allow(deprecated)]
+        {
+            self.ttl = self.ttls.first().copied().unwrap_or_default();
+        }
     }
 
     fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
@@ -246,7 +398,10 @@ impl Shardable for kvrpcpb::RawBatchPutRequest {
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        Ok(())
     }
 }
 
@@ -263,9 +418,16 @@ pub fn new_raw_delete_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawDeleteRequest {
-    type Response = kvrpcpb::RawDeleteResponse;
-}
+impl_raw_v2_response!(
+    kvrpcpb::RawDeleteRequest,
+    kvrpcpb::RawDeleteResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawDeleteResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
+);
 
 shardable_key!(kvrpcpb::RawDeleteRequest);
 collect_single!(kvrpcpb::RawDeleteResponse);
@@ -278,25 +440,26 @@ impl SingleKey for kvrpcpb::RawDeleteRequest {
 pub fn new_raw_batch_delete_request(
     keys: Vec<Vec<u8>>,
     cf: Option<ColumnFamily>,
+    atomic: bool,
 ) -> kvrpcpb::RawBatchDeleteRequest {
     let mut req = kvrpcpb::RawBatchDeleteRequest::default();
     req.keys = keys;
     req.maybe_set_cf(cf);
+    req.for_cas = atomic;
 
     req
 }
 
-impl KvRequest for kvrpcpb::RawBatchDeleteRequest {
-    type Response = kvrpcpb::RawBatchDeleteResponse;
-}
-
-impl Batchable for kvrpcpb::RawBatchDeleteRequest {
-    type Item = Vec<u8>;
-
-    fn item_size(item: &Self::Item) -> u64 {
-        item.len() as u64
+impl_raw_v2_response!(
+    kvrpcpb::RawBatchDeleteRequest,
+    kvrpcpb::RawBatchDeleteResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawBatchDeleteResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
     }
-}
+);
 
 impl Shardable for kvrpcpb::RawBatchDeleteRequest {
     type Shard = Vec<Vec<u8>>;
@@ -309,12 +472,11 @@ impl Shardable for kvrpcpb::RawBatchDeleteRequest {
         keys.sort();
         region_stream_for_keys(keys.into_iter(), pd_client.clone())
             .flat_map(|result| match result {
-                Ok((keys, region)) => stream::iter(kvrpcpb::RawBatchDeleteRequest::batches(
-                    keys,
-                    RAW_KV_REQUEST_BATCH_SIZE,
-                ))
-                .map(move |batch| Ok((batch, region.clone())))
-                .boxed(),
+                Ok((keys, region)) => {
+                    stream::iter(key_batches(keys, RAW_KV_REQUEST_KEY_BATCH_LIMIT))
+                        .map(move |batch| Ok((batch, region.clone())))
+                        .boxed()
+                }
                 Err(e) => stream::iter(Err(e)).boxed(),
             })
             .boxed()
@@ -337,7 +499,10 @@ impl Shardable for kvrpcpb::RawBatchDeleteRequest {
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        Ok(())
     }
 }
 
@@ -354,12 +519,89 @@ pub fn new_raw_delete_range_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawDeleteRangeRequest {
-    type Response = kvrpcpb::RawDeleteRangeResponse;
-}
+impl_raw_v2_response!(
+    kvrpcpb::RawDeleteRangeRequest,
+    kvrpcpb::RawDeleteRangeResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawDeleteRangeResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
+);
 
 range_request!(kvrpcpb::RawDeleteRangeRequest);
 shardable_range!(kvrpcpb::RawDeleteRangeRequest);
+
+pub fn new_raw_checksum_request(
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
+) -> kvrpcpb::RawChecksumRequest {
+    kvrpcpb::RawChecksumRequest {
+        algorithm: kvrpcpb::ChecksumAlgorithm::Crc64Xor.into(),
+        ranges: vec![kvrpcpb::KeyRange { start_key, end_key }],
+        ..Default::default()
+    }
+}
+
+impl_raw_v2_response!(
+    kvrpcpb::RawChecksumRequest,
+    kvrpcpb::RawChecksumResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawChecksumResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
+);
+
+impl Shardable for kvrpcpb::RawChecksumRequest {
+    type Shard = (Vec<u8>, Vec<u8>);
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let range = self
+            .ranges
+            .first()
+            .expect("RawChecksumRequest must contain one range");
+        region_stream_for_range(
+            (range.start_key.clone(), range.end_key.clone()),
+            pd_client.clone(),
+        )
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.ranges = vec![kvrpcpb::KeyRange {
+            start_key: shard.0,
+            end_key: shard.1,
+        }];
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        Ok(())
+    }
+}
+
+impl Merge<kvrpcpb::RawChecksumResponse> for Collect {
+    type Out = RawChecksum;
+
+    fn merge(&self, input: Vec<Result<kvrpcpb::RawChecksumResponse>>) -> Result<Self::Out> {
+        input
+            .into_iter()
+            .try_fold(RawChecksum::default(), |mut checksum, response| {
+                let response = response?;
+                checksum.crc64_xor ^= response.checksum;
+                checksum.total_kvs += response.total_kvs;
+                checksum.total_bytes += response.total_bytes;
+                Ok(checksum)
+            })
+    }
+}
 
 pub fn new_raw_scan_request(
     start_key: Vec<u8>,
@@ -385,9 +627,16 @@ pub fn new_raw_scan_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawScanRequest {
-    type Response = kvrpcpb::RawScanResponse;
-}
+impl_raw_v2_response!(
+    kvrpcpb::RawScanRequest,
+    kvrpcpb::RawScanResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawScanResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        codec.decode_pairs(&mut response.kvs)
+    }
+);
 
 range_request!(kvrpcpb::RawScanRequest);
 shardable_range!(kvrpcpb::RawScanRequest);
@@ -418,9 +667,16 @@ pub fn new_raw_batch_scan_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawBatchScanRequest {
-    type Response = kvrpcpb::RawBatchScanResponse;
-}
+impl_raw_v2_response!(
+    kvrpcpb::RawBatchScanRequest,
+    kvrpcpb::RawBatchScanResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawBatchScanResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        codec.decode_pairs(&mut response.kvs)
+    }
+);
 
 impl Shardable for kvrpcpb::RawBatchScanRequest {
     type Shard = Vec<kvrpcpb::KeyRange>;
@@ -437,7 +693,10 @@ impl Shardable for kvrpcpb::RawBatchScanRequest {
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        Ok(())
     }
 }
 
@@ -469,9 +728,16 @@ pub fn new_cas_request(
     req
 }
 
-impl KvRequest for kvrpcpb::RawCasRequest {
-    type Response = kvrpcpb::RawCasResponse;
-}
+impl_raw_v2_response!(
+    kvrpcpb::RawCasRequest,
+    kvrpcpb::RawCasResponse,
+    |codec: &crate::request::ApiV2Codec, response: &mut kvrpcpb::RawCasResponse| {
+        if let Some(region_error) = &mut response.region_error {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
+);
 
 shardable_key!(kvrpcpb::RawCasRequest);
 collect_single!(kvrpcpb::RawCasResponse);
@@ -529,6 +795,17 @@ impl Request for RawCoprocessorRequest {
         self.inner.dispatch(client, timeout).await
     }
 
+    async fn dispatch_with_forwarded_host(
+        &self,
+        client: &TikvClient<Channel>,
+        timeout: Duration,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
+        self.inner
+            .dispatch_with_forwarded_host(client, timeout, forwarded_host)
+            .await
+    }
+
     fn label(&self) -> &'static str {
         self.inner.label()
     }
@@ -544,10 +821,41 @@ impl Request for RawCoprocessorRequest {
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
         self.inner.set_api_version(api_version);
     }
+
+    fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
+        self.inner.set_keyspace_id(keyspace_id);
+    }
+
+    fn set_keyspace_name(&mut self, keyspace_name: Option<&str>) {
+        self.inner.set_keyspace_name(keyspace_name);
+    }
+
+    fn set_max_execution_duration_ms(&mut self, duration_ms: u64) {
+        self.inner.set_max_execution_duration_ms(duration_ms);
+    }
+
+    fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
+        self.inner.set_priority(priority);
+    }
 }
 
 impl KvRequest for RawCoprocessorRequest {
     type Response = kvrpcpb::RawCoprocessorResponse;
+
+    fn key_mode(&self) -> Option<crate::request::KeyMode> {
+        Some(crate::request::KeyMode::Raw)
+    }
+
+    fn decode_response(
+        &self,
+        response: &mut Self::Response,
+        codec: Option<&crate::request::ApiV2Codec>,
+    ) -> Result<()> {
+        if let (Some(codec), Some(region_error)) = (codec, &mut response.region_error) {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
 }
 
 impl Shardable for RawCoprocessorRequest {
@@ -565,7 +873,9 @@ impl Shardable for RawCoprocessorRequest {
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
-        self.set_leader(&store.region_with_leader)?;
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
         self.inner.data = (self.data_builder)(
             store.region_with_leader.region.clone(),
             self.inner.ranges.clone(),
@@ -650,6 +960,8 @@ impl HasLocks for kvrpcpb::RawCasResponse {}
 
 impl HasLocks for kvrpcpb::RawCoprocessorResponse {}
 
+impl HasLocks for kvrpcpb::RawChecksumResponse {}
+
 #[cfg(test)]
 mod test {
     use std::any::Any;
@@ -662,14 +974,133 @@ mod test {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
-    use crate::request::Keyspace;
     use crate::request::Plan;
+    use crate::request::{ApiV2Codec, KeyMode, Keyspace, KvRequest};
 
-    #[rstest::rstest]
-    #[case(Keyspace::Disable)]
-    #[case(Keyspace::Enable { keyspace_id: 0 })]
+    #[test]
+    fn api_v2_decoder_decodes_raw_batch_pair_errors_before_plan_extraction() {
+        let codec = ApiV2Codec::new(KeyMode::Raw, 7).unwrap();
+        let request = kvrpcpb::RawBatchGetRequest::default();
+        let mut response = kvrpcpb::RawBatchGetResponse {
+            pairs: vec![kvrpcpb::KvPair {
+                key: codec.encode_key(b"successful-key"),
+                error: Some(kvrpcpb::KeyError {
+                    already_exist: Some(kvrpcpb::AlreadyExist {
+                        key: codec.encode_key(b"duplicate"),
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        request
+            .decode_response(&mut response, Some(&codec))
+            .unwrap();
+        assert_eq!(
+            response.pairs[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .already_exist
+                .as_ref()
+                .unwrap()
+                .key,
+            b"duplicate"
+        );
+        assert_eq!(response.pairs[0].key, b"successful-key");
+    }
+
+    #[test]
+    fn api_v2_decoder_decodes_raw_scan_and_batch_scan_pair_keys_before_merge() {
+        let codec = ApiV2Codec::new(KeyMode::Raw, 7).unwrap();
+        let scan_request = kvrpcpb::RawScanRequest::default();
+        let batch_scan_request = kvrpcpb::RawBatchScanRequest::default();
+        let pair = kvrpcpb::KvPair {
+            key: codec.encode_key(b"scan-key"),
+            value: b"value".to_vec(),
+            ..Default::default()
+        };
+        let mut scan_response = kvrpcpb::RawScanResponse {
+            kvs: vec![pair.clone()],
+            ..Default::default()
+        };
+        let mut batch_scan_response = kvrpcpb::RawBatchScanResponse {
+            kvs: vec![pair],
+            ..Default::default()
+        };
+
+        scan_request
+            .decode_response(&mut scan_response, Some(&codec))
+            .unwrap();
+        batch_scan_request
+            .decode_response(&mut batch_scan_response, Some(&codec))
+            .unwrap();
+        assert_eq!(scan_response.kvs[0].key, b"scan-key");
+        assert_eq!(batch_scan_response.kvs[0].key, b"scan-key");
+    }
+
+    #[test]
+    fn raw_checksum_uses_crc64_xor_and_decodes_api_v2_region_bounds() {
+        let codec = ApiV2Codec::new(KeyMode::Raw, 7).unwrap();
+        let request = new_raw_checksum_request(b"start".to_vec(), b"end".to_vec());
+        assert_eq!(
+            request.algorithm,
+            kvrpcpb::ChecksumAlgorithm::Crc64Xor as i32
+        );
+        assert_eq!(request.ranges.len(), 1);
+        assert_eq!(request.ranges[0].start_key, b"start");
+        assert_eq!(request.ranges[0].end_key, b"end");
+
+        let (start_key, end_key) = codec.encode_region_range(b"start", b"end");
+        let mut response = kvrpcpb::RawChecksumResponse {
+            region_error: Some(crate::proto::errorpb::Error {
+                key_not_in_region: Some(crate::proto::errorpb::KeyNotInRegion {
+                    key: codec.encode_key(b"region-key"),
+                    start_key,
+                    end_key,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            checksum: 0x0f,
+            total_kvs: 2,
+            total_bytes: 20,
+            ..Default::default()
+        };
+        request
+            .decode_response(&mut response, Some(&codec))
+            .unwrap();
+        let key_not_in_region = response
+            .region_error
+            .as_ref()
+            .unwrap()
+            .key_not_in_region
+            .as_ref()
+            .unwrap();
+        assert_eq!(key_not_in_region.key, b"region-key");
+        assert_eq!(key_not_in_region.start_key, b"start");
+        assert_eq!(key_not_in_region.end_key, b"end");
+
+        let combined = Collect
+            .merge(vec![
+                Ok(response),
+                Ok(kvrpcpb::RawChecksumResponse {
+                    checksum: 0xf0,
+                    total_kvs: 3,
+                    total_bytes: 30,
+                    ..Default::default()
+                }),
+            ])
+            .unwrap();
+        assert_eq!(combined.crc64_xor, 0xff);
+        assert_eq!(combined.total_kvs, 5);
+        assert_eq!(combined.total_bytes, 50);
+    }
+
     #[tokio::test]
-    async fn test_raw_scan(#[case] keyspace: Keyspace) {
+    async fn test_raw_scan() {
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |req: &dyn Any| {
                 let req: &kvrpcpb::RawScanRequest = req.downcast_ref().unwrap();
@@ -698,7 +1129,7 @@ mod test {
             key_only: true,
             ..Default::default()
         };
-        let plan = crate::request::PlanBuilder::new(client, keyspace, scan)
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::Disable, scan)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(Collect)
             .plan();
@@ -758,6 +1189,71 @@ mod test {
             .plan();
         let _ = plan.execute().await;
         assert_eq!(actual_map.lock().unwrap().deref(), &expected_map);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn raw_batch_put_uses_client_go_payload_boundary_and_preserves_ttls() -> Result<()> {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_requests = Arc::clone(&captured);
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawBatchPutRequest = req.downcast_ref().unwrap();
+                captured_requests.lock().unwrap().push((
+                    req.ttl,
+                    req.ttls.clone(),
+                    req.pairs.len(),
+                ));
+                Ok(Box::new(kvrpcpb::RawBatchPutResponse::default()) as Box<dyn Any>)
+            },
+        )));
+
+        // Each item is exactly 8 KiB including its key. client-go appends an
+        // item before testing the accumulated size, so 16 KiB is sent as one
+        // batch and the third item starts the second batch.
+        let pairs = vec![1_u8, 2, 3]
+            .into_iter()
+            .map(|key| kvrpcpb::KvPair {
+                key: vec![key],
+                value: vec![key; 8191],
+                ..Default::default()
+            })
+            .collect();
+        let request = new_raw_batch_put_request(pairs, vec![7, 11, 13], None, false);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::Disable, request)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .plan();
+        plan.execute().await?;
+
+        let mut captured = captured.lock().unwrap().clone();
+        captured.sort_by_key(|(ttl, _, _)| *ttl);
+        assert_eq!(captured, [(7, vec![7, 11], 2), (13, vec![13], 1)]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn raw_batch_get_uses_client_go_key_count_boundary() -> Result<()> {
+        let batch_sizes = Arc::new(Mutex::new(Vec::new()));
+        let captured_sizes = batch_sizes.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let req: &kvrpcpb::RawBatchGetRequest = req.downcast_ref().unwrap();
+                captured_sizes.lock().unwrap().push(req.keys.len());
+                Ok(Box::new(kvrpcpb::RawBatchGetResponse::default()) as Box<dyn Any>)
+            },
+        )));
+
+        let request = new_raw_batch_get_request(vec![vec![11]; 514], None);
+        let plan = crate::request::PlanBuilder::new(client, Keyspace::Disable, request)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(Collect)
+            .plan();
+        let _: Vec<KvPair> = plan.execute().await?;
+
+        let mut sizes = batch_sizes.lock().unwrap().clone();
+        sizes.sort_unstable();
+        assert_eq!(sizes, [1, 513]);
         Ok(())
     }
 }

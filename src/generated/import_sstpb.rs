@@ -1196,3 +1196,1115 @@ pub mod import_sst_client {
         }
     }
 }
+/// Generated server implementations.
+#[allow(non_camel_case_types)]
+pub mod import_sst_server {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with ImportSstServer.
+    #[async_trait]
+    pub trait ImportSst: Send + Sync + 'static {
+        /// Switch to normal/import mode.
+        async fn switch_mode(
+            &self,
+            request: tonic::Request<super::SwitchModeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SwitchModeResponse>,
+            tonic::Status,
+        >;
+        /// Get import mode(normal/import).
+        async fn get_mode(
+            &self,
+            request: tonic::Request<super::GetModeRequest>,
+        ) -> std::result::Result<tonic::Response<super::GetModeResponse>, tonic::Status>;
+        /// Upload an SST file to a server.
+        async fn upload(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::UploadRequest>>,
+        ) -> std::result::Result<tonic::Response<super::UploadResponse>, tonic::Status>;
+        /// Ingest an uploaded SST file to a region.
+        async fn ingest(
+            &self,
+            request: tonic::Request<super::IngestRequest>,
+        ) -> std::result::Result<tonic::Response<super::IngestResponse>, tonic::Status>;
+        /// Compact the specific range for better performance.
+        async fn compact(
+            &self,
+            request: tonic::Request<super::CompactRequest>,
+        ) -> std::result::Result<tonic::Response<super::CompactResponse>, tonic::Status>;
+        async fn set_download_speed_limit(
+            &self,
+            request: tonic::Request<super::SetDownloadSpeedLimitRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SetDownloadSpeedLimitResponse>,
+            tonic::Status,
+        >;
+        /// Download an SST file from an external storage, and performs key-rewrite
+        /// after downloading.
+        async fn download(
+            &self,
+            request: tonic::Request<super::DownloadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DownloadResponse>,
+            tonic::Status,
+        >;
+        /// Download SST files in batch from external storage, perform key rewrite,
+        /// and merge them into one SST after downloading.
+        async fn batch_download(
+            &self,
+            request: tonic::Request<super::DownloadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DownloadResponse>,
+            tonic::Status,
+        >;
+        /// Download SST files in batch from external storage, perform key rewrite,
+        /// merge them into one SST, and keep only the latest MVCC version after downloading.
+        async fn batch_download_latest_mvcc(
+            &self,
+            request: tonic::Request<super::DownloadRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DownloadResponse>,
+            tonic::Status,
+        >;
+        /// Open a write stream to generate sst files
+        async fn write(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::WriteRequest>>,
+        ) -> std::result::Result<tonic::Response<super::WriteResponse>, tonic::Status>;
+        async fn raw_write(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::RawWriteRequest>>,
+        ) -> std::result::Result<
+            tonic::Response<super::RawWriteResponse>,
+            tonic::Status,
+        >;
+        /// Ingest Multiple files in one request
+        async fn multi_ingest(
+            &self,
+            request: tonic::Request<super::MultiIngestRequest>,
+        ) -> std::result::Result<tonic::Response<super::IngestResponse>, tonic::Status>;
+        /// Server streaming response type for the DuplicateDetect method.
+        type DuplicateDetectStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::DuplicateDetectResponse, tonic::Status>,
+            >
+            + Send
+            + 'static;
+        /// Collect duplicate data from TiKV.
+        async fn duplicate_detect(
+            &self,
+            request: tonic::Request<super::DuplicateDetectRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::DuplicateDetectStream>,
+            tonic::Status,
+        >;
+        /// Apply download & apply increment kv files to TiKV.
+        async fn apply(
+            &self,
+            request: tonic::Request<super::ApplyRequest>,
+        ) -> std::result::Result<tonic::Response<super::ApplyResponse>, tonic::Status>;
+        /// ClearFiles clear applied file after restore succeed.
+        async fn clear_files(
+            &self,
+            request: tonic::Request<super::ClearRequest>,
+        ) -> std::result::Result<tonic::Response<super::ClearResponse>, tonic::Status>;
+        /// Suspend ingest for data listeners don't support catching import data.
+        async fn suspend_import_rpc(
+            &self,
+            request: tonic::Request<super::SuspendImportRpcRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SuspendImportRpcResponse>,
+            tonic::Status,
+        >;
+        /// AddForcePartitionRange marks a range in tikv that any compact overlaps with this range
+        /// should generates SST files partitioned at region boundaries as well as this range boundary.
+        /// TiKV will also try to do manual compact(if needed) after setting this range to eusure
+        /// any incoming SST under this range can be ingested into the bottom level if there is no real kv overlap.
+        async fn add_force_partition_range(
+            &self,
+            request: tonic::Request<super::AddPartitionRangeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AddPartitionRangeResponse>,
+            tonic::Status,
+        >;
+        /// Remove the force partition range after the task is finished. If this function is not called,
+        /// tikv will cleanup the range after TTL to ensure it can be cleaned eventually.
+        async fn remove_force_partition_range(
+            &self,
+            request: tonic::Request<super::RemovePartitionRangeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RemovePartitionRangeResponse>,
+            tonic::Status,
+        >;
+    }
+    /// ImportSST provides a service to import a generated SST file to a region in TiKV.
+    ///
+    /// In order to import an SST file to a region, the user should:
+    ///
+    /// 1. Retrieve the meta of the region according to the SST file's range.
+    /// 1. Upload the SST file to the servers where the region's peers locate in.
+    /// 1. Issue an ingest request to the region's leader with the SST file's metadata.
+    ///
+    /// It's the user's responsibility to make sure that the SST file is uploaded to
+    /// the servers where the region's peers locate in, before issue the ingest
+    /// request to the region's leader. However, the region can be scheduled (so the
+    /// location of the region's peers will be changed) or split/merged (so the range
+    /// of the region will be changed), after the SST file is uploaded, but before
+    /// the SST file is ingested. So, the region's epoch is provided in the SST
+    /// file's metadata, to guarantee that the region's epoch must be the same
+    /// between the SST file is uploaded and ingested later.
+    #[derive(Debug)]
+    pub struct ImportSstServer<T: ImportSst> {
+        inner: _Inner<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    struct _Inner<T>(Arc<T>);
+    impl<T: ImportSst> ImportSstServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            let inner = _Inner(inner);
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for ImportSstServer<T>
+    where
+        T: ImportSst,
+        B: Body + Send + 'static,
+        B::Error: Into<StdError> + Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            let inner = self.inner.clone();
+            match req.uri().path() {
+                "/import_sstpb.ImportSST/SwitchMode" => {
+                    #[allow(non_camel_case_types)]
+                    struct SwitchModeSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::UnaryService<super::SwitchModeRequest>
+                    for SwitchModeSvc<T> {
+                        type Response = super::SwitchModeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SwitchModeRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::switch_mode(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = SwitchModeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/GetMode" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetModeSvc<T: ImportSst>(pub Arc<T>);
+                    impl<T: ImportSst> tonic::server::UnaryService<super::GetModeRequest>
+                    for GetModeSvc<T> {
+                        type Response = super::GetModeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetModeRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::get_mode(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetModeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/Upload" => {
+                    #[allow(non_camel_case_types)]
+                    struct UploadSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::ClientStreamingService<super::UploadRequest>
+                    for UploadSvc<T> {
+                        type Response = super::UploadResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::UploadRequest>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::upload(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = UploadSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/Ingest" => {
+                    #[allow(non_camel_case_types)]
+                    struct IngestSvc<T: ImportSst>(pub Arc<T>);
+                    impl<T: ImportSst> tonic::server::UnaryService<super::IngestRequest>
+                    for IngestSvc<T> {
+                        type Response = super::IngestResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::IngestRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::ingest(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = IngestSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/Compact" => {
+                    #[allow(non_camel_case_types)]
+                    struct CompactSvc<T: ImportSst>(pub Arc<T>);
+                    impl<T: ImportSst> tonic::server::UnaryService<super::CompactRequest>
+                    for CompactSvc<T> {
+                        type Response = super::CompactResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CompactRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::compact(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CompactSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/SetDownloadSpeedLimit" => {
+                    #[allow(non_camel_case_types)]
+                    struct SetDownloadSpeedLimitSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::UnaryService<super::SetDownloadSpeedLimitRequest>
+                    for SetDownloadSpeedLimitSvc<T> {
+                        type Response = super::SetDownloadSpeedLimitResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SetDownloadSpeedLimitRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::set_download_speed_limit(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = SetDownloadSpeedLimitSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/Download" => {
+                    #[allow(non_camel_case_types)]
+                    struct DownloadSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::UnaryService<super::DownloadRequest>
+                    for DownloadSvc<T> {
+                        type Response = super::DownloadResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DownloadRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::download(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = DownloadSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/BatchDownload" => {
+                    #[allow(non_camel_case_types)]
+                    struct BatchDownloadSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::UnaryService<super::DownloadRequest>
+                    for BatchDownloadSvc<T> {
+                        type Response = super::DownloadResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DownloadRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::batch_download(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = BatchDownloadSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/BatchDownloadLatestMVCC" => {
+                    #[allow(non_camel_case_types)]
+                    struct BatchDownloadLatestMVCCSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::UnaryService<super::DownloadRequest>
+                    for BatchDownloadLatestMVCCSvc<T> {
+                        type Response = super::DownloadResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DownloadRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::batch_download_latest_mvcc(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = BatchDownloadLatestMVCCSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/Write" => {
+                    #[allow(non_camel_case_types)]
+                    struct WriteSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::ClientStreamingService<super::WriteRequest>
+                    for WriteSvc<T> {
+                        type Response = super::WriteResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::WriteRequest>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::write(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = WriteSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/RawWrite" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawWriteSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::ClientStreamingService<super::RawWriteRequest>
+                    for RawWriteSvc<T> {
+                        type Response = super::RawWriteResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::RawWriteRequest>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::raw_write(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawWriteSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/MultiIngest" => {
+                    #[allow(non_camel_case_types)]
+                    struct MultiIngestSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::UnaryService<super::MultiIngestRequest>
+                    for MultiIngestSvc<T> {
+                        type Response = super::IngestResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::MultiIngestRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::multi_ingest(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = MultiIngestSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/DuplicateDetect" => {
+                    #[allow(non_camel_case_types)]
+                    struct DuplicateDetectSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::ServerStreamingService<
+                        super::DuplicateDetectRequest,
+                    > for DuplicateDetectSvc<T> {
+                        type Response = super::DuplicateDetectResponse;
+                        type ResponseStream = T::DuplicateDetectStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DuplicateDetectRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::duplicate_detect(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = DuplicateDetectSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/Apply" => {
+                    #[allow(non_camel_case_types)]
+                    struct ApplySvc<T: ImportSst>(pub Arc<T>);
+                    impl<T: ImportSst> tonic::server::UnaryService<super::ApplyRequest>
+                    for ApplySvc<T> {
+                        type Response = super::ApplyResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ApplyRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::apply(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ApplySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/ClearFiles" => {
+                    #[allow(non_camel_case_types)]
+                    struct ClearFilesSvc<T: ImportSst>(pub Arc<T>);
+                    impl<T: ImportSst> tonic::server::UnaryService<super::ClearRequest>
+                    for ClearFilesSvc<T> {
+                        type Response = super::ClearResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ClearRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::clear_files(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ClearFilesSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/SuspendImportRPC" => {
+                    #[allow(non_camel_case_types)]
+                    struct SuspendImportRPCSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::UnaryService<super::SuspendImportRpcRequest>
+                    for SuspendImportRPCSvc<T> {
+                        type Response = super::SuspendImportRpcResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SuspendImportRpcRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::suspend_import_rpc(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = SuspendImportRPCSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/AddForcePartitionRange" => {
+                    #[allow(non_camel_case_types)]
+                    struct AddForcePartitionRangeSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::UnaryService<super::AddPartitionRangeRequest>
+                    for AddForcePartitionRangeSvc<T> {
+                        type Response = super::AddPartitionRangeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AddPartitionRangeRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::add_force_partition_range(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = AddForcePartitionRangeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_sstpb.ImportSST/RemoveForcePartitionRange" => {
+                    #[allow(non_camel_case_types)]
+                    struct RemoveForcePartitionRangeSvc<T: ImportSst>(pub Arc<T>);
+                    impl<
+                        T: ImportSst,
+                    > tonic::server::UnaryService<super::RemovePartitionRangeRequest>
+                    for RemoveForcePartitionRangeSvc<T> {
+                        type Response = super::RemovePartitionRangeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RemovePartitionRangeRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportSst>::remove_force_partition_range(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RemoveForcePartitionRangeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        Ok(
+                            http::Response::builder()
+                                .status(200)
+                                .header("grpc-status", "12")
+                                .header("content-type", "application/grpc")
+                                .body(empty_body())
+                                .unwrap(),
+                        )
+                    })
+                }
+            }
+        }
+    }
+    impl<T: ImportSst> Clone for ImportSstServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    impl<T: ImportSst> Clone for _Inner<T> {
+        fn clone(&self) -> Self {
+            Self(Arc::clone(&self.0))
+        }
+    }
+    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    impl<T: ImportSst> tonic::server::NamedService for ImportSstServer<T> {
+        const NAME: &'static str = "import_sstpb.ImportSST";
+    }
+}

@@ -68,8 +68,9 @@ pub fn new_raw_delete_request(
 pub fn new_raw_batch_delete_request(
     keys: impl Iterator<Item = Key>,
     cf: Option<ColumnFamily>,
+    atomic: bool,
 ) -> kvrpcpb::RawBatchDeleteRequest {
-    requests::new_raw_batch_delete_request(keys.map(Into::into).collect(), cf)
+    requests::new_raw_batch_delete_request(keys.map(Into::into).collect(), cf, atomic)
 }
 
 pub fn new_raw_delete_range_request(
@@ -78,6 +79,11 @@ pub fn new_raw_delete_range_request(
 ) -> kvrpcpb::RawDeleteRangeRequest {
     let (start_key, end_key) = range.into_keys();
     requests::new_raw_delete_range_request(start_key.into(), end_key.unwrap_or_default().into(), cf)
+}
+
+pub fn new_raw_checksum_request(range: BoundRange) -> kvrpcpb::RawChecksumRequest {
+    let (start_key, end_key) = range.into_keys();
+    requests::new_raw_checksum_request(start_key.into(), end_key.unwrap_or_default().into())
 }
 
 pub fn new_raw_scan_request(

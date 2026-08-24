@@ -1,6 +1,7 @@
 use crate::transaction::sync_client::safe_block_on;
 use crate::{
-    transaction::Mutation, BoundRange, Key, KvPair, Result, Timestamp, Transaction, Value,
+    transaction::Mutation, BoundRange, Key, KvPair, Priority, Result, RpcInterceptorHandle,
+    Timestamp, Transaction, Value,
 };
 use std::sync::Arc;
 
@@ -16,6 +17,21 @@ pub struct SyncTransaction {
 impl SyncTransaction {
     pub(crate) fn new(inner: Transaction, runtime: Arc<tokio::runtime::Runtime>) -> Self {
         Self { inner, runtime }
+    }
+
+    /// Set the priority for subsequent read and write requests.
+    pub fn set_priority(&mut self, priority: Priority) {
+        self.inner.set_priority(priority);
+    }
+
+    /// Replace the RPC interceptor used by this transaction.
+    pub fn set_rpc_interceptor(&mut self, interceptor: RpcInterceptorHandle) {
+        self.inner.set_rpc_interceptor(interceptor);
+    }
+
+    /// Add an RPC interceptor after the existing transaction chain.
+    pub fn add_rpc_interceptor(&mut self, interceptor: RpcInterceptorHandle) {
+        self.inner.add_rpc_interceptor(interceptor);
     }
 
     /// Get the value associated with the given key.

@@ -572,3 +572,693 @@ pub mod import_kv_client {
         }
     }
 }
+/// Generated server implementations.
+#[allow(non_camel_case_types)]
+pub mod import_kv_server {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with ImportKvServer.
+    #[async_trait]
+    pub trait ImportKv: Send + Sync + 'static {
+        /// Switch the target cluster to normal/import mode.
+        async fn switch_mode(
+            &self,
+            request: tonic::Request<super::SwitchModeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SwitchModeResponse>,
+            tonic::Status,
+        >;
+        /// Open an engine.
+        async fn open_engine(
+            &self,
+            request: tonic::Request<super::OpenEngineRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::OpenEngineResponse>,
+            tonic::Status,
+        >;
+        /// Open a write stream to the engine.
+        async fn write_engine(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::WriteEngineRequest>>,
+        ) -> std::result::Result<
+            tonic::Response<super::WriteEngineResponse>,
+            tonic::Status,
+        >;
+        /// Write to engine, single message version
+        async fn write_engine_v3(
+            &self,
+            request: tonic::Request<super::WriteEngineV3Request>,
+        ) -> std::result::Result<
+            tonic::Response<super::WriteEngineResponse>,
+            tonic::Status,
+        >;
+        /// Close the engine.
+        async fn close_engine(
+            &self,
+            request: tonic::Request<super::CloseEngineRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CloseEngineResponse>,
+            tonic::Status,
+        >;
+        /// Import the engine to the target cluster.
+        async fn import_engine(
+            &self,
+            request: tonic::Request<super::ImportEngineRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ImportEngineResponse>,
+            tonic::Status,
+        >;
+        /// Clean up the engine.
+        async fn cleanup_engine(
+            &self,
+            request: tonic::Request<super::CleanupEngineRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CleanupEngineResponse>,
+            tonic::Status,
+        >;
+        /// Compact the target cluster for better performance.
+        async fn compact_cluster(
+            &self,
+            request: tonic::Request<super::CompactClusterRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CompactClusterResponse>,
+            tonic::Status,
+        >;
+        /// Get current version and commit hash
+        async fn get_version(
+            &self,
+            request: tonic::Request<super::GetVersionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetVersionResponse>,
+            tonic::Status,
+        >;
+        /// Get importer metrics
+        async fn get_metrics(
+            &self,
+            request: tonic::Request<super::GetMetricsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetMetricsResponse>,
+            tonic::Status,
+        >;
+    }
+    /// ImportKV provides a service to import key-value pairs to TiKV.
+    ///
+    /// In order to import key-value pairs to TiKV, the user should:
+    ///
+    /// 1. Open an engine identified by an UUID.
+    /// 1. Open write streams to write key-value batches to the opened engine.
+    ///   Different streams/clients can write to the same engine concurrently.
+    /// 1. Close the engine after all write batches have been finished. An
+    ///   engine can only be closed when all write streams are closed. An
+    ///   engine can only be closed once, and it can not be opened again
+    ///   once it is closed.
+    /// 1. Import the data in the engine to the target cluster. Note that
+    ///   the import process is not atomic, it requires the data to be
+    ///   idempotent on retry. An engine can only be imported after it is
+    ///   closed. An engine can be imported multiple times, but can not be
+    ///   imported concurrently.
+    /// 1. Clean up the engine after it has been imported. Delete all data
+    ///   in the engine. An engine can not be cleaned up when it is
+    ///   writing or importing.
+    #[derive(Debug)]
+    pub struct ImportKvServer<T: ImportKv> {
+        inner: _Inner<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    struct _Inner<T>(Arc<T>);
+    impl<T: ImportKv> ImportKvServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            let inner = _Inner(inner);
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for ImportKvServer<T>
+    where
+        T: ImportKv,
+        B: Body + Send + 'static,
+        B::Error: Into<StdError> + Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            let inner = self.inner.clone();
+            match req.uri().path() {
+                "/import_kvpb.ImportKV/SwitchMode" => {
+                    #[allow(non_camel_case_types)]
+                    struct SwitchModeSvc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::UnaryService<super::SwitchModeRequest>
+                    for SwitchModeSvc<T> {
+                        type Response = super::SwitchModeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SwitchModeRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::switch_mode(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = SwitchModeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_kvpb.ImportKV/OpenEngine" => {
+                    #[allow(non_camel_case_types)]
+                    struct OpenEngineSvc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::UnaryService<super::OpenEngineRequest>
+                    for OpenEngineSvc<T> {
+                        type Response = super::OpenEngineResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::OpenEngineRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::open_engine(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = OpenEngineSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_kvpb.ImportKV/WriteEngine" => {
+                    #[allow(non_camel_case_types)]
+                    struct WriteEngineSvc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::ClientStreamingService<super::WriteEngineRequest>
+                    for WriteEngineSvc<T> {
+                        type Response = super::WriteEngineResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::WriteEngineRequest>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::write_engine(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = WriteEngineSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_kvpb.ImportKV/WriteEngineV3" => {
+                    #[allow(non_camel_case_types)]
+                    struct WriteEngineV3Svc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::UnaryService<super::WriteEngineV3Request>
+                    for WriteEngineV3Svc<T> {
+                        type Response = super::WriteEngineResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::WriteEngineV3Request>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::write_engine_v3(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = WriteEngineV3Svc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_kvpb.ImportKV/CloseEngine" => {
+                    #[allow(non_camel_case_types)]
+                    struct CloseEngineSvc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::UnaryService<super::CloseEngineRequest>
+                    for CloseEngineSvc<T> {
+                        type Response = super::CloseEngineResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CloseEngineRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::close_engine(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CloseEngineSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_kvpb.ImportKV/ImportEngine" => {
+                    #[allow(non_camel_case_types)]
+                    struct ImportEngineSvc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::UnaryService<super::ImportEngineRequest>
+                    for ImportEngineSvc<T> {
+                        type Response = super::ImportEngineResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ImportEngineRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::import_engine(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ImportEngineSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_kvpb.ImportKV/CleanupEngine" => {
+                    #[allow(non_camel_case_types)]
+                    struct CleanupEngineSvc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::UnaryService<super::CleanupEngineRequest>
+                    for CleanupEngineSvc<T> {
+                        type Response = super::CleanupEngineResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CleanupEngineRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::cleanup_engine(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CleanupEngineSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_kvpb.ImportKV/CompactCluster" => {
+                    #[allow(non_camel_case_types)]
+                    struct CompactClusterSvc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::UnaryService<super::CompactClusterRequest>
+                    for CompactClusterSvc<T> {
+                        type Response = super::CompactClusterResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CompactClusterRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::compact_cluster(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CompactClusterSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_kvpb.ImportKV/GetVersion" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetVersionSvc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::UnaryService<super::GetVersionRequest>
+                    for GetVersionSvc<T> {
+                        type Response = super::GetVersionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetVersionRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::get_version(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetVersionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/import_kvpb.ImportKV/GetMetrics" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetMetricsSvc<T: ImportKv>(pub Arc<T>);
+                    impl<
+                        T: ImportKv,
+                    > tonic::server::UnaryService<super::GetMetricsRequest>
+                    for GetMetricsSvc<T> {
+                        type Response = super::GetMetricsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetMetricsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ImportKv>::get_metrics(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetMetricsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        Ok(
+                            http::Response::builder()
+                                .status(200)
+                                .header("grpc-status", "12")
+                                .header("content-type", "application/grpc")
+                                .body(empty_body())
+                                .unwrap(),
+                        )
+                    })
+                }
+            }
+        }
+    }
+    impl<T: ImportKv> Clone for ImportKvServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    impl<T: ImportKv> Clone for _Inner<T> {
+        fn clone(&self) -> Self {
+            Self(Arc::clone(&self.0))
+        }
+    }
+    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    impl<T: ImportKv> tonic::server::NamedService for ImportKvServer<T> {
+        const NAME: &'static str = "import_kvpb.ImportKV";
+    }
+}

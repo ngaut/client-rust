@@ -14,6 +14,9 @@ use tokio::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
+use crate::interceptor::RpcInterceptorChain;
+use crate::interceptor::RpcInterceptorHandle;
+use crate::kv::{ReplicaReadAdjuster, ReplicaReadConfig};
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb;
@@ -22,21 +25,26 @@ use crate::request::Collect;
 use crate::request::CollectError;
 use crate::request::CollectSingle;
 use crate::request::CollectWithShard;
+use crate::request::Dispatch;
 use crate::request::EncodeKeyspace;
 use crate::request::KeyMode;
 use crate::request::Keyspace;
+use crate::request::KvRequest;
+use crate::request::NoTarget;
 use crate::request::Plan;
 use crate::request::PlanBuilder;
 use crate::request::RetryOptions;
 use crate::request::TruncateKeyspace;
 use crate::timestamp::TimestampExt;
 use crate::transaction::buffer::Buffer;
+use crate::transaction::latch::LatchesScheduler;
 use crate::transaction::lock::format_key_for_log;
 use crate::transaction::lowering::*;
 use crate::BoundRange;
 use crate::Error;
 use crate::Key;
 use crate::KvPair;
+use crate::Priority;
 use crate::Result;
 use crate::Value;
 
@@ -85,6 +93,16 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     rpc: Arc<PdC>,
     options: TransactionOptions,
     keyspace: Keyspace,
+    /// Canonical API V2 keyspace name retained from the creating client so
+    /// direct and retry/shard-cloned requests receive the same context.
+    keyspace_name: Option<String>,
+    rpc_interceptor: Option<RpcInterceptorChain>,
+    /// Snapshot-only callers may replace this with source replica-read
+    /// settings; ordinary transactions retain direct leader reads.
+    replica_read_config: ReplicaReadConfig,
+    /// Source `KVSnapshot.replicaReadAdjuster`, retained independently from
+    /// the stable selection settings because it runs per get/batch-get.
+    replica_read_adjuster: Option<ReplicaReadAdjuster>,
     is_heartbeat_started: bool,
     /// Set once the transaction enters the commit path (`StartedCommit`), where
     /// prewrite may place 2PC locks. Kept as a dedicated flag because the status
@@ -92,14 +110,38 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// had started — which a rollback retry would otherwise need to know.
     prewritten: bool,
     start_instant: Instant,
+    latches: Option<Arc<LatchesScheduler>>,
 }
 
 impl<PdC: PdClient> Transaction<PdC> {
+    #[cfg(test)]
     pub(crate) fn new(
         timestamp: Timestamp,
         rpc: Arc<PdC>,
         options: TransactionOptions,
         keyspace: Keyspace,
+    ) -> Transaction<PdC> {
+        Self::new_with_latches(timestamp, rpc, options, keyspace, None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_latches(
+        timestamp: Timestamp,
+        rpc: Arc<PdC>,
+        options: TransactionOptions,
+        keyspace: Keyspace,
+        latches: Option<Arc<LatchesScheduler>>,
+    ) -> Transaction<PdC> {
+        Self::new_with_latches_and_keyspace_name(timestamp, rpc, options, keyspace, None, latches)
+    }
+
+    pub(crate) fn new_with_latches_and_keyspace_name(
+        timestamp: Timestamp,
+        rpc: Arc<PdC>,
+        options: TransactionOptions,
+        keyspace: Keyspace,
+        keyspace_name: Option<String>,
+        latches: Option<Arc<LatchesScheduler>>,
     ) -> Transaction<PdC> {
         let status = if options.read_only {
             TransactionStatus::ReadOnly
@@ -113,9 +155,72 @@ impl<PdC: PdClient> Transaction<PdC> {
             rpc,
             options,
             keyspace,
+            keyspace_name,
+            rpc_interceptor: None,
+            replica_read_config: ReplicaReadConfig::default(),
+            replica_read_adjuster: None,
             is_heartbeat_started: false,
             prewritten: false,
             start_instant: std::time::Instant::now(),
+            latches,
+        }
+    }
+
+    fn plan<Req: KvRequest>(&self, request: Req) -> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
+        PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+            .keyspace_name_option(self.keyspace_name.as_deref())
+            .rpc_interceptor_option(self.rpc_interceptor.clone())
+            .replica_read(self.replica_read_config.clone())
+    }
+
+    pub(crate) fn set_replica_read_config(&mut self, config: ReplicaReadConfig) {
+        self.replica_read_config = config;
+    }
+
+    pub(crate) fn set_stale_read(&mut self, stale_read: bool) {
+        self.replica_read_config.stale_read = stale_read;
+    }
+
+    pub(crate) fn set_match_store_labels(&mut self, labels: Vec<crate::proto::metapb::StoreLabel>) {
+        self.replica_read_config.labels = labels;
+    }
+
+    pub(crate) fn set_load_based_replica_read_threshold(&mut self, busy_threshold: Duration) {
+        self.replica_read_config.busy_threshold_ms = u32::try_from(busy_threshold.as_millis())
+            .ok()
+            .filter(|threshold| *threshold != 0)
+            .unwrap_or_default();
+    }
+
+    pub(crate) fn set_replica_read_adjuster(&mut self, adjuster: ReplicaReadAdjuster) {
+        self.replica_read_adjuster = Some(adjuster);
+    }
+
+    fn replica_read_config_for_items(&self, item_count: usize) -> ReplicaReadConfig {
+        let mut config = self.replica_read_config.clone();
+        if config.read_type.is_follower_read() {
+            if let Some(adjuster) = &self.replica_read_adjuster {
+                config.apply_adjustment(adjuster(item_count));
+            }
+        }
+        config
+    }
+
+    /// Replace the RPC interceptor used by this transaction's reads, writes,
+    /// retries, and lock-resolution requests.
+    pub fn set_rpc_interceptor(&mut self, interceptor: RpcInterceptorHandle) {
+        let mut chain = RpcInterceptorChain::new();
+        chain.link(interceptor);
+        self.rpc_interceptor = Some(chain);
+    }
+
+    /// Add an RPC interceptor after the existing chain.
+    pub fn add_rpc_interceptor(&mut self, interceptor: RpcInterceptorHandle) {
+        match &mut self.rpc_interceptor {
+            Some(chain) => {
+                chain.link(interceptor);
+            }
+            None => self.set_rpc_interceptor(interceptor),
         }
     }
 
@@ -145,16 +250,28 @@ impl<PdC: PdClient> Transaction<PdC> {
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let retry_options = self.options.retry_options.clone();
         let keyspace = self.keyspace;
+        let keyspace_name = self.keyspace_name.clone();
+        let rpc_interceptor = self.rpc_interceptor.clone();
+        let priority = self.options.priority;
+        let replica_read_config = self.replica_read_config_for_items(1);
 
         self.buffer
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp.clone());
-                let plan = PlanBuilder::new(rpc, keyspace, request)
-                    .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
-                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
-                    .merge(CollectSingle)
-                    .post_process_default()
-                    .plan();
+                let plan = plan_with_keyspace_name(
+                    rpc,
+                    keyspace,
+                    keyspace_name.as_deref(),
+                    rpc_interceptor,
+                    replica_read_config.clone(),
+                    request,
+                )
+                .priority(priority)
+                .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .merge(CollectSingle)
+                .post_process_default()
+                .plan();
                 plan.execute().await
             })
             .await
@@ -276,20 +393,44 @@ impl<PdC: PdClient> Transaction<PdC> {
         let timestamp = self.timestamp.clone();
         let rpc = self.rpc.clone();
         let keyspace = self.keyspace;
+        let keyspace_name = self.keyspace_name.clone();
+        let rpc_interceptor = self.rpc_interceptor.clone();
         let keys = keys
             .into_iter()
             .map(move |k| k.into().encode_keyspace(keyspace, KeyMode::Txn));
         let retry_options = self.options.retry_options.clone();
+        let priority = self.options.priority;
+        let replica_read_config = self.replica_read_config.clone();
+        let replica_read_adjuster = self.replica_read_adjuster.clone();
 
         self.buffer
             .batch_get_or_else(keys, move |keys| async move {
-                let request = new_batch_get_request(keys, timestamp.clone());
-                let plan = PlanBuilder::new(rpc, keyspace, request)
-                    .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
-                    .retry_multi_region(retry_options.region_backoff)
-                    .merge(Collect)
-                    .plan();
-                plan.execute().await.map(|r| r.into_iter().collect())
+                let keys = keys.collect::<Vec<_>>();
+                let replica_read_config = adjusted_replica_read_config(
+                    &replica_read_config,
+                    replica_read_adjuster.as_ref(),
+                    keys.len(),
+                );
+                let request = new_batch_get_request(keys.into_iter(), timestamp.clone());
+                let plan = plan_with_keyspace_name(
+                    rpc,
+                    keyspace,
+                    keyspace_name.as_deref(),
+                    rpc_interceptor,
+                    replica_read_config,
+                    request,
+                )
+                .priority(priority)
+                .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
+                .retry_multi_region(retry_options.region_backoff)
+                .merge(Collect)
+                .plan();
+                plan.execute().await.map(|pairs| {
+                    pairs
+                        .into_iter()
+                        .map(|pair| pair.encode_keyspace(keyspace, KeyMode::Txn))
+                        .collect()
+                })
             })
             .await
             .map(move |pairs| pairs.map(move |pair| pair.truncate_keyspace(keyspace)))
@@ -677,6 +818,25 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         self.start_auto_heartbeat().await;
 
+        let latch = if self.is_pessimistic() {
+            None
+        } else if let Some(scheduler) = &self.latches {
+            let keys = mutations
+                .iter()
+                .map(|mutation| mutation.key.clone())
+                .collect();
+            let latch = scheduler.lock(self.timestamp.version(), keys).await;
+            if latch.is_stale() {
+                return Err(crate::error::WriteConflictInLatchError {
+                    start_timestamp: self.timestamp.version(),
+                }
+                .into());
+            }
+            Some(latch)
+        } else {
+            None
+        };
+
         let res = Committer::new(
             primary_key,
             mutations,
@@ -684,11 +844,17 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc.clone(),
             self.options.clone(),
             self.keyspace,
+            self.keyspace_name.clone(),
+            self.rpc_interceptor.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
         .commit()
         .await;
+
+        if let (Some(latch), Ok(Some(commit_timestamp))) = (&latch, &res) {
+            latch.set_commit_timestamp(commit_timestamp.version());
+        }
 
         if let Ok(commit_ts) = &res {
             self.set_status(TransactionStatus::Committed);
@@ -753,6 +919,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc.clone(),
             self.options.clone(),
             self.keyspace,
+            self.keyspace_name.clone(),
+            self.rpc_interceptor.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -774,6 +942,11 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.timestamp.clone()
     }
 
+    /// Set the priority for subsequent read and write requests.
+    pub fn set_priority(&mut self, priority: Priority) {
+        self.options.priority = priority;
+    }
+
     /// Send a heart beat message to keep the transaction alive on the server and update its TTL.
     ///
     /// Returns the TTL set on the transaction's locks by TiKV.
@@ -790,7 +963,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             primary_key,
             self.start_instant.elapsed().as_millis() as u64 + MAX_TTL,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+        let plan = self
+            .plan(request)
             .resolve_lock(
                 self.timestamp.clone(),
                 self.options.retry_options.lock_backoff.clone(),
@@ -816,6 +990,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc = self.rpc.clone();
         let retry_options = self.options.retry_options.clone();
         let keyspace = self.keyspace;
+        let keyspace_name = self.keyspace_name.clone();
+        let rpc_interceptor = self.rpc_interceptor.clone();
+        let priority = self.options.priority;
+        let replica_read_config = self.replica_read_config.clone();
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
 
         self.buffer
@@ -832,12 +1010,25 @@ impl<PdC: PdClient> Transaction<PdC> {
                         key_only,
                         reverse,
                     );
-                    let plan = PlanBuilder::new(rpc, keyspace, request)
-                        .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
-                        .retry_multi_region(retry_options.region_backoff)
-                        .merge(Collect)
-                        .plan();
-                    plan.execute().await.map(|r| r.into_iter().collect())
+                    let plan = plan_with_keyspace_name(
+                        rpc,
+                        keyspace,
+                        keyspace_name.as_deref(),
+                        rpc_interceptor,
+                        replica_read_config.clone(),
+                        request,
+                    )
+                    .priority(priority)
+                    .resolve_lock(timestamp, retry_options.lock_backoff, keyspace)
+                    .retry_multi_region(retry_options.region_backoff)
+                    .merge(Collect)
+                    .plan();
+                    plan.execute().await.map(|pairs| {
+                        pairs
+                            .into_iter()
+                            .map(|pair| pair.encode_keyspace(keyspace, KeyMode::Txn))
+                            .collect()
+                    })
                 },
             )
             .await
@@ -891,7 +1082,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             for_update_ts.clone(),
             need_value,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
+        let plan = self
+            .plan(request)
+            .priority(self.options.priority)
             .resolve_lock(
                 self.timestamp.clone(),
                 self.options.retry_options.lock_backoff.clone(),
@@ -959,7 +1152,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             start_version.clone(),
             for_update_ts,
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, req)
+        let plan = self
+            .plan(req)
+            .priority(self.options.priority)
             .resolve_lock(
                 start_version,
                 self.options.retry_options.lock_backoff.clone(),
@@ -1012,6 +1207,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         };
         let start_instant = self.start_instant;
         let keyspace = self.keyspace;
+        let keyspace_name = self.keyspace_name.clone();
+        let rpc_interceptor = self.rpc_interceptor.clone();
         debug!(
             "starting auto-heartbeat, start_ts: {}, interval: {:?}",
             self.timestamp.version(),
@@ -1037,10 +1234,17 @@ impl<PdC: PdClient> Transaction<PdC> {
                     primary_key.clone(),
                     start_instant.elapsed().as_millis() as u64 + MAX_TTL,
                 );
-                let plan = PlanBuilder::new(rpc.clone(), keyspace, request)
-                    .retry_multi_region(region_backoff.clone())
-                    .merge(CollectSingle)
-                    .plan();
+                let plan = plan_with_keyspace_name(
+                    rpc.clone(),
+                    keyspace,
+                    keyspace_name.as_deref(),
+                    rpc_interceptor.clone(),
+                    ReplicaReadConfig::default(),
+                    request,
+                )
+                .retry_multi_region(region_backoff.clone())
+                .merge(CollectSingle)
+                .plan();
                 plan.execute().await?;
             }
             Ok::<(), Error>(())
@@ -1087,6 +1291,34 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
         false
     }
+}
+
+fn plan_with_keyspace_name<PdC: PdClient, Req: KvRequest>(
+    rpc: Arc<PdC>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    rpc_interceptor: Option<RpcInterceptorChain>,
+    replica_read_config: ReplicaReadConfig,
+    request: Req,
+) -> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
+    PlanBuilder::new(rpc, keyspace, request)
+        .keyspace_name_option(keyspace_name)
+        .rpc_interceptor_option(rpc_interceptor)
+        .replica_read(replica_read_config)
+}
+
+fn adjusted_replica_read_config(
+    stable: &ReplicaReadConfig,
+    adjuster: Option<&ReplicaReadAdjuster>,
+    item_count: usize,
+) -> ReplicaReadConfig {
+    let mut config = stable.clone();
+    if config.read_type.is_follower_read() {
+        if let Some(adjuster) = adjuster {
+            config.apply_adjustment(adjuster(item_count));
+        }
+    }
+    config
 }
 
 impl<PdC: PdClient> Drop for Transaction<PdC> {
@@ -1155,6 +1387,8 @@ pub struct TransactionOptions {
     retry_options: RetryOptions,
     /// What to do if the transaction is dropped without an attempt to commit or rollback
     check_level: CheckLevel,
+    /// Priority carried by read and write request contexts.
+    priority: Priority,
     #[doc(hidden)]
     heartbeat_option: HeartbeatOption,
 }
@@ -1181,6 +1415,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_optimistic(),
             check_level: CheckLevel::Panic,
+            priority: Priority::Normal,
             heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
     }
@@ -1194,6 +1429,7 @@ impl TransactionOptions {
             read_only: false,
             retry_options: RetryOptions::default_pessimistic(),
             check_level: CheckLevel::Panic,
+            priority: Priority::Normal,
             heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
     }
@@ -1244,6 +1480,13 @@ impl TransactionOptions {
     #[must_use]
     pub fn drop_check(mut self, level: CheckLevel) -> TransactionOptions {
         self.check_level = level;
+        self
+    }
+
+    /// Set the priority for both read and write requests.
+    #[must_use]
+    pub fn priority(mut self, priority: Priority) -> TransactionOptions {
+        self.priority = priority;
         self
     }
 
@@ -1327,6 +1570,8 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     rpc: Arc<PdC>,
     options: TransactionOptions,
     keyspace: Keyspace,
+    keyspace_name: Option<String>,
+    rpc_interceptor: Option<RpcInterceptorChain>,
     #[new(default)]
     undetermined: bool,
     write_size: u64,
@@ -1411,16 +1656,24 @@ impl<PdC: PdClient> Committer<PdC> {
             .collect();
         // FIXME set max_commit_ts and min_commit_ts
 
-        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
-            .resolve_lock(
-                self.start_version.clone(),
-                self.options.retry_options.lock_backoff.clone(),
-                self.keyspace,
-            )
-            .retry_multi_region(self.options.retry_options.region_backoff.clone())
-            .merge(CollectError)
-            .extract_error()
-            .plan();
+        let plan = plan_with_keyspace_name(
+            self.rpc.clone(),
+            self.keyspace,
+            self.keyspace_name.as_deref(),
+            self.rpc_interceptor.clone(),
+            ReplicaReadConfig::default(),
+            request,
+        )
+        .priority(self.options.priority)
+        .resolve_lock(
+            self.start_version.clone(),
+            self.options.retry_options.lock_backoff.clone(),
+            self.keyspace,
+        )
+        .retry_multi_region(self.options.retry_options.region_backoff.clone())
+        .merge(CollectError)
+        .extract_error()
+        .plan();
         let response = plan.execute().await?;
 
         if self.options.try_one_pc && response.len() == 1 {
@@ -1458,15 +1711,23 @@ impl<PdC: PdClient> Committer<PdC> {
             self.start_version.clone(),
             commit_version.clone(),
         );
-        let plan = PlanBuilder::new(self.rpc.clone(), self.keyspace, req)
-            .resolve_lock(
-                self.start_version.clone(),
-                self.options.retry_options.lock_backoff.clone(),
-                self.keyspace,
-            )
-            .retry_multi_region(self.options.retry_options.region_backoff.clone())
-            .extract_error()
-            .plan();
+        let plan = plan_with_keyspace_name(
+            self.rpc.clone(),
+            self.keyspace,
+            self.keyspace_name.as_deref(),
+            self.rpc_interceptor.clone(),
+            ReplicaReadConfig::default(),
+            req,
+        )
+        .priority(self.options.priority)
+        .resolve_lock(
+            self.start_version.clone(),
+            self.options.retry_options.lock_backoff.clone(),
+            self.keyspace,
+        )
+        .retry_multi_region(self.options.retry_options.region_backoff.clone())
+        .extract_error()
+        .plan();
         plan.execute()
             .inspect_err(|e| {
                 debug!(
@@ -1579,15 +1840,23 @@ impl<PdC: PdClient> Committer<PdC> {
                 .filter(|key| &primary_key != key);
             new_commit_request(keys, start_version.clone(), commit_version)
         };
-        let plan = PlanBuilder::new(self.rpc, self.keyspace, req)
-            .resolve_lock(
-                start_version,
-                self.options.retry_options.lock_backoff,
-                self.keyspace,
-            )
-            .retry_multi_region(self.options.retry_options.region_backoff)
-            .extract_error()
-            .plan();
+        let plan = plan_with_keyspace_name(
+            self.rpc,
+            self.keyspace,
+            self.keyspace_name.as_deref(),
+            self.rpc_interceptor,
+            ReplicaReadConfig::default(),
+            req,
+        )
+        .priority(self.options.priority)
+        .resolve_lock(
+            start_version,
+            self.options.retry_options.lock_backoff,
+            self.keyspace,
+        )
+        .retry_multi_region(self.options.retry_options.region_backoff)
+        .extract_error()
+        .plan();
         plan.execute().await?;
         Ok(())
     }
@@ -1627,26 +1896,45 @@ impl<PdC: PdClient> Committer<PdC> {
         let region_backoff = self.options.retry_options.region_backoff.clone();
         let rpc = self.rpc;
         let keyspace = self.keyspace;
+        let keyspace_name = self.keyspace_name;
+        let rpc_interceptor = self.rpc_interceptor;
+        let priority = self.options.priority;
         match self.options.kind {
             TransactionKind::Pessimistic(for_update_ts) if !prewritten => {
                 let req =
                     new_pessimistic_rollback_request(keys, start_version.clone(), for_update_ts);
-                let plan = PlanBuilder::new(rpc, keyspace, req)
-                    .resolve_lock(start_version, lock_backoff, keyspace)
-                    .retry_multi_region(region_backoff)
-                    .extract_error()
-                    .plan();
+                let plan = plan_with_keyspace_name(
+                    rpc,
+                    keyspace,
+                    keyspace_name.as_deref(),
+                    rpc_interceptor,
+                    ReplicaReadConfig::default(),
+                    req,
+                )
+                .priority(priority)
+                .resolve_lock(start_version, lock_backoff, keyspace)
+                .retry_multi_region(region_backoff)
+                .extract_error()
+                .plan();
                 plan.execute().await?;
             }
             // Optimistic, or pessimistic after prewrite: BatchRollback clears
             // both pessimistic and 2PC locks by start_ts.
             _ => {
                 let req = new_batch_rollback_request(keys, start_version.clone());
-                let plan = PlanBuilder::new(rpc, keyspace, req)
-                    .resolve_lock(start_version, lock_backoff, keyspace)
-                    .retry_multi_region(region_backoff)
-                    .extract_error()
-                    .plan();
+                let plan = plan_with_keyspace_name(
+                    rpc,
+                    keyspace,
+                    keyspace_name.as_deref(),
+                    rpc_interceptor,
+                    ReplicaReadConfig::default(),
+                    req,
+                )
+                .priority(priority)
+                .resolve_lock(start_version, lock_backoff, keyspace)
+                .retry_multi_region(region_backoff)
+                .extract_error()
+                .plan();
                 plan.execute().await?;
             }
         }
@@ -1713,13 +2001,339 @@ mod tests {
 
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
+    use crate::new_rpc_interceptor;
     use crate::proto::kvrpcpb;
     use crate::proto::pdpb::Timestamp;
     use crate::request::Keyspace;
     use crate::transaction::HeartbeatOption;
+    use crate::KvPair;
+    use crate::Priority;
+    use crate::ReplicaReadAdjustment;
+    use crate::ReplicaReadConfig;
+    use crate::ReplicaReadSelectorOption;
+    use crate::ReplicaReadType;
     use crate::TimestampExt;
     use crate::Transaction;
     use crate::TransactionOptions;
+
+    #[test]
+    fn transaction_priority_defaults_to_normal_and_has_a_builder() {
+        assert_eq!(
+            TransactionOptions::new_optimistic().priority,
+            Priority::Normal
+        );
+        assert_eq!(
+            TransactionOptions::new_pessimistic().priority,
+            Priority::Normal
+        );
+        assert_eq!(
+            TransactionOptions::new_optimistic()
+                .priority(Priority::Low)
+                .priority,
+            Priority::Low
+        );
+    }
+
+    #[test]
+    fn snapshot_replica_read_configuration_defaults_to_leader_and_is_replaceable() {
+        let pd_client = Arc::new(MockPdClient::default());
+        let mut transaction = Transaction::new(
+            Timestamp::default(),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        assert_eq!(
+            transaction.replica_read_config,
+            ReplicaReadConfig::default()
+        );
+
+        transaction.set_replica_read_config(ReplicaReadConfig {
+            read_type: ReplicaReadType::Follower,
+            ..Default::default()
+        });
+        assert_eq!(
+            transaction.replica_read_config.read_type,
+            ReplicaReadType::Follower
+        );
+
+        transaction.set_stale_read(true);
+        transaction.set_match_store_labels(vec![crate::proto::metapb::StoreLabel {
+            key: "zone".to_owned(),
+            value: "east".to_owned(),
+        }]);
+        assert!(transaction.replica_read_config.stale_read);
+        assert_eq!(
+            transaction.replica_read_config.labels,
+            vec![crate::proto::metapb::StoreLabel {
+                key: "zone".to_owned(),
+                value: "east".to_owned(),
+            }]
+        );
+
+        transaction.set_load_based_replica_read_threshold(Duration::from_millis(50));
+        assert_eq!(transaction.replica_read_config.busy_threshold_ms, 50);
+        transaction.set_load_based_replica_read_threshold(Duration::ZERO);
+        assert_eq!(transaction.replica_read_config.busy_threshold_ms, 0);
+        transaction
+            .set_load_based_replica_read_threshold(Duration::from_millis(u64::from(u32::MAX) + 1));
+        assert_eq!(transaction.replica_read_config.busy_threshold_ms, 0);
+
+        transaction.set_replica_read_adjuster(Arc::new(|item_count| {
+            assert_eq!(item_count, 3);
+            ReplicaReadAdjustment::new(
+                Some(ReplicaReadSelectorOption::MatchStores(vec![7, 8])),
+                ReplicaReadType::Mixed,
+            )
+        }));
+        let adjusted = transaction.replica_read_config_for_items(3);
+        assert_eq!(adjusted.read_type, ReplicaReadType::Mixed);
+        assert_eq!(adjusted.stores, vec![7, 8]);
+        assert_eq!(
+            transaction.replica_read_config.read_type,
+            ReplicaReadType::Follower
+        );
+        assert!(transaction.replica_read_config.stores.is_empty());
+
+        transaction.set_replica_read_config(ReplicaReadConfig::default());
+        assert_eq!(
+            transaction.replica_read_config_for_items(3),
+            ReplicaReadConfig::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn transaction_priority_reaches_read_and_write_request_contexts() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_by_hook = Arc::clone(&observed);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::GetRequest>() {
+                    observed_by_hook
+                        .lock()
+                        .unwrap()
+                        .push(("get", req.context.as_ref().unwrap().priority));
+                    Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>)
+                } else if let Some(req) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    observed_by_hook
+                        .lock()
+                        .unwrap()
+                        .push(("prewrite", req.context.as_ref().unwrap().priority));
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                } else if let Some(req) = req.downcast_ref::<kvrpcpb::CommitRequest>() {
+                    observed_by_hook
+                        .lock()
+                        .unwrap()
+                        .push(("commit", req.context.as_ref().unwrap().priority));
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                } else if let Some(req) = req.downcast_ref::<kvrpcpb::TxnHeartBeatRequest>() {
+                    observed_by_hook
+                        .lock()
+                        .unwrap()
+                        .push(("heartbeat", req.context.as_ref().unwrap().priority));
+                    Ok(Box::new(kvrpcpb::TxnHeartBeatResponse::default()) as Box<dyn Any>)
+                } else {
+                    panic!("unexpected request while testing transaction priority")
+                }
+            },
+        )));
+
+        let mut txn = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().priority(Priority::Low),
+            Keyspace::Disable,
+        );
+        txn.get("read".to_owned()).await.unwrap();
+        txn.set_priority(Priority::High);
+        txn.put("write".to_owned(), "value").await.unwrap();
+        txn.send_heart_beat().await.unwrap();
+        txn.commit().await.unwrap();
+
+        assert_eq!(
+            *observed.lock().unwrap(),
+            vec![
+                ("get", kvrpcpb::CommandPri::Low as i32),
+                ("heartbeat", kvrpcpb::CommandPri::Normal as i32),
+                ("prewrite", kvrpcpb::CommandPri::High as i32),
+                ("commit", kvrpcpb::CommandPri::High as i32),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn transaction_rpc_interceptor_wraps_each_commit_rpc() {
+        let intercepted = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&intercepted);
+        let interceptor = new_rpc_interceptor("record", move |target, request, next| {
+            let observed = Arc::clone(&observed);
+            Box::pin(async move {
+                observed
+                    .lock()
+                    .unwrap()
+                    .push((target.to_owned(), request.label()));
+                next().await
+            })
+        });
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                if req.is::<kvrpcpb::PrewriteRequest>() {
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                } else if req.is::<kvrpcpb::CommitRequest>() {
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                } else {
+                    panic!("unexpected request while testing transaction interceptor")
+                }
+            },
+        )));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        );
+        txn.set_rpc_interceptor(interceptor);
+        txn.put("key".to_owned(), "value").await.unwrap();
+        txn.commit().await.unwrap();
+
+        assert_eq!(
+            *intercepted.lock().unwrap(),
+            [(String::new(), "kv_prewrite"), (String::new(), "kv_commit")]
+        );
+    }
+
+    #[tokio::test]
+    async fn transaction_keyspace_name_reaches_read_and_two_pc_request_contexts() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_by_hook = Arc::clone(&observed);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                let context = if let Some(req) = req.downcast_ref::<kvrpcpb::GetRequest>() {
+                    observed_by_hook.lock().unwrap().push("get");
+                    req.context.as_ref().unwrap()
+                } else if let Some(req) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    observed_by_hook.lock().unwrap().push("prewrite");
+                    req.context.as_ref().unwrap()
+                } else if let Some(req) = req.downcast_ref::<kvrpcpb::CommitRequest>() {
+                    observed_by_hook.lock().unwrap().push("commit");
+                    req.context.as_ref().unwrap()
+                } else {
+                    panic!("unexpected request while testing transaction keyspace context")
+                };
+                assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
+                assert_eq!(context.keyspace_id, 7);
+                assert_eq!(context.keyspace_name, "tenant");
+
+                if req.is::<kvrpcpb::GetRequest>() {
+                    Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>)
+                } else if req.is::<kvrpcpb::PrewriteRequest>() {
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                } else {
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                }
+            },
+        )));
+        let mut txn = Transaction::new_with_latches_and_keyspace_name(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+            Keyspace::try_enable(7).unwrap(),
+            Some("tenant".to_owned()),
+            None,
+        );
+
+        txn.get("read".to_owned()).await.unwrap();
+        txn.put("write".to_owned(), "value".to_owned())
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+        assert_eq!(*observed.lock().unwrap(), vec!["get", "prewrite", "commit"]);
+    }
+
+    #[tokio::test]
+    async fn api_v2_batch_get_and_scan_reencode_only_at_the_physical_buffer_boundary() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let captured_calls = Arc::clone(&calls);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    captured_calls.lock().unwrap().push("batch-get");
+                    assert_eq!(req.keys, vec![b"x\0\0\x07a"]);
+                    let context = req.context.as_ref().unwrap();
+                    assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
+                    assert_eq!(context.keyspace_id, 7);
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                        pairs: vec![kvrpcpb::KvPair {
+                            key: req.keys[0].clone(),
+                            value: b"batch".to_vec(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ScanRequest>() {
+                    captured_calls.lock().unwrap().push("scan");
+                    assert_eq!(req.start_key, b"x\0\0\x07b");
+                    assert_eq!(req.end_key, b"x\0\0\x07c");
+                    return Ok(Box::new(kvrpcpb::ScanResponse {
+                        pairs: vec![kvrpcpb::KvPair {
+                            key: req.start_key.clone(),
+                            value: b"scan".to_vec(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request while testing API-V2 batch/scan decoding")
+            },
+        )));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+            Keyspace::try_enable(7).unwrap(),
+        );
+
+        let batch: Vec<_> = txn.batch_get(vec!["a".to_owned()]).await.unwrap().collect();
+        let scan: Vec<_> = txn.scan(vec![b'b']..vec![b'c'], 1).await.unwrap().collect();
+        assert_eq!(batch, vec![KvPair(vec![b'a'].into(), b"batch".to_vec())]);
+        assert_eq!(scan, vec![KvPair(vec![b'b'].into(), b"scan".to_vec())]);
+        assert_eq!(*calls.lock().unwrap(), vec!["batch-get", "scan"]);
+        txn.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn optimistic_commit_rejects_a_stale_local_latch_before_rpc() {
+        let scheduler = crate::transaction::latch::LatchesScheduler::new(8);
+        let committed = scheduler.lock(1, vec![b"key".to_vec()]).await;
+        committed.set_commit_timestamp(3);
+        drop(committed);
+
+        let mut transaction = Transaction::new_with_latches(
+            Timestamp::from_version(2),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+            Some(scheduler.clone()),
+        );
+        transaction
+            .put("key".to_owned(), "value".to_owned())
+            .await
+            .unwrap();
+        let error = transaction.commit().await.unwrap_err();
+        assert!(matches!(
+            error,
+            crate::Error::WriteConflictInLatch(crate::error::WriteConflictInLatchError {
+                start_timestamp: 2
+            })
+        ));
+        assert_eq!(error.to_string(), "write conflict in latch,startTS: 2");
+
+        // The stale guard is released on the error path, so a restarted
+        // transaction with a newer timestamp can acquire the key.
+        let restarted = scheduler.lock(4, vec![b"key".to_vec()]).await;
+        assert!(!restarted.is_stale());
+    }
 
     #[rstest::rstest]
     #[case(Keyspace::Disable)]

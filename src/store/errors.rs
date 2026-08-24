@@ -1,5 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use crate::proto::coprocessor;
 use crate::proto::kvrpcpb;
 use crate::Error;
 
@@ -39,6 +40,7 @@ has_region_error!(kvrpcpb::PrewriteResponse);
 has_region_error!(kvrpcpb::CommitResponse);
 has_region_error!(kvrpcpb::PessimisticLockResponse);
 has_region_error!(kvrpcpb::ImportResponse);
+has_region_error!(kvrpcpb::CleanupResponse);
 has_region_error!(kvrpcpb::BatchRollbackResponse);
 has_region_error!(kvrpcpb::PessimisticRollbackResponse);
 has_region_error!(kvrpcpb::BatchGetResponse);
@@ -49,7 +51,15 @@ has_region_error!(kvrpcpb::CheckTxnStatusResponse);
 has_region_error!(kvrpcpb::CheckSecondaryLocksResponse);
 has_region_error!(kvrpcpb::DeleteRangeResponse);
 has_region_error!(kvrpcpb::GcResponse);
+has_region_error!(kvrpcpb::PrepareFlashbackToVersionResponse);
+has_region_error!(kvrpcpb::FlashbackToVersionResponse);
+has_region_error!(kvrpcpb::FlushResponse);
+has_region_error!(kvrpcpb::BufferBatchGetResponse);
 has_region_error!(kvrpcpb::UnsafeDestroyRangeResponse);
+has_region_error!(kvrpcpb::MvccGetByKeyResponse);
+has_region_error!(kvrpcpb::MvccGetByStartTsResponse);
+has_region_error!(kvrpcpb::GetLockWaitInfoResponse);
+has_region_error!(kvrpcpb::SplitRegionResponse);
 has_region_error!(kvrpcpb::RawGetResponse);
 has_region_error!(kvrpcpb::RawBatchGetResponse);
 has_region_error!(kvrpcpb::RawGetKeyTtlResponse);
@@ -62,6 +72,13 @@ has_region_error!(kvrpcpb::RawScanResponse);
 has_region_error!(kvrpcpb::RawBatchScanResponse);
 has_region_error!(kvrpcpb::RawCasResponse);
 has_region_error!(kvrpcpb::RawCoprocessorResponse);
+has_region_error!(kvrpcpb::RawChecksumResponse);
+
+impl HasRegionError for coprocessor::Response {
+    fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
+        self.region_error.take()
+    }
+}
 
 macro_rules! has_key_error {
     ($type:ty) => {
@@ -75,6 +92,7 @@ macro_rules! has_key_error {
 
 has_key_error!(kvrpcpb::GetResponse);
 has_key_error!(kvrpcpb::CommitResponse);
+has_key_error!(kvrpcpb::CleanupResponse);
 has_key_error!(kvrpcpb::BatchRollbackResponse);
 has_key_error!(kvrpcpb::ScanLockResponse);
 has_key_error!(kvrpcpb::ResolveLockResponse);
@@ -108,9 +126,17 @@ has_str_error!(kvrpcpb::RawBatchDeleteResponse);
 has_str_error!(kvrpcpb::RawDeleteRangeResponse);
 has_str_error!(kvrpcpb::RawCasResponse);
 has_str_error!(kvrpcpb::RawCoprocessorResponse);
+has_str_error!(kvrpcpb::RawChecksumResponse);
 has_str_error!(kvrpcpb::ImportResponse);
 has_str_error!(kvrpcpb::DeleteRangeResponse);
+has_str_error!(kvrpcpb::PrepareFlashbackToVersionResponse);
+has_str_error!(kvrpcpb::FlashbackToVersionResponse);
 has_str_error!(kvrpcpb::UnsafeDestroyRangeResponse);
+has_str_error!(kvrpcpb::PhysicalScanLockResponse);
+has_str_error!(kvrpcpb::MvccGetByKeyResponse);
+has_str_error!(kvrpcpb::CheckLockObserverResponse);
+has_str_error!(kvrpcpb::MvccGetByStartTsResponse);
+has_str_error!(kvrpcpb::GetLockWaitInfoResponse);
 
 impl HasKeyErrors for kvrpcpb::ScanResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
@@ -157,6 +183,43 @@ impl HasKeyErrors for kvrpcpb::PessimisticLockResponse {
 impl HasKeyErrors for kvrpcpb::PessimisticRollbackResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
         extract_errors(std::mem::take(&mut self.errors).into_iter().map(Some))
+    }
+}
+
+impl HasKeyErrors for kvrpcpb::FlushResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        extract_errors(std::mem::take(&mut self.errors).into_iter().map(Some))
+    }
+}
+
+impl HasKeyErrors for kvrpcpb::BufferBatchGetResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        let pair_errors = extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()));
+        pair_errors.or_else(|| self.error.take().map(|error| vec![error.into()]))
+    }
+}
+
+impl HasKeyErrors for kvrpcpb::SplitRegionResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        extract_errors(std::mem::take(&mut self.errors).into_iter().map(Some))
+    }
+}
+
+impl HasKeyErrors for kvrpcpb::StoreSafeTsResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        None
+    }
+}
+
+impl HasKeyErrors for coprocessor::Response {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        if self.other_error.is_empty() {
+            None
+        } else {
+            Some(vec![Error::KvError {
+                message: std::mem::take(&mut self.other_error),
+            }])
+        }
     }
 }
 

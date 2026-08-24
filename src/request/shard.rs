@@ -5,6 +5,8 @@ use std::sync::Arc;
 use futures::stream::BoxStream;
 
 use super::plan::PreserveShard;
+use crate::kv::ReplicaReadConfig;
+use crate::locate::ReplicaSelectorState;
 use crate::pd::PdClient;
 use crate::region::RegionWithLeader;
 use crate::request::plan::CleanupLocks;
@@ -35,6 +37,69 @@ macro_rules! impl_inner_shardable {
         fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
             self.inner.apply_store(store)
         }
+
+        fn replica_read_config(&self) -> ReplicaReadConfig {
+            self.inner.replica_read_config()
+        }
+
+        fn replica_selector_state(&self) -> ReplicaSelectorState {
+            self.inner.replica_selector_state()
+        }
+
+        fn record_replica_attempt(&mut self, peer_id: u64) {
+            self.inner.record_replica_attempt(peer_id);
+        }
+
+        fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
+            self.inner.mark_replica_data_not_ready(peer_id);
+        }
+
+        fn record_busy_leader(
+            &mut self,
+            target_peer_id: u64,
+            leader_peer_id: u64,
+            estimated_wait_ms: u32,
+        ) {
+            self.inner
+                .record_busy_leader(target_peer_id, leader_peer_id, estimated_wait_ms);
+        }
+
+        fn record_not_leader(&mut self, target_peer_id: u64, leader_peer_id: u64) {
+            self.inner.record_not_leader(target_peer_id, leader_peer_id);
+        }
+
+        fn mark_replica_no_leader(&mut self, peer_id: u64) {
+            self.inner.mark_replica_no_leader(peer_id);
+        }
+
+        fn record_server_busy(&mut self, peer_id: u64) {
+            self.inner.record_server_busy(peer_id);
+        }
+
+        fn force_leader_after_flashback(&mut self) {
+            self.inner.force_leader_after_flashback();
+        }
+
+        fn force_leader_after_region_not_found(&mut self, leader_peer_id: u64) -> bool {
+            self.inner
+                .force_leader_after_region_not_found(leader_peer_id)
+        }
+
+        fn is_read_request(&self) -> bool {
+            self.inner.is_read_request()
+        }
+
+        fn max_execution_duration_ms(&self) -> u64 {
+            self.inner.max_execution_duration_ms()
+        }
+
+        fn is_batched_coprocessor_read(&self) -> bool {
+            self.inner.is_batched_coprocessor_read()
+        }
+
+        fn disable_stale_read_after_lock(&mut self) -> bool {
+            self.inner.disable_stale_read_after_lock()
+        }
     };
 }
 
@@ -59,6 +124,60 @@ pub trait Shardable {
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()>;
+
+    /// Stable source replica-selection settings retained across shard clones
+    /// and retry wrappers. Attempt/error state remains selector-local.
+    fn replica_read_config(&self) -> ReplicaReadConfig {
+        ReplicaReadConfig::default()
+    }
+
+    fn replica_selector_state(&self) -> ReplicaSelectorState {
+        ReplicaSelectorState::default()
+    }
+
+    fn record_replica_attempt(&mut self, _peer_id: u64) {}
+
+    fn mark_replica_data_not_ready(&mut self, _peer_id: u64) {}
+
+    fn record_busy_leader(
+        &mut self,
+        _target_peer_id: u64,
+        _leader_peer_id: u64,
+        _estimated_wait_ms: u32,
+    ) {
+    }
+
+    fn record_not_leader(&mut self, _target_peer_id: u64, _leader_peer_id: u64) {}
+
+    fn mark_replica_no_leader(&mut self, _peer_id: u64) {}
+
+    fn record_server_busy(&mut self, _peer_id: u64) {}
+
+    fn force_leader_after_flashback(&mut self) {}
+
+    fn force_leader_after_region_not_found(&mut self, _leader_peer_id: u64) -> bool {
+        false
+    }
+
+    fn is_read_request(&self) -> bool {
+        false
+    }
+
+    /// Source `MaxExecutionDurationMs` used to distinguish a caller's short
+    /// configurable read timeout from an ordinary transport deadline.
+    fn max_execution_duration_ms(&self) -> u64 {
+        0
+    }
+
+    fn is_batched_coprocessor_read(&self) -> bool {
+        false
+    }
+
+    /// Source `DisableStaleReadMeetLock` changes the next retry to a direct
+    /// leader read. Plans without replica-routing state retain a no-op.
+    fn disable_stale_read_after_lock(&mut self) -> bool {
+        false
+    }
 }
 
 pub trait Batchable {
@@ -71,7 +190,7 @@ pub trait Batchable {
 
         for item in items {
             let item_size = Self::item_size(&item);
-            if size + item_size >= batch_size && !batch.is_empty() {
+            if size >= batch_size {
                 batches.push(batch);
                 batch = Vec::new();
                 size = 0;
@@ -86,6 +205,27 @@ pub trait Batchable {
     }
 
     fn item_size(item: &Self::Item) -> u64;
+}
+
+pub(crate) fn key_batches<T>(items: Vec<T>, limit: isize) -> Vec<Vec<T>> {
+    let mut batches = Vec::new();
+    let mut batch = Vec::new();
+    let mut count = 0_isize;
+    for item in items {
+        if count > limit {
+            batches.push(batch);
+            batch = Vec::with_capacity(
+                usize::try_from(limit).expect("key batch limit cannot be negative"),
+            );
+            count = 0;
+        }
+        batch.push(item);
+        count += 1;
+    }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    batches
 }
 
 // Use to iterate in a region for scan requests that have batch size limit.
@@ -120,12 +260,113 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         Dispatch {
             request: self.request.clone_then_apply_shard(shard),
             kv_client: self.kv_client.clone(),
+            target: self.target.clone(),
+            forwarded_host: self.forwarded_host.clone(),
+            replica_read_config: self.replica_read_config.clone(),
+            replica_selector_state: self.replica_selector_state.clone(),
+            store_health: self.store_health.clone(),
+            record_client_side_slow_score: self.record_client_side_slow_score,
+            interceptor: self.interceptor.clone(),
+            response_codec: self.response_codec,
+            v1_response_codec: self.v1_response_codec,
         }
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.kv_client = Some(store.client.clone());
-        self.request.apply_store(store)
+        self.target = store.target.clone();
+        self.forwarded_host = store.forwarded_host.clone();
+        self.store_health = store.health_status.clone();
+        self.record_client_side_slow_score = store.record_client_side_slow_score;
+        if store.busy_threshold_disabled {
+            self.replica_selector_state.disable_busy_threshold();
+        }
+        self.request.apply_store(store).map(|()| {
+            self.request
+                .set_buckets_version(store.region_with_leader.buckets_version())
+        })
+    }
+
+    fn replica_read_config(&self) -> ReplicaReadConfig {
+        self.replica_read_config.clone()
+    }
+
+    fn replica_selector_state(&self) -> ReplicaSelectorState {
+        self.replica_selector_state.clone()
+    }
+
+    fn record_replica_attempt(&mut self, peer_id: u64) {
+        self.replica_selector_state.record_attempt(peer_id);
+    }
+
+    fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
+        self.replica_selector_state.mark_data_is_not_ready(peer_id);
+    }
+
+    fn record_busy_leader(
+        &mut self,
+        target_peer_id: u64,
+        leader_peer_id: u64,
+        estimated_wait_ms: u32,
+    ) {
+        if estimated_wait_ms == 0
+            && matches!(
+                self.replica_read_config.read_type,
+                crate::kv::ReplicaReadType::Leader
+            )
+            && !self.replica_read_config.stale_read
+            && !self.replica_read_config.leader_only
+            && target_peer_id == leader_peer_id
+        {
+            self.replica_selector_state
+                .record_busy_leader(leader_peer_id);
+        }
+    }
+
+    fn record_not_leader(&mut self, target_peer_id: u64, leader_peer_id: u64) {
+        self.replica_selector_state
+            .record_not_leader(target_peer_id, leader_peer_id);
+    }
+
+    fn mark_replica_no_leader(&mut self, peer_id: u64) {
+        self.replica_selector_state.mark_no_leader(peer_id);
+    }
+
+    fn record_server_busy(&mut self, peer_id: u64) {
+        if self.replica_read_config.busy_threshold_ms != 0 {
+            self.replica_selector_state.record_server_busy(peer_id);
+        }
+    }
+
+    fn force_leader_after_flashback(&mut self) {
+        self.replica_selector_state.force_leader_after_flashback();
+    }
+
+    fn force_leader_after_region_not_found(&mut self, leader_peer_id: u64) -> bool {
+        self.replica_selector_state
+            .force_leader_after_region_not_found(leader_peer_id)
+    }
+
+    fn is_read_request(&self) -> bool {
+        KvRequest::is_read_request(&self.request)
+    }
+
+    fn max_execution_duration_ms(&self) -> u64 {
+        Request::max_execution_duration_ms(&self.request)
+    }
+
+    fn is_batched_coprocessor_read(&self) -> bool {
+        KvRequest::is_batched_coprocessor_read(&self.request)
+    }
+
+    fn disable_stale_read_after_lock(&mut self) -> bool {
+        if !self.replica_read_config.stale_read {
+            return false;
+        }
+        self.replica_read_config.stale_read = false;
+        self.replica_read_config.read_type = crate::kv::ReplicaReadType::Leader;
+        self.replica_read_config.busy_threshold_ms = 0;
+        true
     }
 }
 
@@ -152,6 +393,61 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.inner.apply_store(store)
+    }
+
+    fn replica_read_config(&self) -> ReplicaReadConfig {
+        self.inner.replica_read_config()
+    }
+
+    fn replica_selector_state(&self) -> ReplicaSelectorState {
+        self.inner.replica_selector_state()
+    }
+
+    fn record_replica_attempt(&mut self, peer_id: u64) {
+        self.inner.record_replica_attempt(peer_id);
+    }
+
+    fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
+        self.inner.mark_replica_data_not_ready(peer_id);
+    }
+
+    fn record_busy_leader(
+        &mut self,
+        target_peer_id: u64,
+        leader_peer_id: u64,
+        estimated_wait_ms: u32,
+    ) {
+        self.inner
+            .record_busy_leader(target_peer_id, leader_peer_id, estimated_wait_ms);
+    }
+
+    fn record_not_leader(&mut self, target_peer_id: u64, leader_peer_id: u64) {
+        self.inner.record_not_leader(target_peer_id, leader_peer_id);
+    }
+
+    fn record_server_busy(&mut self, peer_id: u64) {
+        self.inner.record_server_busy(peer_id);
+    }
+
+    fn force_leader_after_flashback(&mut self) {
+        self.inner.force_leader_after_flashback();
+    }
+
+    fn force_leader_after_region_not_found(&mut self, leader_peer_id: u64) -> bool {
+        self.inner
+            .force_leader_after_region_not_found(leader_peer_id)
+    }
+
+    fn is_read_request(&self) -> bool {
+        self.inner.is_read_request()
+    }
+
+    fn is_batched_coprocessor_read(&self) -> bool {
+        self.inner.is_batched_coprocessor_read()
+    }
+
+    fn disable_stale_read_after_lock(&mut self) -> bool {
+        self.inner.disable_stale_read_after_lock()
     }
 }
 
@@ -205,7 +501,11 @@ macro_rules! shardable_key {
             }
 
             fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
-                self.set_leader(&store.region_with_leader)
+                self.set_leader(&store.request_region())?;
+                self.set_replica_read(store.is_replica_read());
+                self.set_stale_read(store.stale_read);
+                self.set_busy_threshold_ms(store.busy_threshold_ms);
+                Ok(())
             }
         }
     };
@@ -235,7 +535,11 @@ macro_rules! shardable_keys {
             }
 
             fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
-                self.set_leader(&store.region_with_leader)
+                self.set_leader(&store.request_region())?;
+                self.set_replica_read(store.is_replica_read());
+                self.set_stale_read(store.stale_read);
+                self.set_busy_threshold_ms(store.busy_threshold_ms);
+                Ok(())
             }
         }
     };
@@ -300,7 +604,11 @@ macro_rules! shardable_range {
             }
 
             fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
-                self.set_leader(&store.region_with_leader)
+                self.set_leader(&store.request_region())?;
+                self.set_replica_read(store.is_replica_read());
+                self.set_stale_read(store.stale_read);
+                self.set_busy_threshold_ms(store.busy_threshold_ms);
+                Ok(())
             }
         }
     };
@@ -311,7 +619,16 @@ mod test {
     use rand::thread_rng;
     use rand::Rng;
 
-    use super::Batchable;
+    use super::{Batchable, Shardable};
+    use crate::kv::{ReplicaReadConfig, ReplicaReadType};
+    use crate::locate::ReplicaSelectorState;
+    use crate::mock::MockKvClient;
+    use crate::proto::kvrpcpb;
+    use crate::proto::metapb;
+    use crate::region::RegionWithLeader;
+    use crate::request::plan::Dispatch;
+    use crate::store::RegionStore;
+    use std::sync::Arc;
 
     #[test]
     fn test_batches() {
@@ -325,12 +642,103 @@ mod test {
 
         let batches = BatchableTest::batches(items.clone(), batch_size);
 
-        assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0].len(), 2);
-        assert_eq!(batches[1].len(), 1);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].len(), 3);
         assert_eq!(batches[0][0], items[0]);
         assert_eq!(batches[0][1], items[1]);
-        assert_eq!(batches[1][0], items[2]);
+        assert_eq!(batches[0][2], items[2]);
+    }
+
+    #[test]
+    fn source_lock_on_stale_read_retries_a_threshold_free_leader() {
+        let mut dispatch = Dispatch {
+            request: kvrpcpb::GetRequest::default(),
+            kv_client: None,
+            target: String::new(),
+            forwarded_host: String::new(),
+            replica_read_config: ReplicaReadConfig {
+                read_type: ReplicaReadType::Mixed,
+                stale_read: true,
+                busy_threshold_ms: 50,
+                ..Default::default()
+            },
+            replica_selector_state: ReplicaSelectorState::default(),
+            store_health: None,
+            record_client_side_slow_score: false,
+            interceptor: None,
+            response_codec: None,
+            v1_response_codec: None,
+        };
+        assert!(dispatch.disable_stale_read_after_lock());
+        assert_eq!(
+            dispatch.replica_read_config.read_type,
+            ReplicaReadType::Leader
+        );
+        assert!(!dispatch.replica_read_config.stale_read);
+        assert_eq!(dispatch.replica_read_config.busy_threshold_ms, 0);
+        assert!(!dispatch.disable_stale_read_after_lock());
+    }
+
+    #[test]
+    fn source_dispatch_carries_cached_bucket_version_into_context() {
+        let mut region = RegionWithLeader::default();
+        region.region.id = 1;
+        region.region.region_epoch = Some(metapb::RegionEpoch {
+            conf_ver: 1,
+            version: 1,
+        });
+        region.leader = Some(metapb::Peer {
+            id: 2,
+            store_id: 3,
+            ..Default::default()
+        });
+        region.buckets = Some(metapb::Buckets {
+            region_id: 1,
+            version: 9,
+            ..Default::default()
+        });
+        let store = RegionStore::new(region, Arc::new(MockKvClient::default()))
+            .with_target("proxy:20160")
+            .with_forwarded_host("leader:20160");
+        let mut dispatch = Dispatch {
+            request: kvrpcpb::GetRequest::default(),
+            kv_client: None,
+            target: String::new(),
+            forwarded_host: String::new(),
+            replica_read_config: ReplicaReadConfig::default(),
+            replica_selector_state: ReplicaSelectorState::default(),
+            store_health: None,
+            record_client_side_slow_score: false,
+            interceptor: None,
+            response_codec: None,
+            v1_response_codec: None,
+        };
+
+        dispatch.apply_store(&store).unwrap();
+        assert_eq!(dispatch.request.context.unwrap().buckets_version, 9);
+        assert_eq!(dispatch.target, "proxy:20160");
+        assert_eq!(dispatch.forwarded_host, "leader:20160");
+    }
+
+    #[test]
+    fn size_batches_split_before_the_item_after_the_limit_is_reached() {
+        let items = vec![vec![1; 2], vec![2; 2], vec![3; 2], vec![4; 2]];
+        let batches = BatchableTest::batches(items.clone(), 5);
+        assert_eq!(batches, vec![items[..3].to_vec(), items[3..].to_vec()]);
+
+        let zero_limit = BatchableTest::batches(vec![vec![1], vec![2]], 0);
+        assert_eq!(zero_limit, vec![vec![], vec![vec![1]], vec![vec![2]]]);
+    }
+
+    #[test]
+    fn key_count_batches_preserve_the_client_go_boundary() {
+        let items = (0..514).collect::<Vec<_>>();
+        let batches = super::key_batches(items.clone(), 512);
+        assert_eq!(batches, vec![items[..513].to_vec(), items[513..].to_vec()]);
+
+        assert_eq!(super::key_batches(vec![1, 2], 0), vec![vec![1], vec![2]]);
+        assert!(super::key_batches::<i32>(Vec::new(), -1).is_empty());
+        assert!(std::panic::catch_unwind(|| super::key_batches(vec![1], -1)).is_err());
     }
 
     #[test]

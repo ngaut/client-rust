@@ -2271,3 +2271,4419 @@ pub mod versioned_kv_client {
         }
     }
 }
+/// Generated server implementations.
+#[allow(non_camel_case_types)]
+pub mod tikv_server {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with TikvServer.
+    #[async_trait]
+    pub trait Tikv: Send + Sync + 'static {
+        /// Commands using a transactional interface.
+        async fn kv_get(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::GetRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::GetResponse>,
+            tonic::Status,
+        >;
+        async fn kv_scan(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::ScanRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::ScanResponse>,
+            tonic::Status,
+        >;
+        async fn kv_prewrite(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::PrewriteRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::PrewriteResponse>,
+            tonic::Status,
+        >;
+        async fn kv_pessimistic_lock(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::PessimisticLockRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::PessimisticLockResponse>,
+            tonic::Status,
+        >;
+        async fn kv_pessimistic_rollback(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::PessimisticRollbackRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::PessimisticRollbackResponse>,
+            tonic::Status,
+        >;
+        async fn kv_txn_heart_beat(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::TxnHeartBeatRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::TxnHeartBeatResponse>,
+            tonic::Status,
+        >;
+        async fn kv_check_txn_status(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::CheckTxnStatusRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::CheckTxnStatusResponse>,
+            tonic::Status,
+        >;
+        async fn kv_check_secondary_locks(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::CheckSecondaryLocksRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::CheckSecondaryLocksResponse>,
+            tonic::Status,
+        >;
+        async fn kv_commit(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::CommitRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::CommitResponse>,
+            tonic::Status,
+        >;
+        async fn kv_import(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::ImportRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::ImportResponse>,
+            tonic::Status,
+        >;
+        async fn kv_cleanup(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::CleanupRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::CleanupResponse>,
+            tonic::Status,
+        >;
+        async fn kv_batch_get(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::BatchGetRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::BatchGetResponse>,
+            tonic::Status,
+        >;
+        async fn kv_batch_rollback(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::BatchRollbackRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::BatchRollbackResponse>,
+            tonic::Status,
+        >;
+        async fn kv_scan_lock(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::ScanLockRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::ScanLockResponse>,
+            tonic::Status,
+        >;
+        async fn kv_resolve_lock(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::ResolveLockRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::ResolveLockResponse>,
+            tonic::Status,
+        >;
+        async fn kv_gc(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::GcRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::GcResponse>,
+            tonic::Status,
+        >;
+        async fn kv_delete_range(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::DeleteRangeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::DeleteRangeResponse>,
+            tonic::Status,
+        >;
+        async fn kv_prepare_flashback_to_version(
+            &self,
+            request: tonic::Request<
+                super::super::kvrpcpb::PrepareFlashbackToVersionRequest,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::PrepareFlashbackToVersionResponse>,
+            tonic::Status,
+        >;
+        async fn kv_flashback_to_version(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::FlashbackToVersionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::FlashbackToVersionResponse>,
+            tonic::Status,
+        >;
+        async fn kv_flush(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::FlushRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::FlushResponse>,
+            tonic::Status,
+        >;
+        async fn kv_buffer_batch_get(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::BufferBatchGetRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::BufferBatchGetResponse>,
+            tonic::Status,
+        >;
+        /// Raw commands; no transaction support.
+        async fn raw_get(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawGetRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawGetResponse>,
+            tonic::Status,
+        >;
+        async fn raw_batch_get(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawBatchGetRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawBatchGetResponse>,
+            tonic::Status,
+        >;
+        async fn raw_put(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawPutRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawPutResponse>,
+            tonic::Status,
+        >;
+        async fn raw_batch_put(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawBatchPutRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawBatchPutResponse>,
+            tonic::Status,
+        >;
+        async fn raw_delete(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawDeleteRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawDeleteResponse>,
+            tonic::Status,
+        >;
+        async fn raw_batch_delete(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawBatchDeleteRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawBatchDeleteResponse>,
+            tonic::Status,
+        >;
+        async fn raw_scan(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawScanRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawScanResponse>,
+            tonic::Status,
+        >;
+        async fn raw_delete_range(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawDeleteRangeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawDeleteRangeResponse>,
+            tonic::Status,
+        >;
+        async fn raw_batch_scan(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawBatchScanRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawBatchScanResponse>,
+            tonic::Status,
+        >;
+        /// Get TTL of the key. Returns 0 if TTL is not set for the key.
+        async fn raw_get_key_ttl(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawGetKeyTtlRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawGetKeyTtlResponse>,
+            tonic::Status,
+        >;
+        /// Compare if the value in database equals to `RawCASRequest.previous_value` before putting the new value. If not, this request will have no effect and the value in the database will be returned.
+        async fn raw_compare_and_swap(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawCasRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawCasResponse>,
+            tonic::Status,
+        >;
+        async fn raw_checksum(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawChecksumRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawChecksumResponse>,
+            tonic::Status,
+        >;
+        /// Store commands (sent to a each TiKV node in a cluster, rather than a certain region).
+        async fn unsafe_destroy_range(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::UnsafeDestroyRangeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::UnsafeDestroyRangeResponse>,
+            tonic::Status,
+        >;
+        async fn register_lock_observer(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RegisterLockObserverRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RegisterLockObserverResponse>,
+            tonic::Status,
+        >;
+        async fn check_lock_observer(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::CheckLockObserverRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::CheckLockObserverResponse>,
+            tonic::Status,
+        >;
+        async fn remove_lock_observer(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RemoveLockObserverRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RemoveLockObserverResponse>,
+            tonic::Status,
+        >;
+        async fn physical_scan_lock(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::PhysicalScanLockRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::PhysicalScanLockResponse>,
+            tonic::Status,
+        >;
+        /// Commands for executing SQL in the TiKV coprocessor (i.e., 'pushed down' to TiKV rather than
+        /// executed in TiDB).
+        async fn coprocessor(
+            &self,
+            request: tonic::Request<super::super::coprocessor::Request>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::coprocessor::Response>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the CoprocessorStream method.
+        type CoprocessorStreamStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<
+                    super::super::coprocessor::Response,
+                    tonic::Status,
+                >,
+            >
+            + Send
+            + 'static;
+        async fn coprocessor_stream(
+            &self,
+            request: tonic::Request<super::super::coprocessor::Request>,
+        ) -> std::result::Result<
+            tonic::Response<Self::CoprocessorStreamStream>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the BatchCoprocessor method.
+        type BatchCoprocessorStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<
+                    super::super::coprocessor::BatchResponse,
+                    tonic::Status,
+                >,
+            >
+            + Send
+            + 'static;
+        async fn batch_coprocessor(
+            &self,
+            request: tonic::Request<super::super::coprocessor::BatchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::BatchCoprocessorStream>,
+            tonic::Status,
+        >;
+        /// Command send by remote coprocessor to TiKV for executing coprocessor request.
+        async fn delegate_coprocessor(
+            &self,
+            request: tonic::Request<super::super::coprocessor::DelegateRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::coprocessor::DelegateResponse>,
+            tonic::Status,
+        >;
+        /// Command for executing custom user requests in TiKV coprocessor_v2.
+        async fn raw_coprocessor(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::RawCoprocessorRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::RawCoprocessorResponse>,
+            tonic::Status,
+        >;
+        /// Raft commands (sent between TiKV nodes).
+        async fn raft(
+            &self,
+            request: tonic::Request<
+                tonic::Streaming<super::super::raft_serverpb::RaftMessage>,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<super::super::raft_serverpb::Done>,
+            tonic::Status,
+        >;
+        async fn batch_raft(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::BatchRaftMessage>>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::raft_serverpb::Done>,
+            tonic::Status,
+        >;
+        async fn snapshot(
+            &self,
+            request: tonic::Request<
+                tonic::Streaming<super::super::raft_serverpb::SnapshotChunk>,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<super::super::raft_serverpb::Done>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the TabletSnapshot method.
+        type TabletSnapshotStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<
+                    super::super::raft_serverpb::TabletSnapshotResponse,
+                    tonic::Status,
+                >,
+            >
+            + Send
+            + 'static;
+        async fn tablet_snapshot(
+            &self,
+            request: tonic::Request<
+                tonic::Streaming<super::super::raft_serverpb::TabletSnapshotRequest>,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<Self::TabletSnapshotStream>,
+            tonic::Status,
+        >;
+        /// Sent from PD or TiDB to a TiKV node.
+        async fn split_region(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::SplitRegionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::SplitRegionResponse>,
+            tonic::Status,
+        >;
+        /// Sent from TiFlash or TiKV to a TiKV node.
+        async fn read_index(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::ReadIndexRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::ReadIndexResponse>,
+            tonic::Status,
+        >;
+        /// Commands for debugging transactions.
+        async fn mvcc_get_by_key(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::MvccGetByKeyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::MvccGetByKeyResponse>,
+            tonic::Status,
+        >;
+        async fn mvcc_get_by_start_ts(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::MvccGetByStartTsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::MvccGetByStartTsResponse>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the BatchCommands method.
+        type BatchCommandsStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::BatchCommandsResponse, tonic::Status>,
+            >
+            + Send
+            + 'static;
+        /// Batched commands.
+        async fn batch_commands(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::BatchCommandsRequest>>,
+        ) -> std::result::Result<
+            tonic::Response<Self::BatchCommandsStream>,
+            tonic::Status,
+        >;
+        /// These are for mpp execution.
+        async fn dispatch_mpp_task(
+            &self,
+            request: tonic::Request<super::super::mpp::DispatchTaskRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::mpp::DispatchTaskResponse>,
+            tonic::Status,
+        >;
+        async fn cancel_mpp_task(
+            &self,
+            request: tonic::Request<super::super::mpp::CancelTaskRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::mpp::CancelTaskResponse>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the EstablishMPPConnection method.
+        type EstablishMPPConnectionStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<
+                    super::super::mpp::MppDataPacket,
+                    tonic::Status,
+                >,
+            >
+            + Send
+            + 'static;
+        async fn establish_mpp_connection(
+            &self,
+            request: tonic::Request<super::super::mpp::EstablishMppConnectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::EstablishMPPConnectionStream>,
+            tonic::Status,
+        >;
+        async fn is_alive(
+            &self,
+            request: tonic::Request<super::super::mpp::IsAliveRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::mpp::IsAliveResponse>,
+            tonic::Status,
+        >;
+        async fn report_mpp_task_status(
+            &self,
+            request: tonic::Request<super::super::mpp::ReportTaskStatusRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::mpp::ReportTaskStatusResponse>,
+            tonic::Status,
+        >;
+        /// / CheckLeader sends all information (includes region term and epoch) to other stores.
+        /// / Once a store receives a request, it checks term and epoch for each region, and sends the regions whose
+        /// / term and epoch match with local information in the store.
+        /// / After the client collected all responses from all stores, it checks if got a quorum of responses from
+        /// / other stores for every region, and decides to advance resolved ts from these regions.
+        async fn check_leader(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::CheckLeaderRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::CheckLeaderResponse>,
+            tonic::Status,
+        >;
+        /// / Get the minimal `safe_ts` from regions at the store
+        async fn get_store_safe_ts(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::StoreSafeTsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::StoreSafeTsResponse>,
+            tonic::Status,
+        >;
+        /// / Get the information about lock waiting from TiKV.
+        async fn get_lock_wait_info(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::GetLockWaitInfoRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::GetLockWaitInfoResponse>,
+            tonic::Status,
+        >;
+        /// / Compact a specified key range. This request is not restricted to raft leaders and will not be replicated.
+        /// / It only compacts data on this node.
+        /// / TODO: Currently this RPC is designed to be only compatible with TiFlash.
+        /// / Shall be move out in https://github.com/pingcap/kvproto/issues/912
+        async fn compact(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::CompactRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::CompactResponse>,
+            tonic::Status,
+        >;
+        /// / Get the information about history lock waiting from TiKV.
+        async fn get_lock_wait_history(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::GetLockWaitHistoryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::GetLockWaitHistoryResponse>,
+            tonic::Status,
+        >;
+        /// / Get system table from TiFlash
+        async fn get_ti_flash_system_table(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::TiFlashSystemTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::TiFlashSystemTableResponse>,
+            tonic::Status,
+        >;
+        /// / Get estimate tici count from TiFlash
+        async fn get_estimate_ti_ci_count(
+            &self,
+            request: tonic::Request<super::super::coprocessor::TiCiEstimateCountRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::coprocessor::TiCiEstimateCountResponse>,
+            tonic::Status,
+        >;
+        /// These are for TiFlash disaggregated architecture
+        /// / Try to lock a S3 object, atomically
+        async fn try_add_lock(
+            &self,
+            request: tonic::Request<super::super::disaggregated::TryAddLockRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::disaggregated::TryAddLockResponse>,
+            tonic::Status,
+        >;
+        /// / Try to delete a S3 object, atomically
+        async fn try_mark_delete(
+            &self,
+            request: tonic::Request<super::super::disaggregated::TryMarkDeleteRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::disaggregated::TryMarkDeleteResponse>,
+            tonic::Status,
+        >;
+        /// / Build the disaggregated task on TiFlash write node
+        async fn establish_disagg_task(
+            &self,
+            request: tonic::Request<
+                super::super::disaggregated::EstablishDisaggTaskRequest,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<super::super::disaggregated::EstablishDisaggTaskResponse>,
+            tonic::Status,
+        >;
+        /// / Cancel the disaggregated task on TiFlash write node
+        async fn cancel_disagg_task(
+            &self,
+            request: tonic::Request<super::super::disaggregated::CancelDisaggTaskRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::disaggregated::CancelDisaggTaskResponse>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the FetchDisaggPages method.
+        type FetchDisaggPagesStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<
+                    super::super::disaggregated::PagesPacket,
+                    tonic::Status,
+                >,
+            >
+            + Send
+            + 'static;
+        /// / Exchange page data between TiFlash write node and compute node
+        async fn fetch_disagg_pages(
+            &self,
+            request: tonic::Request<super::super::disaggregated::FetchDisaggPagesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::FetchDisaggPagesStream>,
+            tonic::Status,
+        >;
+        /// / Compute node get configuration from Write node
+        async fn get_disagg_config(
+            &self,
+            request: tonic::Request<super::super::disaggregated::GetDisaggConfigRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::disaggregated::GetDisaggConfigResponse>,
+            tonic::Status,
+        >;
+        /// / Get health feedback info from the TiKV node.
+        async fn get_health_feedback(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::GetHealthFeedbackRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::GetHealthFeedbackResponse>,
+            tonic::Status,
+        >;
+        /// / Broadcast the transaction status to all TiKV nodes
+        async fn broadcast_txn_status(
+            &self,
+            request: tonic::Request<super::super::kvrpcpb::BroadcastTxnStatusRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::kvrpcpb::BroadcastTxnStatusResponse>,
+            tonic::Status,
+        >;
+    }
+    /// Key/value store API for TiKV.
+    #[derive(Debug)]
+    pub struct TikvServer<T: Tikv> {
+        inner: _Inner<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    struct _Inner<T>(Arc<T>);
+    impl<T: Tikv> TikvServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            let inner = _Inner(inner);
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for TikvServer<T>
+    where
+        T: Tikv,
+        B: Body + Send + 'static,
+        B::Error: Into<StdError> + Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            let inner = self.inner.clone();
+            match req.uri().path() {
+                "/tikvpb.Tikv/KvGet" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvGetSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::GetRequest>
+                    for KvGetSvc<T> {
+                        type Response = super::super::kvrpcpb::GetResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::kvrpcpb::GetRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_get(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvGetSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvScan" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvScanSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::ScanRequest>
+                    for KvScanSvc<T> {
+                        type Response = super::super::kvrpcpb::ScanResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::kvrpcpb::ScanRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_scan(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvScanSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvPrewrite" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvPrewriteSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::PrewriteRequest>
+                    for KvPrewriteSvc<T> {
+                        type Response = super::super::kvrpcpb::PrewriteResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::PrewriteRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_prewrite(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvPrewriteSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvPessimisticLock" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvPessimisticLockSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::PessimisticLockRequest,
+                    > for KvPessimisticLockSvc<T> {
+                        type Response = super::super::kvrpcpb::PessimisticLockResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::PessimisticLockRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_pessimistic_lock(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvPessimisticLockSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KVPessimisticRollback" => {
+                    #[allow(non_camel_case_types)]
+                    struct KVPessimisticRollbackSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::PessimisticRollbackRequest,
+                    > for KVPessimisticRollbackSvc<T> {
+                        type Response = super::super::kvrpcpb::PessimisticRollbackResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::PessimisticRollbackRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_pessimistic_rollback(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KVPessimisticRollbackSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvTxnHeartBeat" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvTxnHeartBeatSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::TxnHeartBeatRequest,
+                    > for KvTxnHeartBeatSvc<T> {
+                        type Response = super::super::kvrpcpb::TxnHeartBeatResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::TxnHeartBeatRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_txn_heart_beat(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvTxnHeartBeatSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvCheckTxnStatus" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvCheckTxnStatusSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::CheckTxnStatusRequest,
+                    > for KvCheckTxnStatusSvc<T> {
+                        type Response = super::super::kvrpcpb::CheckTxnStatusResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::CheckTxnStatusRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_check_txn_status(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvCheckTxnStatusSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvCheckSecondaryLocks" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvCheckSecondaryLocksSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::CheckSecondaryLocksRequest,
+                    > for KvCheckSecondaryLocksSvc<T> {
+                        type Response = super::super::kvrpcpb::CheckSecondaryLocksResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::CheckSecondaryLocksRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_check_secondary_locks(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvCheckSecondaryLocksSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvCommit" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvCommitSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::CommitRequest>
+                    for KvCommitSvc<T> {
+                        type Response = super::super::kvrpcpb::CommitResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::kvrpcpb::CommitRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_commit(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvCommitSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvImport" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvImportSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::ImportRequest>
+                    for KvImportSvc<T> {
+                        type Response = super::super::kvrpcpb::ImportResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::kvrpcpb::ImportRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_import(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvImportSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvCleanup" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvCleanupSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::CleanupRequest>
+                    for KvCleanupSvc<T> {
+                        type Response = super::super::kvrpcpb::CleanupResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::CleanupRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_cleanup(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvCleanupSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvBatchGet" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvBatchGetSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::BatchGetRequest>
+                    for KvBatchGetSvc<T> {
+                        type Response = super::super::kvrpcpb::BatchGetResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::BatchGetRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_batch_get(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvBatchGetSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvBatchRollback" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvBatchRollbackSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::BatchRollbackRequest,
+                    > for KvBatchRollbackSvc<T> {
+                        type Response = super::super::kvrpcpb::BatchRollbackResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::BatchRollbackRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_batch_rollback(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvBatchRollbackSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvScanLock" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvScanLockSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::ScanLockRequest>
+                    for KvScanLockSvc<T> {
+                        type Response = super::super::kvrpcpb::ScanLockResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::ScanLockRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_scan_lock(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvScanLockSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvResolveLock" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvResolveLockSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::ResolveLockRequest,
+                    > for KvResolveLockSvc<T> {
+                        type Response = super::super::kvrpcpb::ResolveLockResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::ResolveLockRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_resolve_lock(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvResolveLockSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvGC" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvGCSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::GcRequest>
+                    for KvGCSvc<T> {
+                        type Response = super::super::kvrpcpb::GcResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::kvrpcpb::GcRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_gc(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvGCSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvDeleteRange" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvDeleteRangeSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::DeleteRangeRequest,
+                    > for KvDeleteRangeSvc<T> {
+                        type Response = super::super::kvrpcpb::DeleteRangeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::DeleteRangeRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_delete_range(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvDeleteRangeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvPrepareFlashbackToVersion" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvPrepareFlashbackToVersionSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::PrepareFlashbackToVersionRequest,
+                    > for KvPrepareFlashbackToVersionSvc<T> {
+                        type Response = super::super::kvrpcpb::PrepareFlashbackToVersionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::PrepareFlashbackToVersionRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_prepare_flashback_to_version(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvPrepareFlashbackToVersionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvFlashbackToVersion" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvFlashbackToVersionSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::FlashbackToVersionRequest,
+                    > for KvFlashbackToVersionSvc<T> {
+                        type Response = super::super::kvrpcpb::FlashbackToVersionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::FlashbackToVersionRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_flashback_to_version(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvFlashbackToVersionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvFlush" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvFlushSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::FlushRequest>
+                    for KvFlushSvc<T> {
+                        type Response = super::super::kvrpcpb::FlushResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::kvrpcpb::FlushRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_flush(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvFlushSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/KvBufferBatchGet" => {
+                    #[allow(non_camel_case_types)]
+                    struct KvBufferBatchGetSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::BufferBatchGetRequest,
+                    > for KvBufferBatchGetSvc<T> {
+                        type Response = super::super::kvrpcpb::BufferBatchGetResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::BufferBatchGetRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::kv_buffer_batch_get(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KvBufferBatchGetSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawGet" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawGetSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::RawGetRequest>
+                    for RawGetSvc<T> {
+                        type Response = super::super::kvrpcpb::RawGetResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::kvrpcpb::RawGetRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_get(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawGetSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawBatchGet" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawBatchGetSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RawBatchGetRequest,
+                    > for RawBatchGetSvc<T> {
+                        type Response = super::super::kvrpcpb::RawBatchGetResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawBatchGetRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_batch_get(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawBatchGetSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawPut" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawPutSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::RawPutRequest>
+                    for RawPutSvc<T> {
+                        type Response = super::super::kvrpcpb::RawPutResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::kvrpcpb::RawPutRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_put(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawPutSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawBatchPut" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawBatchPutSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RawBatchPutRequest,
+                    > for RawBatchPutSvc<T> {
+                        type Response = super::super::kvrpcpb::RawBatchPutResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawBatchPutRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_batch_put(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawBatchPutSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawDelete" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawDeleteSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RawDeleteRequest,
+                    > for RawDeleteSvc<T> {
+                        type Response = super::super::kvrpcpb::RawDeleteResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawDeleteRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_delete(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawDeleteSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawBatchDelete" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawBatchDeleteSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RawBatchDeleteRequest,
+                    > for RawBatchDeleteSvc<T> {
+                        type Response = super::super::kvrpcpb::RawBatchDeleteResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawBatchDeleteRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_batch_delete(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawBatchDeleteSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawScan" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawScanSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::RawScanRequest>
+                    for RawScanSvc<T> {
+                        type Response = super::super::kvrpcpb::RawScanResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawScanRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_scan(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawScanSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawDeleteRange" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawDeleteRangeSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RawDeleteRangeRequest,
+                    > for RawDeleteRangeSvc<T> {
+                        type Response = super::super::kvrpcpb::RawDeleteRangeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawDeleteRangeRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_delete_range(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawDeleteRangeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawBatchScan" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawBatchScanSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RawBatchScanRequest,
+                    > for RawBatchScanSvc<T> {
+                        type Response = super::super::kvrpcpb::RawBatchScanResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawBatchScanRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_batch_scan(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawBatchScanSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawGetKeyTTL" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawGetKeyTTLSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RawGetKeyTtlRequest,
+                    > for RawGetKeyTTLSvc<T> {
+                        type Response = super::super::kvrpcpb::RawGetKeyTtlResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawGetKeyTtlRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_get_key_ttl(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawGetKeyTTLSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawCompareAndSwap" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawCompareAndSwapSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::RawCasRequest>
+                    for RawCompareAndSwapSvc<T> {
+                        type Response = super::super::kvrpcpb::RawCasResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::kvrpcpb::RawCasRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_compare_and_swap(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawCompareAndSwapSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawChecksum" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawChecksumSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RawChecksumRequest,
+                    > for RawChecksumSvc<T> {
+                        type Response = super::super::kvrpcpb::RawChecksumResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawChecksumRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_checksum(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawChecksumSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/UnsafeDestroyRange" => {
+                    #[allow(non_camel_case_types)]
+                    struct UnsafeDestroyRangeSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::UnsafeDestroyRangeRequest,
+                    > for UnsafeDestroyRangeSvc<T> {
+                        type Response = super::super::kvrpcpb::UnsafeDestroyRangeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::UnsafeDestroyRangeRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::unsafe_destroy_range(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = UnsafeDestroyRangeSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RegisterLockObserver" => {
+                    #[allow(non_camel_case_types)]
+                    struct RegisterLockObserverSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RegisterLockObserverRequest,
+                    > for RegisterLockObserverSvc<T> {
+                        type Response = super::super::kvrpcpb::RegisterLockObserverResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RegisterLockObserverRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::register_lock_observer(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RegisterLockObserverSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/CheckLockObserver" => {
+                    #[allow(non_camel_case_types)]
+                    struct CheckLockObserverSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::CheckLockObserverRequest,
+                    > for CheckLockObserverSvc<T> {
+                        type Response = super::super::kvrpcpb::CheckLockObserverResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::CheckLockObserverRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::check_lock_observer(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CheckLockObserverSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RemoveLockObserver" => {
+                    #[allow(non_camel_case_types)]
+                    struct RemoveLockObserverSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RemoveLockObserverRequest,
+                    > for RemoveLockObserverSvc<T> {
+                        type Response = super::super::kvrpcpb::RemoveLockObserverResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RemoveLockObserverRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::remove_lock_observer(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RemoveLockObserverSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/PhysicalScanLock" => {
+                    #[allow(non_camel_case_types)]
+                    struct PhysicalScanLockSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::PhysicalScanLockRequest,
+                    > for PhysicalScanLockSvc<T> {
+                        type Response = super::super::kvrpcpb::PhysicalScanLockResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::PhysicalScanLockRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::physical_scan_lock(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = PhysicalScanLockSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/Coprocessor" => {
+                    #[allow(non_camel_case_types)]
+                    struct CoprocessorSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::coprocessor::Request>
+                    for CoprocessorSvc<T> {
+                        type Response = super::super::coprocessor::Response;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::coprocessor::Request>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::coprocessor(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CoprocessorSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/CoprocessorStream" => {
+                    #[allow(non_camel_case_types)]
+                    struct CoprocessorStreamSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::ServerStreamingService<
+                        super::super::coprocessor::Request,
+                    > for CoprocessorStreamSvc<T> {
+                        type Response = super::super::coprocessor::Response;
+                        type ResponseStream = T::CoprocessorStreamStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::coprocessor::Request>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::coprocessor_stream(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CoprocessorStreamSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/BatchCoprocessor" => {
+                    #[allow(non_camel_case_types)]
+                    struct BatchCoprocessorSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::ServerStreamingService<
+                        super::super::coprocessor::BatchRequest,
+                    > for BatchCoprocessorSvc<T> {
+                        type Response = super::super::coprocessor::BatchResponse;
+                        type ResponseStream = T::BatchCoprocessorStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::coprocessor::BatchRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::batch_coprocessor(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = BatchCoprocessorSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/DelegateCoprocessor" => {
+                    #[allow(non_camel_case_types)]
+                    struct DelegateCoprocessorSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::coprocessor::DelegateRequest,
+                    > for DelegateCoprocessorSvc<T> {
+                        type Response = super::super::coprocessor::DelegateResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::coprocessor::DelegateRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::delegate_coprocessor(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = DelegateCoprocessorSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/RawCoprocessor" => {
+                    #[allow(non_camel_case_types)]
+                    struct RawCoprocessorSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::RawCoprocessorRequest,
+                    > for RawCoprocessorSvc<T> {
+                        type Response = super::super::kvrpcpb::RawCoprocessorResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::RawCoprocessorRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raw_coprocessor(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RawCoprocessorSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/Raft" => {
+                    #[allow(non_camel_case_types)]
+                    struct RaftSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::ClientStreamingService<
+                        super::super::raft_serverpb::RaftMessage,
+                    > for RaftSvc<T> {
+                        type Response = super::super::raft_serverpb::Done;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::super::raft_serverpb::RaftMessage>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::raft(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RaftSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/BatchRaft" => {
+                    #[allow(non_camel_case_types)]
+                    struct BatchRaftSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::ClientStreamingService<super::BatchRaftMessage>
+                    for BatchRaftSvc<T> {
+                        type Response = super::super::raft_serverpb::Done;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::BatchRaftMessage>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::batch_raft(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = BatchRaftSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/Snapshot" => {
+                    #[allow(non_camel_case_types)]
+                    struct SnapshotSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::ClientStreamingService<
+                        super::super::raft_serverpb::SnapshotChunk,
+                    > for SnapshotSvc<T> {
+                        type Response = super::super::raft_serverpb::Done;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::super::raft_serverpb::SnapshotChunk>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::snapshot(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = SnapshotSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/TabletSnapshot" => {
+                    #[allow(non_camel_case_types)]
+                    struct TabletSnapshotSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::StreamingService<
+                        super::super::raft_serverpb::TabletSnapshotRequest,
+                    > for TabletSnapshotSvc<T> {
+                        type Response = super::super::raft_serverpb::TabletSnapshotResponse;
+                        type ResponseStream = T::TabletSnapshotStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<
+                                    super::super::raft_serverpb::TabletSnapshotRequest,
+                                >,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::tablet_snapshot(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = TabletSnapshotSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/SplitRegion" => {
+                    #[allow(non_camel_case_types)]
+                    struct SplitRegionSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::SplitRegionRequest,
+                    > for SplitRegionSvc<T> {
+                        type Response = super::super::kvrpcpb::SplitRegionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::SplitRegionRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::split_region(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = SplitRegionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/ReadIndex" => {
+                    #[allow(non_camel_case_types)]
+                    struct ReadIndexSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::ReadIndexRequest,
+                    > for ReadIndexSvc<T> {
+                        type Response = super::super::kvrpcpb::ReadIndexResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::ReadIndexRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::read_index(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ReadIndexSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/MvccGetByKey" => {
+                    #[allow(non_camel_case_types)]
+                    struct MvccGetByKeySvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::MvccGetByKeyRequest,
+                    > for MvccGetByKeySvc<T> {
+                        type Response = super::super::kvrpcpb::MvccGetByKeyResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::MvccGetByKeyRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::mvcc_get_by_key(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = MvccGetByKeySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/MvccGetByStartTs" => {
+                    #[allow(non_camel_case_types)]
+                    struct MvccGetByStartTsSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::MvccGetByStartTsRequest,
+                    > for MvccGetByStartTsSvc<T> {
+                        type Response = super::super::kvrpcpb::MvccGetByStartTsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::MvccGetByStartTsRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::mvcc_get_by_start_ts(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = MvccGetByStartTsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/BatchCommands" => {
+                    #[allow(non_camel_case_types)]
+                    struct BatchCommandsSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::StreamingService<super::BatchCommandsRequest>
+                    for BatchCommandsSvc<T> {
+                        type Response = super::BatchCommandsResponse;
+                        type ResponseStream = T::BatchCommandsStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::BatchCommandsRequest>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::batch_commands(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = BatchCommandsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/DispatchMPPTask" => {
+                    #[allow(non_camel_case_types)]
+                    struct DispatchMPPTaskSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::mpp::DispatchTaskRequest>
+                    for DispatchMPPTaskSvc<T> {
+                        type Response = super::super::mpp::DispatchTaskResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::mpp::DispatchTaskRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::dispatch_mpp_task(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = DispatchMPPTaskSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/CancelMPPTask" => {
+                    #[allow(non_camel_case_types)]
+                    struct CancelMPPTaskSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::mpp::CancelTaskRequest>
+                    for CancelMPPTaskSvc<T> {
+                        type Response = super::super::mpp::CancelTaskResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::mpp::CancelTaskRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::cancel_mpp_task(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CancelMPPTaskSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/EstablishMPPConnection" => {
+                    #[allow(non_camel_case_types)]
+                    struct EstablishMPPConnectionSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::ServerStreamingService<
+                        super::super::mpp::EstablishMppConnectionRequest,
+                    > for EstablishMPPConnectionSvc<T> {
+                        type Response = super::super::mpp::MppDataPacket;
+                        type ResponseStream = T::EstablishMPPConnectionStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::mpp::EstablishMppConnectionRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::establish_mpp_connection(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = EstablishMPPConnectionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/IsAlive" => {
+                    #[allow(non_camel_case_types)]
+                    struct IsAliveSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::mpp::IsAliveRequest>
+                    for IsAliveSvc<T> {
+                        type Response = super::super::mpp::IsAliveResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::mpp::IsAliveRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::is_alive(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = IsAliveSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/ReportMPPTaskStatus" => {
+                    #[allow(non_camel_case_types)]
+                    struct ReportMPPTaskStatusSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::mpp::ReportTaskStatusRequest,
+                    > for ReportMPPTaskStatusSvc<T> {
+                        type Response = super::super::mpp::ReportTaskStatusResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::mpp::ReportTaskStatusRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::report_mpp_task_status(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ReportMPPTaskStatusSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/CheckLeader" => {
+                    #[allow(non_camel_case_types)]
+                    struct CheckLeaderSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::CheckLeaderRequest,
+                    > for CheckLeaderSvc<T> {
+                        type Response = super::super::kvrpcpb::CheckLeaderResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::CheckLeaderRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::check_leader(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CheckLeaderSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/GetStoreSafeTS" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetStoreSafeTSSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::StoreSafeTsRequest,
+                    > for GetStoreSafeTSSvc<T> {
+                        type Response = super::super::kvrpcpb::StoreSafeTsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::StoreSafeTsRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::get_store_safe_ts(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetStoreSafeTSSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/GetLockWaitInfo" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetLockWaitInfoSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::GetLockWaitInfoRequest,
+                    > for GetLockWaitInfoSvc<T> {
+                        type Response = super::super::kvrpcpb::GetLockWaitInfoResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::GetLockWaitInfoRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::get_lock_wait_info(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetLockWaitInfoSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/Compact" => {
+                    #[allow(non_camel_case_types)]
+                    struct CompactSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<super::super::kvrpcpb::CompactRequest>
+                    for CompactSvc<T> {
+                        type Response = super::super::kvrpcpb::CompactResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::CompactRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::compact(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CompactSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/GetLockWaitHistory" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetLockWaitHistorySvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::GetLockWaitHistoryRequest,
+                    > for GetLockWaitHistorySvc<T> {
+                        type Response = super::super::kvrpcpb::GetLockWaitHistoryResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::GetLockWaitHistoryRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::get_lock_wait_history(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetLockWaitHistorySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/GetTiFlashSystemTable" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetTiFlashSystemTableSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::TiFlashSystemTableRequest,
+                    > for GetTiFlashSystemTableSvc<T> {
+                        type Response = super::super::kvrpcpb::TiFlashSystemTableResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::TiFlashSystemTableRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::get_ti_flash_system_table(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetTiFlashSystemTableSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/GetEstimateTiCICount" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetEstimateTiCICountSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::coprocessor::TiCiEstimateCountRequest,
+                    > for GetEstimateTiCICountSvc<T> {
+                        type Response = super::super::coprocessor::TiCiEstimateCountResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::coprocessor::TiCiEstimateCountRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::get_estimate_ti_ci_count(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetEstimateTiCICountSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/tryAddLock" => {
+                    #[allow(non_camel_case_types)]
+                    struct tryAddLockSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::disaggregated::TryAddLockRequest,
+                    > for tryAddLockSvc<T> {
+                        type Response = super::super::disaggregated::TryAddLockResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::disaggregated::TryAddLockRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::try_add_lock(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = tryAddLockSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/tryMarkDelete" => {
+                    #[allow(non_camel_case_types)]
+                    struct tryMarkDeleteSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::disaggregated::TryMarkDeleteRequest,
+                    > for tryMarkDeleteSvc<T> {
+                        type Response = super::super::disaggregated::TryMarkDeleteResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::disaggregated::TryMarkDeleteRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::try_mark_delete(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = tryMarkDeleteSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/EstablishDisaggTask" => {
+                    #[allow(non_camel_case_types)]
+                    struct EstablishDisaggTaskSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::disaggregated::EstablishDisaggTaskRequest,
+                    > for EstablishDisaggTaskSvc<T> {
+                        type Response = super::super::disaggregated::EstablishDisaggTaskResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::disaggregated::EstablishDisaggTaskRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::establish_disagg_task(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = EstablishDisaggTaskSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/CancelDisaggTask" => {
+                    #[allow(non_camel_case_types)]
+                    struct CancelDisaggTaskSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::disaggregated::CancelDisaggTaskRequest,
+                    > for CancelDisaggTaskSvc<T> {
+                        type Response = super::super::disaggregated::CancelDisaggTaskResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::disaggregated::CancelDisaggTaskRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::cancel_disagg_task(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CancelDisaggTaskSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/FetchDisaggPages" => {
+                    #[allow(non_camel_case_types)]
+                    struct FetchDisaggPagesSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::ServerStreamingService<
+                        super::super::disaggregated::FetchDisaggPagesRequest,
+                    > for FetchDisaggPagesSvc<T> {
+                        type Response = super::super::disaggregated::PagesPacket;
+                        type ResponseStream = T::FetchDisaggPagesStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::disaggregated::FetchDisaggPagesRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::fetch_disagg_pages(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = FetchDisaggPagesSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/GetDisaggConfig" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetDisaggConfigSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::disaggregated::GetDisaggConfigRequest,
+                    > for GetDisaggConfigSvc<T> {
+                        type Response = super::super::disaggregated::GetDisaggConfigResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::disaggregated::GetDisaggConfigRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::get_disagg_config(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetDisaggConfigSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/GetHealthFeedback" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetHealthFeedbackSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::GetHealthFeedbackRequest,
+                    > for GetHealthFeedbackSvc<T> {
+                        type Response = super::super::kvrpcpb::GetHealthFeedbackResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::GetHealthFeedbackRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::get_health_feedback(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetHealthFeedbackSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/tikvpb.Tikv/BroadcastTxnStatus" => {
+                    #[allow(non_camel_case_types)]
+                    struct BroadcastTxnStatusSvc<T: Tikv>(pub Arc<T>);
+                    impl<
+                        T: Tikv,
+                    > tonic::server::UnaryService<
+                        super::super::kvrpcpb::BroadcastTxnStatusRequest,
+                    > for BroadcastTxnStatusSvc<T> {
+                        type Response = super::super::kvrpcpb::BroadcastTxnStatusResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::super::kvrpcpb::BroadcastTxnStatusRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Tikv>::broadcast_txn_status(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = BroadcastTxnStatusSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        Ok(
+                            http::Response::builder()
+                                .status(200)
+                                .header("grpc-status", "12")
+                                .header("content-type", "application/grpc")
+                                .body(empty_body())
+                                .unwrap(),
+                        )
+                    })
+                }
+            }
+        }
+    }
+    impl<T: Tikv> Clone for TikvServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    impl<T: Tikv> Clone for _Inner<T> {
+        fn clone(&self) -> Self {
+            Self(Arc::clone(&self.0))
+        }
+    }
+    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    impl<T: Tikv> tonic::server::NamedService for TikvServer<T> {
+        const NAME: &'static str = "tikvpb.Tikv";
+    }
+}
+/// Generated server implementations.
+#[allow(non_camel_case_types)]
+pub mod versioned_kv_server {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with VersionedKvServer.
+    #[async_trait]
+    pub trait VersionedKv: Send + Sync + 'static {
+        async fn versioned_coprocessor(
+            &self,
+            request: tonic::Request<super::super::coprocessor::Request>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::coprocessor::Response>,
+            tonic::Status,
+        >;
+    }
+    /// VersionedKv provides versioned coprocessor APIs for TiCI lookup.
+    ///
+    /// Invariants:
+    ///
+    /// * For `VersionedCoprocessor`, callers should fill `coprocessor.Request.versioned_ranges`
+    ///  (each `VersionedKeyRange.range` must be a point range) and keep `coprocessor.Request.ranges` empty.
+    #[derive(Debug)]
+    pub struct VersionedKvServer<T: VersionedKv> {
+        inner: _Inner<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    struct _Inner<T>(Arc<T>);
+    impl<T: VersionedKv> VersionedKvServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            let inner = _Inner(inner);
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for VersionedKvServer<T>
+    where
+        T: VersionedKv,
+        B: Body + Send + 'static,
+        B::Error: Into<StdError> + Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            let inner = self.inner.clone();
+            match req.uri().path() {
+                "/tikvpb.VersionedKv/VersionedCoprocessor" => {
+                    #[allow(non_camel_case_types)]
+                    struct VersionedCoprocessorSvc<T: VersionedKv>(pub Arc<T>);
+                    impl<
+                        T: VersionedKv,
+                    > tonic::server::UnaryService<super::super::coprocessor::Request>
+                    for VersionedCoprocessorSvc<T> {
+                        type Response = super::super::coprocessor::Response;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::super::coprocessor::Request>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as VersionedKv>::versioned_coprocessor(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = VersionedCoprocessorSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        Ok(
+                            http::Response::builder()
+                                .status(200)
+                                .header("grpc-status", "12")
+                                .header("content-type", "application/grpc")
+                                .body(empty_body())
+                                .unwrap(),
+                        )
+                    })
+                }
+            }
+        }
+    }
+    impl<T: VersionedKv> Clone for VersionedKvServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    impl<T: VersionedKv> Clone for _Inner<T> {
+        fn clone(&self) -> Self {
+            Self(Arc::clone(&self.0))
+        }
+    }
+    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    impl<T: VersionedKv> tonic::server::NamedService for VersionedKvServer<T> {
+        const NAME: &'static str = "tikvpb.VersionedKv";
+    }
+}

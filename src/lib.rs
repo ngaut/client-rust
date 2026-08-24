@@ -93,25 +93,39 @@
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::result_large_err)]
 
+#[doc(hidden)]
+pub mod async_util;
 pub mod backoff;
+pub mod error;
+pub mod interceptor;
+#[doc(hidden)]
+pub mod intest;
+#[doc(hidden)]
+pub mod israce;
 #[doc(hidden)]
 pub mod raw;
+pub mod redact;
 pub mod request;
+pub mod retry;
+pub mod trace;
 #[doc(hidden)]
 pub mod transaction;
 
 mod common;
 mod compat;
-mod config;
-mod kv;
+pub mod config;
+pub mod kv;
+mod locate;
+pub mod oracle;
 mod pd;
 mod proto;
 mod region;
 mod region_cache;
+mod resource_control;
 mod stats;
 mod store;
 mod timestamp;
-mod util;
+pub mod util;
 
 #[cfg(test)]
 mod mock;
@@ -130,25 +144,71 @@ pub use common::ProtoRegionError;
 pub use common::Result;
 #[doc(inline)]
 pub use config::Config;
+#[doc(inline)]
+pub use config::RawApiVersion;
+#[doc(inline)]
+pub use config::TxnLocalLatches;
+#[doc(inline)]
+pub use util::RuDetails;
 
 #[doc(inline)]
 pub use crate::backoff::Backoff;
 #[doc(inline)]
+pub use crate::interceptor::{
+    chain_rpc_interceptors, new_rpc_interceptor, RpcDispatchResult, RpcInterceptor,
+    RpcInterceptorChain, RpcInterceptorHandle, RpcNext,
+};
+#[doc(inline)]
+pub use crate::kv::codec;
+#[doc(inline)]
+pub use crate::kv::AccessLocationType;
+#[doc(inline)]
+pub use crate::kv::BatchGetOptions;
+#[doc(inline)]
 pub use crate::kv::BoundRange;
+#[doc(inline)]
+pub use crate::kv::DeadlockError;
+#[doc(inline)]
+pub use crate::kv::FlagsOp;
+#[doc(inline)]
+pub use crate::kv::GetOption;
+#[doc(inline)]
+pub use crate::kv::GetOptions;
 #[doc(inline)]
 pub use crate::kv::IntoOwnedRange;
 #[doc(inline)]
 pub use crate::kv::Key;
 #[doc(inline)]
+pub use crate::kv::KeyFlags;
+#[doc(inline)]
+pub use crate::kv::KeyRange;
+#[doc(inline)]
 pub use crate::kv::KvPair;
 #[doc(inline)]
+pub use crate::kv::LockContext;
+#[doc(inline)]
+pub use crate::kv::ReturnedValue;
+#[doc(inline)]
 pub use crate::kv::Value;
+#[doc(inline)]
+pub use crate::kv::ValueEntry;
+#[doc(inline)]
+pub use crate::kv::Variables;
+#[doc(inline)]
+pub use crate::kv::{
+    ReplicaReadAdjuster, ReplicaReadAdjustment, ReplicaReadConfig, ReplicaReadSelectorOption,
+    ReplicaReadType,
+};
+#[doc(inline)]
+pub use crate::pd::PdClient;
 #[doc(inline)]
 pub use crate::raw::lowering as raw_lowering;
 #[doc(inline)]
 pub use crate::raw::Client as RawClient;
 #[doc(inline)]
 pub use crate::raw::ColumnFamily;
+#[doc(inline)]
+pub use crate::raw::RawChecksum;
 #[doc(inline)]
 pub use crate::request::RetryOptions;
 #[doc(inline)]
@@ -161,6 +221,8 @@ pub use crate::transaction::lowering as transaction_lowering;
 pub use crate::transaction::CheckLevel;
 #[doc(inline)]
 pub use crate::transaction::Client as TransactionClient;
+#[doc(inline)]
+pub use crate::transaction::Priority;
 #[doc(inline)]
 pub use crate::transaction::ProtoLockInfo;
 #[doc(inline)]

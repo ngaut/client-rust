@@ -43,14 +43,54 @@ macro_rules! pd_request {
 
 // These methods make a single attempt to make a request.
 impl Cluster {
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
     pub async fn get_region(
         &mut self,
         key: Vec<u8>,
         timeout: Duration,
     ) -> Result<pdpb::GetRegionResponse> {
+        self.get_region_with_buckets(key, timeout, false).await
+    }
+
+    pub async fn get_region_with_buckets(
+        &mut self,
+        key: Vec<u8>,
+        timeout: Duration,
+        need_buckets: bool,
+    ) -> Result<pdpb::GetRegionResponse> {
         let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
         req.region_key = key;
+        req.need_buckets = need_buckets;
         req.send(&mut self.client, timeout).await
+    }
+
+    pub async fn get_prev_region(
+        &mut self,
+        key: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<pdpb::GetRegionResponse> {
+        self.get_prev_region_with_buckets(key, timeout, false).await
+    }
+
+    pub async fn get_prev_region_with_buckets(
+        &mut self,
+        key: Vec<u8>,
+        timeout: Duration,
+        need_buckets: bool,
+    ) -> Result<pdpb::GetRegionResponse> {
+        let mut request = pd_request!(self.id, pdpb::GetRegionRequest).into_request();
+        request.get_mut().region_key = key;
+        request.get_mut().need_buckets = need_buckets;
+        request.set_timeout(timeout);
+        let response = self.client.get_prev_region(request).await?.into_inner();
+        if let Some(error) = &response.header().error {
+            Err(internal_err!(error.message))
+        } else {
+            Ok(response)
+        }
     }
 
     pub async fn get_region_by_id(
@@ -58,8 +98,18 @@ impl Cluster {
         id: u64,
         timeout: Duration,
     ) -> Result<pdpb::GetRegionResponse> {
+        self.get_region_by_id_with_buckets(id, timeout, false).await
+    }
+
+    pub async fn get_region_by_id_with_buckets(
+        &mut self,
+        id: u64,
+        timeout: Duration,
+        need_buckets: bool,
+    ) -> Result<pdpb::GetRegionResponse> {
         let mut req = pd_request!(self.id, pdpb::GetRegionByIdRequest);
         req.region_id = id;
+        req.need_buckets = need_buckets;
         req.send(&mut self.client, timeout).await
     }
 
@@ -83,6 +133,33 @@ impl Cluster {
 
     pub async fn get_timestamp(&self) -> Result<Timestamp> {
         self.tso.clone().get_timestamp().await
+    }
+
+    pub async fn get_min_timestamp(&mut self, timeout: Duration) -> Result<Timestamp> {
+        let request = pd_request!(self.id, pdpb::GetMinTsRequest);
+        request
+            .send(&mut self.client, timeout)
+            .await?
+            .timestamp
+            .ok_or_else(|| Error::StringError("PD GetMinTS response has no timestamp".to_owned()))
+    }
+
+    pub async fn set_external_timestamp(
+        &mut self,
+        timestamp: u64,
+        timeout: Duration,
+    ) -> Result<()> {
+        let mut request = pd_request!(self.id, pdpb::SetExternalTimestampRequest);
+        request.timestamp = timestamp;
+        request.send(&mut self.client, timeout).await.map(|_| ())
+    }
+
+    pub async fn get_external_timestamp(&mut self, timeout: Duration) -> Result<u64> {
+        let request = pd_request!(self.id, pdpb::GetExternalTimestampRequest);
+        request
+            .send(&mut self.client, timeout)
+            .await
+            .map(|response: pdpb::GetExternalTimestampResponse| response.timestamp)
     }
 
     pub async fn update_safepoint(
@@ -419,6 +496,36 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::SetExternalTimestampRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::SetExternalTimestampResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.set_external_timestamp(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::GetExternalTimestampRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::GetExternalTimestampResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.get_external_timestamp(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::GetMinTsRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::GetMinTsResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.get_min_ts(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for keyspacepb::LoadKeyspaceRequest {
     type Client = keyspacepb::keyspace_client::KeyspaceClient<Channel>;
     type Response = keyspacepb::LoadKeyspaceResponse;
@@ -451,6 +558,24 @@ impl PdResponse for pdpb::GetAllStoresResponse {
 }
 
 impl PdResponse for pdpb::UpdateGcSafePointResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for pdpb::SetExternalTimestampResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for pdpb::GetExternalTimestampResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for pdpb::GetMinTsResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.header.as_ref().unwrap()
     }

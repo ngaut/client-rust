@@ -189,3 +189,105 @@ pub fn new_unsafe_destroy_range_request(range: BoundRange) -> kvrpcpb::UnsafeDes
     let (start_key, end_key) = range.into_keys();
     requests::new_unsafe_destroy_range_request(start_key.into(), end_key.unwrap_or_default().into())
 }
+
+pub fn new_delete_range_request(range: BoundRange) -> kvrpcpb::DeleteRangeRequest {
+    let (start_key, end_key) = range.into_keys();
+    requests::new_delete_range_request(start_key.into(), end_key.unwrap_or_default().into())
+}
+
+pub fn new_prepare_flashback_to_version_request(
+    range: BoundRange,
+    start_ts: Timestamp,
+    version: Timestamp,
+) -> kvrpcpb::PrepareFlashbackToVersionRequest {
+    let (start_key, end_key) = range.into_keys();
+    requests::new_prepare_flashback_to_version_request(
+        start_key.into(),
+        end_key.unwrap_or_default().into(),
+        start_ts.version(),
+        version.version(),
+    )
+}
+
+pub fn new_flashback_to_version_request(
+    range: BoundRange,
+    version: Timestamp,
+    start_ts: Timestamp,
+    commit_ts: Timestamp,
+) -> kvrpcpb::FlashbackToVersionRequest {
+    let (start_key, end_key) = range.into_keys();
+    requests::new_flashback_to_version_request(
+        start_key.into(),
+        end_key.unwrap_or_default().into(),
+        version.version(),
+        start_ts.version(),
+        commit_ts.version(),
+    )
+}
+
+pub fn new_flush_request(
+    mutations: Vec<kvrpcpb::Mutation>,
+    primary_key: Key,
+    start_ts: Timestamp,
+    min_commit_ts: Timestamp,
+    generation: u64,
+    lock_ttl: u64,
+) -> kvrpcpb::FlushRequest {
+    requests::new_flush_request(
+        mutations,
+        primary_key.into(),
+        start_ts.version(),
+        min_commit_ts.version(),
+        generation,
+        lock_ttl,
+    )
+}
+
+pub fn new_buffer_batch_get_request(
+    keys: impl Iterator<Item = Key>,
+    version: Timestamp,
+) -> kvrpcpb::BufferBatchGetRequest {
+    requests::new_buffer_batch_get_request(keys.map(Into::into).collect(), version.version())
+}
+
+pub fn new_physical_scan_lock_request(
+    max_ts: Timestamp,
+    start_key: Key,
+    limit: u32,
+) -> kvrpcpb::PhysicalScanLockRequest {
+    requests::new_physical_scan_lock_request(max_ts.version(), start_key.into(), limit)
+}
+
+pub fn new_mvcc_get_by_key_request(key: Key) -> kvrpcpb::MvccGetByKeyRequest {
+    requests::new_mvcc_get_by_key_request(key.into())
+}
+
+pub fn new_mvcc_get_by_start_ts_request(start_ts: Timestamp) -> kvrpcpb::MvccGetByStartTsRequest {
+    requests::new_mvcc_get_by_start_ts_request(start_ts.version())
+}
+
+pub fn new_check_lock_observer_request(max_ts: Timestamp) -> kvrpcpb::CheckLockObserverRequest {
+    requests::new_check_lock_observer_request(max_ts.version())
+}
+
+pub fn new_get_lock_wait_info_request() -> kvrpcpb::GetLockWaitInfoRequest {
+    requests::new_get_lock_wait_info_request()
+}
+
+pub fn new_split_region_request(
+    split_keys: impl Iterator<Item = Key>,
+    is_raw_kv: bool,
+) -> kvrpcpb::SplitRegionRequest {
+    requests::new_split_region_request(split_keys.map(Into::into).collect(), is_raw_kv)
+}
+
+pub fn new_store_safe_ts_request(range: Option<BoundRange>) -> kvrpcpb::StoreSafeTsRequest {
+    let key_range = range.map(|range| {
+        let (start_key, end_key) = range.into_keys();
+        kvrpcpb::KeyRange {
+            start_key: start_key.into(),
+            end_key: end_key.unwrap_or_default().into(),
+        }
+    });
+    requests::new_store_safe_ts_request(key_range)
+}

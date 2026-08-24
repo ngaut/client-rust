@@ -14,6 +14,7 @@ use tokio::time::sleep;
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::interceptor::RpcInterceptorChain;
 use crate::kv::HexRepr;
 use crate::pd::PdClient;
 
@@ -22,7 +23,7 @@ use crate::proto::kvrpcpb::TxnInfo;
 use crate::proto::pdpb::Timestamp;
 use crate::region::RegionVerId;
 use crate::request::plan::handle_region_error;
-use crate::request::plan::is_grpc_error;
+use crate::request::plan::{invalidate_connection_for_error, is_grpc_error};
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::Keyspace;
@@ -83,6 +84,8 @@ pub async fn resolve_locks(
     timestamp: Timestamp,
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    rpc_interceptor: Option<RpcInterceptorChain>,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
     reject_shared_locks(&locks)?;
@@ -91,7 +94,10 @@ pub async fn resolve_locks(
     let current_ts = ts.version();
 
     let mut live_locks = Vec::new();
-    let mut lock_resolver = LockResolver::new(ResolveLocksContext::default());
+    let mut lock_resolver = LockResolver::new(ResolveLocksContext {
+        rpc_interceptor,
+        ..Default::default()
+    });
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
@@ -133,6 +139,7 @@ pub async fn resolve_locks(
                         false,
                         pd_client.clone(),
                         keyspace,
+                        keyspace_name,
                     )
                     .await?;
                 match &status.kind {
@@ -161,6 +168,8 @@ pub async fn resolve_locks(
                 lock.is_txn_file,
                 pd_client.clone(),
                 keyspace,
+                keyspace_name,
+                lock_resolver.ctx.rpc_interceptor.clone(),
                 OPTIMISTIC_BACKOFF,
             )
             .await?;
@@ -180,6 +189,8 @@ async fn resolve_lock_with_retry(
     is_txn_file: bool,
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    rpc_interceptor: Option<RpcInterceptorChain>,
     mut backoff: Backoff,
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
@@ -193,6 +204,8 @@ async fn resolve_lock_with_retry(
             requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
         let plan_builder =
             match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
+                .keyspace_name_option(keyspace_name)
+                .rpc_interceptor_option(rpc_interceptor.clone())
                 .single_region_with_store(store.clone())
                 .await
             {
@@ -220,9 +233,11 @@ async fn resolve_lock_with_retry(
                 match errors.pop() {
                     Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
                         Some(duration) => {
-                            let region_error_resolved =
+                            let region_error_action =
                                 handle_region_error(pd_client.clone(), *e, store.clone()).await?;
-                            if !region_error_resolved {
+                            if let crate::request::plan::RegionErrorRetry::Backoff(_) =
+                                region_error_action
+                            {
                                 sleep(duration).await;
                             }
                             continue;
@@ -248,9 +263,12 @@ async fn resolve_lock_with_retry(
             Err(e) if is_grpc_error(&e) => match backoff.next_delay_duration() {
                 Some(duration) => {
                     pd_client.invalidate_region_cache(ver_id.clone()).await;
-                    if let Ok(store_id) = store.region_with_leader.get_store_id() {
-                        pd_client.invalidate_store_cache(store_id).await;
-                    }
+                    invalidate_connection_for_error(
+                        pd_client.as_ref(),
+                        &e,
+                        store.region_with_leader.get_store_id().ok(),
+                    )
+                    .await;
                     sleep(duration).await;
                     continue;
                 }
@@ -266,6 +284,7 @@ pub struct ResolveLocksContext {
     // Record the status of each transaction.
     pub(crate) resolved: Arc<RwLock<HashMap<u64, Arc<TransactionStatus>>>>,
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
+    pub(crate) rpc_interceptor: Option<RpcInterceptorChain>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -329,6 +348,7 @@ impl LockResolver {
         locks: Vec<kvrpcpb::LockInfo>,
         pd_client: Arc<impl PdClient>, // TODO: make pd_client a member of LockResolver
         keyspace: Keyspace,
+        keyspace_name: Option<&str>,
     ) -> Result<()> {
         // Defense in depth: CleanupLocks::execute refuses these before its filters,
         // but this entry point is public within the crate.
@@ -354,6 +374,7 @@ impl LockResolver {
                 .check_txn_status(
                     pd_client.clone(),
                     keyspace,
+                    keyspace_name,
                     txn_id,
                     l.primary_lock.clone(),
                     0,
@@ -372,6 +393,7 @@ impl LockResolver {
                     .check_all_secondaries(
                         pd_client.clone(),
                         keyspace,
+                        keyspace_name,
                         lock_info.secondaries.clone(),
                         txn_id,
                     )
@@ -393,6 +415,7 @@ impl LockResolver {
                         .check_txn_status(
                             pd_client.clone(),
                             keyspace,
+                            keyspace_name,
                             txn_id,
                             l.primary_lock,
                             0,
@@ -445,7 +468,13 @@ impl LockResolver {
             txn_info_vec.push(txn_info);
         }
         let cleaned_region = self
-            .batch_resolve_locks(pd_client.clone(), keyspace, store.clone(), txn_info_vec)
+            .batch_resolve_locks(
+                pd_client.clone(),
+                keyspace,
+                keyspace_name,
+                store.clone(),
+                txn_info_vec,
+            )
             .await?;
         for txn_id in txn_ids {
             self.ctx
@@ -461,6 +490,7 @@ impl LockResolver {
         &mut self,
         pd_client: Arc<impl PdClient>,
         keyspace: Keyspace,
+        keyspace_name: Option<&str>,
         txn_id: u64,
         primary: Vec<u8>,
         caller_start_ts: u64,
@@ -493,6 +523,8 @@ impl LockResolver {
             is_txn_file,
         );
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
+            .keyspace_name_option(keyspace_name)
+            .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
             .extract_error()
@@ -527,11 +559,14 @@ impl LockResolver {
         &mut self,
         pd_client: Arc<impl PdClient>,
         keyspace: Keyspace,
+        keyspace_name: Option<&str>,
         keys: Vec<Vec<u8>>,
         txn_id: u64,
     ) -> Result<SecondaryLocksStatus> {
         let req = new_check_secondary_locks_request(keys, txn_id);
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
+            .keyspace_name_option(keyspace_name)
+            .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .merge(Collect)
@@ -543,12 +578,15 @@ impl LockResolver {
         &mut self,
         pd_client: Arc<impl PdClient>,
         keyspace: Keyspace,
+        keyspace_name: Option<&str>,
         store: RegionStore,
         txn_infos: Vec<TxnInfo>,
     ) -> Result<RegionVerId> {
         let ver_id = store.region_with_leader.ver_id();
         let request = requests::new_batch_resolve_lock_request(txn_infos.clone());
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
+            .keyspace_name_option(keyspace_name)
+            .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
             .single_region_with_store(store.clone())
             .await?
             .extract_error()
@@ -567,6 +605,7 @@ impl LockResolver {
         force_sync_commit: bool,
         pd_client: Arc<impl PdClient>,
         keyspace: Keyspace,
+        keyspace_name: Option<&str>,
     ) -> Result<Arc<TransactionStatus>> {
         let current_ts = if lock.lock_ttl == 0 {
             // NOTE: lock_ttl = 0 is a special protocol!!!
@@ -584,6 +623,7 @@ impl LockResolver {
                 .check_txn_status(
                     pd_client.clone(),
                     keyspace,
+                    keyspace_name,
                     lock.lock_version,
                     lock.primary_lock.clone(),
                     caller_start_ts,
@@ -703,7 +743,13 @@ mod tests {
             |_: &dyn Any| {
                 fail::fail_point!("region-error", |_| {
                     let resp = kvrpcpb::ResolveLockResponse {
-                        region_error: Some(errorpb::Error::default()),
+                        // StaleCommand is source-retryable. Do not use an
+                        // empty error as a test retry sentinel: client-go
+                        // invalidates and returns unknown region errors.
+                        region_error: Some(errorpb::Error {
+                            stale_command: Some(Default::default()),
+                            ..Default::default()
+                        }),
                         ..Default::default()
                     };
                     Ok(Box::new(resp) as Box<dyn Any>)
@@ -714,10 +760,19 @@ mod tests {
 
         let key = vec![1];
         let region1 = MockPdClient::region1();
-        let resolved_region =
-            resolve_lock_with_retry(&key, 1, 2, false, client.clone(), keyspace, backoff.clone())
-                .await
-                .unwrap();
+        let resolved_region = resolve_lock_with_retry(
+            &key,
+            1,
+            2,
+            false,
+            client.clone(),
+            keyspace,
+            None,
+            None,
+            backoff.clone(),
+        )
+        .await
+        .unwrap();
         assert_eq!(region1.ver_id(), resolved_region);
 
         // Test resolve lock over retry limit
@@ -727,7 +782,7 @@ mod tests {
         )
         .unwrap();
         let key = vec![100];
-        resolve_lock_with_retry(&key, 3, 4, false, client, keyspace, backoff)
+        resolve_lock_with_retry(&key, 3, 4, false, client, keyspace, None, None, backoff)
             .await
             .expect_err("should return error");
     }
@@ -742,7 +797,11 @@ mod tests {
         let resolve_lock_count_captured = resolve_lock_count.clone();
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
-                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    let context = req.context.as_ref().unwrap();
+                    assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
+                    assert_eq!(context.keyspace_id, 7);
+                    assert_eq!(context.keyspace_name, "tenant");
                     check_txn_status_count_captured.fetch_add(1, Ordering::SeqCst);
                     let resp = kvrpcpb::CheckTxnStatusResponse {
                         commit_version: 2,
@@ -751,7 +810,11 @@ mod tests {
                     };
                     return Ok(Box::new(resp) as Box<dyn Any>);
                 }
-                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    let context = req.context.as_ref().unwrap();
+                    assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
+                    assert_eq!(context.keyspace_id, 7);
+                    assert_eq!(context.keyspace_name, "tenant");
                     resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
                     return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
                 }
@@ -765,9 +828,16 @@ mod tests {
         lock.lock_version = 1;
         lock.lock_ttl = 100; // not expired under MockPdClient's Timestamp::default()
 
-        let live_locks = resolve_locks(vec![lock], Timestamp::default(), client, Keyspace::Disable)
-            .await
-            .unwrap();
+        let live_locks = resolve_locks(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::try_enable(7).unwrap(),
+            Some("tenant"),
+            None,
+        )
+        .await
+        .unwrap();
 
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);

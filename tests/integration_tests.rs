@@ -452,9 +452,7 @@ async fn raw_req() -> Result<()> {
     let res = client
         .batch_get(vec!["k1".to_owned(), "k2".to_owned(), "k3".to_owned()])
         .await?;
-    assert_eq!(res.len(), 2);
-    assert_eq!(res[0].1, "v1".as_bytes());
-    assert_eq!(res[1].1, "v2".as_bytes());
+    assert_eq!(res, vec![Some(b"v1".to_vec()), Some(b"v2".to_vec()), None]);
 
     // k1,k2; batch_put then batch_get
     client
@@ -467,8 +465,7 @@ async fn raw_req() -> Result<()> {
     let res = client
         .batch_get(vec!["k4".to_owned(), "k3".to_owned()])
         .await?;
-    assert_eq!(res[0], KvPair::new("k3".to_owned(), "v3"));
-    assert_eq!(res[1], KvPair::new("k4".to_owned(), "v4"));
+    assert_eq!(res, vec![Some(b"v4".to_vec()), Some(b"v3".to_vec())]);
 
     // k1,k2,k3,k4; delete then get
     let res = client.delete("k3".to_owned()).await;
@@ -608,14 +605,10 @@ async fn raw_req() -> Result<()> {
     assert_eq!(res[0].1, "v4".as_bytes());
     assert_eq!(res[1].1, "v3".as_bytes());
 
-    // if endKey is not provided then it scan everything including end key
+    // client-go cannot reverse-scan without an upper endpoint.
     let range = BoundRange::range_from(Key::from("k2".to_owned()));
     let res = client.scan_reverse(range, 20).await?;
-    assert_eq!(res.len(), 4);
-    assert_eq!(res[0].1, "v5".as_bytes());
-    assert_eq!(res[1].1, "v4".as_bytes());
-    assert_eq!(res[2].1, "v3".as_bytes());
-    assert_eq!(res[3].1, "v2".as_bytes());
+    assert!(res.is_empty());
 
     Ok(())
 }
@@ -663,7 +656,7 @@ async fn raw_write_million() -> Result<()> {
             )
             .await?;
 
-        let res = client.batch_get(keys).await?;
+        let res = client.batch_get_pairs(keys).await?;
         assert_eq!(res.len(), 2usize.pow(NUM_BITS_KEY_PER_TXN));
     }
 
@@ -761,20 +754,13 @@ async fn raw_write_million() -> Result<()> {
     assert_eq!(r.len(), limit as usize);
 
     // test scan_reverse
-    // test scan, key range from [0,0,0,0] to [255.0.0.0]
+    // client-go cannot locate the last region, so an unbounded upper endpoint
+    // is an empty successful reverse scan.
     let mut limit = 2000;
     let mut r = client.scan_reverse(.., limit).await?;
-    assert_eq!(r.len(), 256);
-    for (i, val) in r.iter().rev().enumerate() {
-        let k: Vec<u8> = val.0.clone().into();
-        assert_eq!(k[0], i as u8);
-    }
+    assert!(r.is_empty());
     r = client.scan_reverse(vec![100, 0, 0, 0].., limit).await?;
-    assert_eq!(r.len(), 156);
-    for (i, val) in r.iter().rev().enumerate() {
-        let k: Vec<u8> = val.0.clone().into();
-        assert_eq!(k[0], i as u8 + 100);
-    }
+    assert!(r.is_empty());
     r = client
         .scan_reverse(vec![5, 0, 0, 0]..vec![200, 0, 0, 0], limit)
         .await?;
@@ -808,23 +794,13 @@ async fn raw_write_million() -> Result<()> {
 
     limit = 3;
     let mut r = client.scan_reverse(.., limit).await?;
-    let mut expected_start: u8 = 255 - limit as u8 + 1; // including endKey
-    assert_eq!(r.len(), limit as usize);
-    for (i, val) in r.iter().rev().enumerate() {
-        let k: Vec<u8> = val.0.clone().into();
-        assert_eq!(k[0], i as u8 + expected_start);
-    }
+    assert!(r.is_empty());
     r = client.scan_reverse(vec![100, 0, 0, 0].., limit).await?;
-    expected_start = 255 - limit as u8 + 1; // including endKey
-    assert_eq!(r.len(), limit as usize);
-    for (i, val) in r.iter().rev().enumerate() {
-        let k: Vec<u8> = val.0.clone().into();
-        assert_eq!(k[0], i as u8 + expected_start);
-    }
+    assert!(r.is_empty());
     r = client
         .scan_reverse(vec![5, 0, 0, 0]..vec![200, 0, 0, 0], limit)
         .await?;
-    expected_start = 200 - limit as u8;
+    let mut expected_start = 200 - limit as u8;
     assert_eq!(r.len(), limit as usize);
     for (i, val) in r.iter().rev().enumerate() {
         let k: Vec<u8> = val.0.clone().into();
@@ -907,13 +883,13 @@ async fn raw_large_batch_put() -> Result<()> {
     const BATCH_SIZE: usize = 1000;
     let mut got = Vec::with_capacity(num_pairs);
     for chunk in keys.chunks(BATCH_SIZE) {
-        let mut partial = client.batch_get(chunk.to_vec()).await?;
+        let mut partial = client.batch_get_pairs(chunk.to_vec()).await?;
         got.append(&mut partial);
     }
     assert_eq!(got, pairs);
 
     client.batch_delete(keys.clone()).await?;
-    let res = client.batch_get(keys).await?;
+    let res = client.batch_get_pairs(keys).await?;
     assert!(res.is_empty());
 
     Ok(())
@@ -1257,11 +1233,8 @@ async fn raw_cas() -> Result<()> {
     client.delete(key.clone()).await?;
     assert!(client.get(key.clone()).await?.is_none());
 
-    // check unsupported operations
-    assert!(matches!(
-        client.batch_delete(vec![key.clone()]).await.err().unwrap(),
-        Error::UnsupportedMode
-    ));
+    // client-go permits BatchDelete while atomic CAS mode is enabled.
+    client.batch_delete(vec![key.clone()]).await?;
     let client =
         RawClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace()).await?;
     assert!(matches!(

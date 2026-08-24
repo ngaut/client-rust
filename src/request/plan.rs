@@ -2,6 +2,7 @@
 
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
@@ -14,7 +15,11 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
 
+use crate::async_util::Cancellation;
 use crate::backoff::Backoff;
+use crate::interceptor::RpcInterceptorChain;
+use crate::kv::ReplicaReadConfig;
+use crate::locate::ReplicaSelectorState;
 use crate::pd::PdClient;
 use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
@@ -26,6 +31,11 @@ use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
 use crate::request::{KvRequest, StoreRequest};
+use crate::retry::{
+    RetryBackoffer, RetryConfig, BO_IS_WITNESS, BO_MAX_REGION_NOT_INITIALIZED,
+    BO_MAX_TS_NOT_SYNCED, BO_REGION_MISS, BO_REGION_RECOVERY_IN_PROGRESS, BO_REGION_SCHEDULING,
+    BO_STALE_CMD, BO_TIFLASH_RPC, BO_TIKV_DISK_FULL, BO_TIKV_RPC, BO_TIKV_SERVER_BUSY,
+};
 use crate::stats::tikv_stats;
 use crate::store::HasRegionError;
 use crate::store::HasRegionErrors;
@@ -58,6 +68,22 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
 pub struct Dispatch<Req: KvRequest> {
     pub request: Req,
     pub kv_client: Option<Arc<dyn KvClient + Send + Sync>>,
+    /// Address of the current TiKV target, set when the request is assigned to a store.
+    pub target: String,
+    /// Logical TiKV target used only when this request is physically sent to
+    /// a proxy store. Empty means direct transport.
+    pub forwarded_host: String,
+    /// Stable source replica-read selector settings for this sharded plan.
+    pub replica_read_config: ReplicaReadConfig,
+    /// Per-request source selector state. This remains internal so public
+    /// replica-read configuration stays stable across independent requests.
+    pub(crate) replica_selector_state: ReplicaSelectorState,
+    pub(crate) store_health: Option<Arc<crate::locate::StoreHealthStatus>>,
+    pub(crate) record_client_side_slow_score: bool,
+    /// Optional transaction-level decorator for this physical RPC.
+    pub interceptor: Option<RpcInterceptorChain>,
+    pub response_codec: Option<super::keyspace::ApiV2Codec>,
+    pub v1_response_codec: Option<super::keyspace::ApiV1Codec>,
 }
 
 #[async_trait]
@@ -66,16 +92,42 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
 
     async fn execute(&self) -> Result<Self::Result> {
         let stats = tikv_stats(self.request.label());
-        let result = self
+        let client = self
             .kv_client
             .as_ref()
             .expect("Unreachable: kv_client has not been initialised in Dispatch")
-            .dispatch(&self.request)
-            .await;
+            .clone();
+        let next = Box::new(|| {
+            Box::pin(async {
+                client
+                    .dispatch_with_forwarded_host(&self.request, &self.forwarded_host)
+                    .await
+            }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
+        });
+        let started_at = Instant::now();
+        let result = match &self.interceptor {
+            Some(interceptor) => {
+                interceptor
+                    .dispatch(&self.target, &self.request, next)
+                    .await
+            }
+            None => next().await,
+        };
+        if self.record_client_side_slow_score {
+            if let Some(health_status) = &self.store_health {
+                health_status.record_client_side_latency(started_at.elapsed());
+            }
+        }
         let result = stats.done(result);
-        result.map(|r| {
-            *r.downcast()
-                .expect("Downcast failed: request and response type mismatch")
+        result.and_then(|r| {
+            let mut response = *r
+                .downcast()
+                .expect("Downcast failed: request and response type mismatch");
+            self.request
+                .decode_response(&mut response, self.response_codec.as_ref())?;
+            self.request
+                .decode_v1_response(&mut response, self.v1_response_codec.as_ref())?;
+            Ok(response)
         })
     }
 }
@@ -83,6 +135,10 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
 impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
     fn apply_store(&mut self, store: &Store) {
         self.kv_client = Some(store.client.clone());
+        self.target = store.target.clone();
+        self.forwarded_host.clear();
+        self.store_health = None;
+        self.record_client_side_slow_score = false;
         self.request.apply_store(store);
     }
 }
@@ -92,6 +148,24 @@ const MULTI_STORES_CONCURRENCY: usize = 16;
 
 pub(crate) fn is_grpc_error(e: &Error) -> bool {
     matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
+        || matches!(e, Error::Connection { source, .. } if is_grpc_error(source))
+}
+
+fn is_grpc_deadline_exceeded(e: &Error) -> bool {
+    matches!(e, Error::GrpcAPI(status) if status.code() == tonic::Code::DeadlineExceeded)
+        || matches!(e, Error::Connection { source, .. } if is_grpc_deadline_exceeded(source))
+}
+
+pub(crate) async fn invalidate_connection_for_error<PdC: PdClient>(
+    pd_client: &PdC,
+    error: &Error,
+    store_id: Option<StoreId>,
+) {
+    if let Some((address, version)) = error.connection_info() {
+        pd_client.close_kv_client_addr_ver(address, version).await;
+    } else if let Some(store_id) = store_id {
+        pd_client.invalidate_store_cache(store_id).await;
+    }
 }
 
 /// Await every task in `join_set`, reassembling the results in spawn order.
@@ -132,10 +206,81 @@ where
         .collect())
 }
 
-pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
+/// Retry state used by multi-region plans. The legacy [`Backoff`] remains the
+/// public default; source-owned paths such as RawKV can opt into the
+/// cumulative `RetryBackoffer` state instead.
+#[async_trait]
+pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
+    /// Wait for a source retry class. `Ok(false)` means the legacy retry
+    /// strategy is exhausted and the caller should return its triggering
+    /// error unchanged.
+    async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool>;
+
+    /// Create a child retry state for a concurrently dispatched shard. The
+    /// cancellation handle is shared by sibling children for first-error
+    /// cancellation, as in RawKV's `Backoffer.Fork` topology.
+    fn fork(&self) -> (Self, Cancellation);
+
+    /// Merge the accounting from the final completed child once it is no
+    /// longer used. Legacy `Backoff` intentionally keeps its old independent
+    /// per-shard behavior.
+    fn update_using_forked(&mut self, forked: &Self);
+
+    /// RawKV owns an outer source retry loop: after `RegionRequestSender`
+    /// returns a terminal region error, RawKV charges `BoRegionMiss`, locates
+    /// again, and resends. Ordinary request plans leave that error visible to
+    /// their callers.
+    fn retries_terminal_region_errors(&self) -> bool {
+        false
+    }
+}
+
+#[async_trait]
+impl RegionRetryState for Backoff {
+    async fn backoff(&mut self, _config: RetryConfig, _reason: String) -> Result<bool> {
+        match self.next_delay_duration() {
+            Some(duration) => {
+                sleep(duration).await;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    fn fork(&self) -> (Self, Cancellation) {
+        (self.clone(), Cancellation::default())
+    }
+
+    fn update_using_forked(&mut self, _forked: &Self) {}
+}
+
+#[async_trait]
+impl RegionRetryState for RetryBackoffer {
+    async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool> {
+        RetryBackoffer::backoff(self, config, reason)
+            .await
+            .map(|_| true)
+            .map_err(|error| Error::StringError(error.to_string()))
+    }
+
+    fn fork(&self) -> (Self, Cancellation) {
+        RetryBackoffer::fork(self)
+    }
+
+    fn update_using_forked(&mut self, forked: &Self) {
+        RetryBackoffer::update_using_forked(self, forked);
+    }
+
+    fn retries_terminal_region_errors(&self) -> bool {
+        true
+    }
+}
+
+#[allow(private_bounds)]
+pub struct RetryableMultiRegion<P: Plan, PdC: PdClient, R: RegionRetryState = Backoff> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
-    pub backoff: Backoff,
+    pub backoff: R,
 
     /// Preserve all regions' results for other downstream plans to handle.
     /// If true, return Ok and preserve all regions' results, even if some of them are Err.
@@ -143,7 +288,8 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient> {
     pub preserve_region_results: bool,
 }
 
-impl<P: Plan + Shardable, PdC: PdClient> RetryableMultiRegion<P, PdC>
+#[allow(private_bounds)]
+impl<P: Plan + Shardable, PdC: PdClient, R: RegionRetryState> RetryableMultiRegion<P, PdC, R>
 where
     P::Result: HasKeyErrors + HasRegionError,
 {
@@ -152,25 +298,26 @@ where
     async fn single_plan_handler(
         pd_client: Arc<PdC>,
         current_plan: P,
-        backoff: Backoff,
+        mut backoff: R,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
-    ) -> Result<<Self as Plan>::Result> {
+    ) -> (Result<<Self as Plan>::Result>, R) {
         let shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         let shards_len = shards.len();
         debug!("single_plan_handler, shards: {}", shards_len);
+        let (forked_backoff, cancel) = backoff.fork();
         let mut join_set = JoinSet::new();
         for (idx, shard) in shards.into_iter().enumerate() {
             let (shard, region) = match shard {
                 Ok(shard) => shard,
                 Err(e) => {
                     join_set.shutdown().await;
-                    return Err(e);
+                    return (Err(e), backoff);
                 }
             };
             let clone = current_plan.clone_then_apply_shard(shard);
             let pd_client = pd_client.clone();
-            let backoff = backoff.clone();
+            let (backoff, _) = forked_backoff.fork();
             let permits = permits.clone();
             join_set.spawn(async move {
                 (
@@ -188,24 +335,51 @@ where
             });
         }
 
-        let results = collect_join_set_results(join_set, shards_len, "single_plan_handler").await?;
+        let mut results = std::iter::repeat_with(|| None)
+            .take(shards_len)
+            .collect::<Vec<Option<Result<<Self as Plan>::Result>>>>();
+        let mut has_error = false;
+        let mut last_forked = None;
+        while let Some(joined) = join_set.join_next().await {
+            let (index, (result, forked)) = match joined {
+                Ok(joined) => joined,
+                Err(error) => return (Err(error.into()), backoff),
+            };
+            if result.is_err() && !has_error {
+                cancel.cancel();
+                has_error = true;
+            }
+            last_forked = Some(forked);
+            results[index] = Some(result);
+        }
+        if let Some(forked) = last_forked.as_ref() {
+            backoff.update_using_forked(forked);
+        }
+        let results = results
+            .into_iter()
+            .map(|result| result.expect("successful shard task must produce a result"))
+            .collect::<Vec<_>>();
 
+        if !has_error {
+            cancel.cancel();
+        }
         if preserve_region_results {
-            Ok(results
-                .into_iter()
-                .flat_map_ok(|x| x)
-                .map(|x| match x {
-                    Ok(r) => r,
-                    Err(e) => Err(e),
-                })
-                .collect())
+            (
+                Ok(results
+                    .into_iter()
+                    .flat_map_ok(|results| results)
+                    .map(|result| result.and_then(|result| result))
+                    .collect()),
+                backoff,
+            )
         } else {
-            Ok(results
-                .into_iter()
-                .collect::<Result<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .collect())
+            (
+                results
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()
+                    .map(|results| results.into_iter().flatten().collect()),
+                backoff,
+            )
         }
     }
 
@@ -214,19 +388,27 @@ where
         pd_client: Arc<PdC>,
         mut plan: P,
         region: RegionWithLeader,
-        mut backoff: Backoff,
+        mut backoff: R,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
-    ) -> Result<<Self as Plan>::Result> {
+    ) -> (Result<<Self as Plan>::Result>, R) {
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();
         debug!(
             "single_shard_handler, region: {:?}, store: {:?}",
             region_ver_id, store_id
         );
+        let replica_read_config = plan.replica_read_config();
+        let replica_selector_state = plan.replica_selector_state();
+        let is_read_request = plan.is_read_request();
         let region_store = match pd_client
             .clone()
-            .map_region_to_store(region)
+            .map_region_to_store_with_replica(
+                region,
+                replica_read_config,
+                replica_selector_state,
+                is_read_request,
+            )
             .await
             .and_then(|region_store| {
                 plan.apply_store(&region_store)?;
@@ -240,6 +422,7 @@ where
                     plan,
                     region_ver_id,
                     store_id,
+                    None,
                     backoff,
                     permits,
                     preserve_region_results,
@@ -248,6 +431,9 @@ where
                 .await;
             }
         };
+        if let Some(peer) = region_store.target_peer.as_ref() {
+            plan.record_replica_attempt(peer.id);
+        }
 
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
@@ -256,13 +442,31 @@ where
 
         let mut resp = match res {
             Ok(resp) => resp,
+            Err(e) if is_grpc_deadline_exceeded(&e) && source_configurable_read_timeout(&plan) => {
+                debug!(
+                    "single_shard_handler: configurable read timeout, reselection without backoff: {:?}",
+                    e
+                );
+                return Self::single_shard_handler(
+                    pd_client,
+                    plan,
+                    region_store.region_with_leader,
+                    backoff,
+                    permits,
+                    preserve_region_results,
+                )
+                .await;
+            }
             Err(e) if is_grpc_error(&e) => {
                 debug!("single_shard_handler:execute: grpc error: {:?}", e);
                 return Self::handle_other_error(
                     pd_client,
                     plan,
                     region_store.region_with_leader.ver_id(),
-                    region_store.region_with_leader.get_store_id().ok(),
+                    region_store
+                        .physical_store_id
+                        .or_else(|| region_store.region_with_leader.get_store_id().ok()),
+                    Some(region_store.clone()),
                     backoff,
                     permits,
                     preserve_region_results,
@@ -272,45 +476,211 @@ where
             }
             Err(e) => {
                 debug!("single_shard_handler:execute: error: {:?}", e);
-                return Err(e);
+                return (Err(e), backoff);
             }
         };
 
         if let Some(e) = resp.key_errors() {
             debug!("single_shard_handler:execute: key errors: {:?}", e);
-            Ok(vec![Err(Error::MultipleKeyErrors(e))])
+            (Ok(vec![Err(Error::MultipleKeyErrors(e))]), backoff)
         } else if let Some(e) = resp.region_error() {
             debug!(
                 "single_shard_handler:execute: region error: {:?}, region: {:?}",
                 e, region_ver_id
             );
-            match backoff.next_delay_duration() {
-                Some(duration) => {
-                    let region_error_resolved =
-                        handle_region_error(pd_client.clone(), e, region_store).await?;
-                    // don't sleep if we have resolved the region error
-                    if !region_error_resolved {
-                        sleep(duration).await;
+            if source_configurable_server_busy_timeout(&plan, &e) {
+                debug!(
+                    "single_shard_handler: configurable server-busy deadline, reselection without backoff: {:?}",
+                    e
+                );
+                return Self::single_shard_handler(
+                    pd_client,
+                    plan,
+                    region_store.region_with_leader,
+                    backoff,
+                    permits,
+                    preserve_region_results,
+                )
+                .await;
+            }
+            if e.data_is_not_ready.is_some() {
+                if let Some(peer) = region_store.target_peer.as_ref() {
+                    plan.mark_replica_data_not_ready(peer.id);
+                }
+            }
+            if let (Some(busy), Some(target_peer), Some(leader)) = (
+                e.server_is_busy.as_ref(),
+                region_store.target_peer.as_ref(),
+                region_store.region_with_leader.leader.as_ref(),
+            ) {
+                plan.record_busy_leader(target_peer.id, leader.id, busy.estimated_wait_ms);
+            }
+            if !plan.is_batched_coprocessor_read() {
+                if let (Some(busy), Some(target_peer)) =
+                    (e.server_is_busy.as_ref(), region_store.target_peer.as_ref())
+                {
+                    plan.record_server_busy(target_peer.id);
+                    if busy.estimated_wait_ms != 0 {
+                        pd_client.record_server_load(target_peer.store_id, busy.estimated_wait_ms);
                     }
-                    Self::single_plan_handler(
+                }
+            }
+            if let (Some(not_leader), Some(target_peer)) =
+                (e.not_leader.as_ref(), region_store.target_peer.as_ref())
+            {
+                if let Some(leader) = not_leader.leader.as_ref() {
+                    plan.record_not_leader(target_peer.id, leader.id);
+                } else {
+                    plan.mark_replica_no_leader(target_peer.id);
+                }
+            }
+            let retry_flashback_through_leader =
+                e.flashback_in_progress.is_some() && region_store.is_replica_read();
+            if retry_flashback_through_leader {
+                plan.force_leader_after_flashback();
+            }
+            let retry_region_not_found_at_leader = e.region_not_found.is_some()
+                && region_store
+                    .region_with_leader
+                    .leader
+                    .as_ref()
+                    .is_some_and(|leader| plan.force_leader_after_region_not_found(leader.id));
+            let fast_server_busy_retry = e.server_is_busy.as_ref().is_some_and(|busy| {
+                source_fast_server_busy_retry(
+                    &plan.replica_read_config(),
+                    &region_store,
+                    is_read_request,
+                    plan.is_batched_coprocessor_read(),
+                    busy.estimated_wait_ms,
+                )
+            });
+            let configurable_region_error_timeout =
+                source_configurable_region_error_timeout(&plan, &e);
+            let region_error_action = if retry_flashback_through_leader {
+                Ok(RegionErrorRetry::Immediate)
+            } else if retry_region_not_found_at_leader {
+                // Source `onRegionNotFound` hard-invalidates the cache so
+                // concurrent users refresh from PD, while this request gets
+                // one immediate retry against its previously untried leader.
+                pd_client
+                    .invalidate_region_cache(region_ver_id.clone())
+                    .await;
+                Ok(RegionErrorRetry::Immediate)
+            } else if configurable_region_error_timeout {
+                // `onRegionError` recognizes this text-only protobuf form of
+                // deadline exhaustion after its typed region-error branches.
+                Ok(RegionErrorRetry::Immediate)
+            } else {
+                handle_region_error(pd_client.clone(), e.clone(), region_store.clone()).await
+            };
+            let mut region_error_action = match region_error_action {
+                Ok(action) => action,
+                Err(error)
+                    if matches!(error, Error::RegionError(_))
+                        && backoff.retries_terminal_region_errors() =>
+                {
+                    match backoff
+                        .backoff(BO_REGION_MISS, format!("raw region error: {error:?}"))
+                        .await
+                    {
+                        Ok(true) => {
+                            return Self::single_plan_handler(
+                                pd_client,
+                                plan,
+                                backoff,
+                                permits,
+                                preserve_region_results,
+                            )
+                            .await;
+                        }
+                        Ok(false) => return (Err(error), backoff),
+                        Err(backoff_error) => return (Err(backoff_error), backoff),
+                    }
+                }
+                Err(error) => return (Err(error), backoff),
+            };
+            if source_fast_selector_retry(&e, fast_server_busy_retry)
+                && matches!(
+                    region_error_action,
+                    RegionErrorRetry::Backoff(config)
+                        if config == BO_TIKV_SERVER_BUSY || config == BO_STALE_CMD
+                )
+            {
+                region_error_action = RegionErrorRetry::Immediate;
+            }
+            match region_error_action {
+                RegionErrorRetry::Immediate => {
+                    // Source `RegionRequestSender` retains its `KeyLocation`
+                    // and advances the replica selector. Do not re-enter the
+                    // Rust sharding layer here: split/merge outcomes are
+                    // already terminal and are rebuilt by their owning
+                    // caller path.
+                    return Self::single_shard_handler(
                         pd_client,
                         plan,
+                        region_store.region_with_leader,
                         backoff,
                         permits,
                         preserve_region_results,
                     )
-                    .await
+                    .await;
                 }
-                None => {
-                    warn!(
-                        "giving up after exhausting retries on region error, region: {:?}",
-                        region_ver_id
-                    );
-                    Err(Error::RegionError(Box::new(e)))
+                RegionErrorRetry::Backoff(config) => {
+                    match backoff
+                        .backoff(config, format!("region error: {e:?}"))
+                        .await
+                    {
+                        Ok(true) => {
+                            // Source performs its per-store pending backoff
+                            // before the next `replicaSelector.next`, without
+                            // rebuilding the original key-to-region shard.
+                            return Self::single_shard_handler(
+                                pd_client,
+                                plan,
+                                region_store.region_with_leader,
+                                backoff,
+                                permits,
+                                preserve_region_results,
+                            )
+                            .await;
+                        }
+                        Ok(false) => {
+                            warn!(
+                                "giving up after exhausting retries on region error, region: {:?}",
+                                region_ver_id
+                            );
+                            return (Err(Error::RegionError(Box::new(e))), backoff);
+                        }
+                        Err(error) => return (Err(error), backoff),
+                    }
+                }
+                RegionErrorRetry::TerminalAfterBackoff(config) => {
+                    match backoff
+                        .backoff(config, format!("region error: {e:?}"))
+                        .await
+                    {
+                        Ok(_) => return (Err(Error::RegionError(Box::new(e))), backoff),
+                        Err(error) => return (Err(error), backoff),
+                    }
                 }
             }
         } else {
-            Ok(vec![Ok(resp)])
+            if let Some(leader) = region_store.successful_forced_leader_peer() {
+                // Source `onSendSuccess` updates its cached working leader
+                // after a forced follower leader-read succeeds. Cache update
+                // failure is advisory and must not turn a successful user RPC
+                // into an error.
+                if let Err(error) = pd_client
+                    .update_leader(region_store.region_with_leader.ver_id(), leader)
+                    .await
+                {
+                    warn!(
+                        "failed to update cached leader after successful forced leader read: {:?}",
+                        error
+                    );
+                }
+            }
+            (Ok(vec![Ok(resp)]), backoff)
         }
     }
 
@@ -320,44 +690,175 @@ where
         plan: P,
         region: RegionVerId,
         store: Option<StoreId>,
-        mut backoff: Backoff,
+        route: Option<RegionStore>,
+        mut backoff: R,
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
         e: Error,
-    ) -> Result<<Self as Plan>::Result> {
+    ) -> (Result<<Self as Plan>::Result>, R) {
         debug!("handle_other_error: {:?}", e);
-        pd_client.invalidate_region_cache(region).await;
-        if is_grpc_error(&e) {
-            if let Some(store_id) = store {
-                pd_client.invalidate_store_cache(store_id).await;
-            }
+        let invalidate_region = pd_client.clone().on_send_failure(route.as_ref()).await;
+        let transport_backoff = source_transport_backoff_config(route.as_ref());
+        let retained_region = (!invalidate_region)
+            .then(|| route.as_ref().map(|route| route.region_with_leader.clone()))
+            .flatten();
+        if invalidate_region {
+            pd_client.invalidate_region_cache(region).await;
         }
-        match backoff.next_delay_duration() {
-            Some(duration) => {
-                sleep(duration).await;
-                Self::single_plan_handler(
-                    pd_client,
-                    plan,
-                    backoff,
-                    permits,
-                    preserve_region_results,
-                )
-                .await
+        if is_grpc_error(&e) && invalidate_region {
+            invalidate_connection_for_error(pd_client.as_ref(), &e, store).await;
+        }
+        match backoff
+            .backoff(transport_backoff, format!("send store request error: {e}"))
+            .await
+        {
+            Ok(true) => {
+                if let Some(region) = retained_region {
+                    // `replicaSelector.onSendFailure` retains source routing
+                    // state and its KeyLocation; the following TiKV-RPC
+                    // backoff is not a request re-sharding boundary.
+                    Self::single_shard_handler(
+                        pd_client,
+                        plan,
+                        region,
+                        backoff,
+                        permits,
+                        preserve_region_results,
+                    )
+                    .await
+                } else {
+                    Self::single_plan_handler(
+                        pd_client,
+                        plan,
+                        backoff,
+                        permits,
+                        preserve_region_results,
+                    )
+                    .await
+                }
             }
-            None => Err(e),
+            Ok(false) => (Err(e), backoff),
+            Err(error) => (Err(error), backoff),
         }
     }
 }
 
-// Returns
-// 1. Ok(true): error has been resolved, retry immediately
-// 2. Ok(false): backoff, and then retry
-// 3. Err(Error): can't be resolved, return the error to upper level
+/// The source selector performs a zero-delay retry through another eligible
+/// replica when a busy response has already made the ordinary leader path
+/// unsuitable. A healthy leader with `ServerIsBusy(0)` deliberately still
+/// uses the server-busy backoff; its later suspect-leader probe is separate.
+fn source_fast_server_busy_retry(
+    config: &ReplicaReadConfig,
+    region_store: &RegionStore,
+    is_read_request: bool,
+    is_batched_coprocessor_read: bool,
+    estimated_wait_ms: u32,
+) -> bool {
+    !matches!(config.read_type, crate::kv::ReplicaReadType::Leader)
+        || region_store.force_leader_read
+        || (estimated_wait_ms != 0
+            && config.busy_threshold_ms != 0
+            && is_read_request
+            && !is_batched_coprocessor_read)
+}
+
+/// Source `onSendFail` uses TiFlash's distinct terminal timeout/backoff class
+/// for both TiFlash and TiFlash-compute physical endpoints.
+fn source_transport_backoff_config(route: Option<&RegionStore>) -> RetryConfig {
+    route
+        .is_some_and(|route| route.physical_endpoint_type.is_tiflash_related())
+        .then_some(BO_TIFLASH_RPC)
+        .unwrap_or(BO_TIKV_RPC)
+}
+
+/// `replicaSelector.onRegionError` handles stale-command replies by selecting
+/// again without waiting. Server-busy uses the narrower policy above.
+fn source_fast_selector_retry(error: &errorpb::Error, fast_server_busy_retry: bool) -> bool {
+    error.stale_command.is_some() || fast_server_busy_retry
+}
+
+/// `replicaSelector.onReadReqConfigurableTimeout`: a deadline on a read
+/// request using a caller-configured duration below `ReadTimeoutShort` (30 s)
+/// reselects immediately. `record_replica_attempt` has already recorded that
+/// unsuitable peer before dispatch, so the next route observes the same
+/// exhaustion boundary as client-go's selector flag.
+fn source_configurable_read_timeout<P: Shardable>(plan: &P) -> bool {
+    plan.is_read_request() && plan.max_execution_duration_ms() < 30_000
+}
+
+/// Source `replicaSelector.onReadReqConfigurableTimeout` is also selected by
+/// TiKV's `ServerIsBusy` message when its reason reports the read deadline.
+fn source_configurable_server_busy_timeout<P: Shardable>(plan: &P, error: &errorpb::Error) -> bool {
+    source_configurable_read_timeout(plan)
+        && error
+            .server_is_busy
+            .as_ref()
+            .is_some_and(|busy| busy.reason.contains("deadline is exceeded"))
+}
+
+/// Source `isDeadlineExceeded`: a few TiKV region errors expose deadline
+/// exhaustion only through their message instead of a gRPC status or typed
+/// `ServerIsBusy` reason.
+fn source_configurable_region_error_timeout<P: Shardable>(
+    plan: &P,
+    error: &errorpb::Error,
+) -> bool {
+    source_configurable_read_timeout(plan)
+        && error.message.contains("Deadline is exceeded")
+        // `onRegionError` reaches `isDeadlineExceeded` only after every
+        // preceding typed branch. Preserve that ordering for malformed or
+        // mixed protobufs too.
+        && error.not_leader.is_none()
+        && error.disk_full.is_none()
+        && error.recovery_in_progress.is_none()
+        && error.is_witness.is_none()
+        && error.flashback_in_progress.is_none()
+        && error.flashback_not_prepared.is_none()
+        && error.undetermined_result.is_none()
+        && error.region_not_found.is_none()
+        && error.key_not_in_region.is_none()
+        && error.epoch_not_match.is_none()
+        && error.bucket_version_not_match.is_none()
+        && error.server_is_busy.is_none()
+        && error.stale_command.is_none()
+        && error.store_not_match.is_none()
+        && error.raft_entry_too_large.is_none()
+        && error.max_timestamp_not_synced.is_none()
+        && error.region_not_initialized.is_none()
+        && error.read_index_not_ready.is_none()
+        && error.proposal_in_merging_mode.is_none()
+        && error.data_is_not_ready.is_none()
+}
+
+/// How the source region-request sender continues after processing a region
+/// error.  Keeping the error class here ensures every plan surface uses the
+/// same source retry budget rather than reducing all errors to `regionMiss`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RegionErrorRetry {
+    /// The selector/cache change itself makes another attempt safe now.
+    Immediate,
+    /// The attempt must consume this client-go retry class before retrying.
+    Backoff(RetryConfig),
+    /// Source consumes this retry class for accounting/throttling, but ends
+    /// the current send loop afterward and returns the region error.
+    TerminalAfterBackoff(RetryConfig),
+}
+
+/// Source `OnRegionEpochNotMatch` distinguishes a stale local epoch—which
+/// needs one region-miss backoff before retrying—from the ordinary
+/// stop-and-resplit outcome after cache replacement/invalidation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EpochNotMatchOutcome {
+    RetryAfterBackoff,
+    Stop,
+}
+
+// Returns a source-compatible retry action, or a terminal request error.
 pub(crate) async fn handle_region_error<PdC: PdClient>(
     pd_client: Arc<PdC>,
     e: errorpb::Error,
     region_store: RegionStore,
-) -> Result<bool> {
+) -> Result<RegionErrorRetry> {
     let ver_id = region_store.region_with_leader.ver_id();
     let store_id = region_store.region_with_leader.get_store_id();
     debug!("handling region error: {:?}, region: {:?}", e, ver_id);
@@ -367,7 +868,7 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
                 .update_leader(region_store.region_with_leader.ver_id(), leader)
                 .await
             {
-                Ok(_) => Ok(true),
+                Ok(_) => Ok(RegionErrorRetry::Immediate),
                 Err(e) => {
                     pd_client.invalidate_region_cache(ver_id).await;
                     Err(e)
@@ -379,55 +880,130 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
             // isolated and removed from the Raft group. So it's necessary to reload
             // the region from PD.
             pd_client.invalidate_region_cache(ver_id).await;
-            Ok(false)
+            Ok(RegionErrorRetry::Backoff(BO_REGION_SCHEDULING))
         }
+    } else if e.disk_full.is_some() {
+        Ok(RegionErrorRetry::Backoff(BO_TIKV_DISK_FULL))
+    } else if e.recovery_in_progress.is_some() {
+        pd_client.invalidate_region_cache(ver_id).await;
+        Ok(RegionErrorRetry::TerminalAfterBackoff(
+            BO_REGION_RECOVERY_IN_PROGRESS,
+        ))
+    } else if e.is_witness.is_some() {
+        pd_client.invalidate_region_cache(ver_id).await;
+        Ok(RegionErrorRetry::TerminalAfterBackoff(BO_IS_WITNESS))
+    } else if let Some(flashback) = e.flashback_in_progress.as_ref() {
+        // With no replica-read fallback, source returns a direct terminal
+        // error rather than propagating the raw region-error wrapper.
+        Err(Error::StringError(format!(
+            "region {} is in flashback progress, FlashbackStartTS is {}",
+            flashback.region_id, flashback.flashback_start_ts
+        )))
+    } else if let Some(flashback) = e.flashback_not_prepared.as_ref() {
+        Err(Error::StringError(format!(
+            "region {} is not prepared for the flashback",
+            flashback.region_id
+        )))
+    } else if e.undetermined_result.is_some() {
+        // Source leaves the payload for the caller because it cannot know
+        // whether the command executed.
+        Err(Error::RegionError(Box::new(e)))
+    } else if e.raft_entry_too_large.is_some() {
+        // `onRegionError` returns `errors.New(regionErr.String())`: preserve
+        // the direct terminal boundary so outer RawKV region-error recovery
+        // cannot resend an oversized write.
+        Err(Error::StringError(format!("{e:?}")))
+    } else if e.region_not_found.is_some() {
+        pd_client.invalidate_region_cache(ver_id).await;
+        // The one source retry is handled by the caller before entering this
+        // common branch: a follower failure may hand the current selector to
+        // an untried leader. Once that is unavailable, stop so the caller can
+        // rebuild/resplit instead of retrying the stale region in place.
+        Err(Error::RegionError(Box::new(e)))
+    } else if e.key_not_in_region.is_some() {
+        pd_client.invalidate_region_cache(ver_id).await;
+        Err(Error::RegionError(Box::new(e)))
     } else if e.store_not_match.is_some() {
+        // client-go marks the store for re-resolution and invalidates this
+        // region, then stops the current send loop (`retry == false`). Do not
+        // consume the generic region-miss budget and hide the error here.
         pd_client.invalidate_region_cache(ver_id).await;
         if let Ok(store_id) = store_id {
             pd_client.invalidate_store_cache(store_id).await;
         }
-        Ok(false)
-    } else if e.epoch_not_match.is_some() {
-        on_region_epoch_not_match(pd_client.clone(), region_store, e.epoch_not_match.unwrap()).await
-    } else if e.stale_command.is_some() || e.region_not_found.is_some() {
+        Err(Error::RegionError(Box::new(e)))
+    } else if let Some(epoch_not_match) = e.epoch_not_match.clone() {
+        match on_region_epoch_not_match(pd_client.clone(), region_store, epoch_not_match).await? {
+            EpochNotMatchOutcome::RetryAfterBackoff => {
+                Ok(RegionErrorRetry::Backoff(BO_REGION_MISS))
+            }
+            EpochNotMatchOutcome::Stop => Err(Error::RegionError(Box::new(e))),
+        }
+    } else if let Some(bucket_mismatch) = e.bucket_version_not_match.as_ref() {
+        pd_client
+            .update_buckets(
+                ver_id,
+                bucket_mismatch.version,
+                bucket_mismatch.keys.clone(),
+            )
+            .await;
+        // client-go updates the bucket cache but deliberately returns this
+        // region error to its bucket-aware caller, which must reschedule the
+        // original work using the new boundaries.
+        Err(Error::RegionError(Box::new(e)))
+    } else if e.stale_command.is_some() {
+        Ok(RegionErrorRetry::Backoff(BO_STALE_CMD))
+    } else if let Some(server_is_busy) = e.server_is_busy.as_ref() {
+        if server_is_busy.estimated_wait_ms == 0 {
+            if let Some(health_status) = region_store.health_status {
+                health_status.mark_already_slow();
+            }
+        }
+        Ok(RegionErrorRetry::Backoff(BO_TIKV_SERVER_BUSY))
+    } else if e.max_timestamp_not_synced.is_some() {
+        Ok(RegionErrorRetry::Backoff(BO_MAX_TS_NOT_SYNCED))
+    } else if e.region_not_initialized.is_some() {
+        Ok(RegionErrorRetry::Backoff(BO_MAX_REGION_NOT_INITIALIZED))
+    } else if e.read_index_not_ready.is_some() || e.proposal_in_merging_mode.is_some() {
+        Ok(RegionErrorRetry::Backoff(BO_REGION_SCHEDULING))
+    } else if e.data_is_not_ready.is_some() {
+        // client-go retries stale reads without a delay after marking this
+        // replica unsuitable.  A fresh Rust mapping performs the equivalent
+        // candidate selection on the next attempt.
+        Ok(RegionErrorRetry::Immediate)
+    } else if e.mismatch_peer_id.is_some() {
+        // Like StoreNotMatch, source invalidates selector/region state and
+        // terminates this send loop so the caller can rebuild its request.
         pd_client.invalidate_region_cache(ver_id).await;
-        Ok(false)
-    } else if e.server_is_busy.is_some()
-        || e.raft_entry_too_large.is_some()
-        || e.max_timestamp_not_synced.is_some()
-    {
         Err(Error::RegionError(Box::new(e)))
     } else {
+        // TiKV sends every source request through `replicaSelector`; its
+        // fallback returns true here so `next` can select another replica
+        // without cache eviction or backoff. Rust routes the next attempt
+        // through the retained `ReplicaSelectorState` in `Dispatch`.
         debug!(
-            "unknown region error, invalidating region and store caches, region: {:?}: {:?}",
+            "unknown region error, retrying source replica selection, region: {:?}: {:?}",
             ver_id, e
         );
-        pd_client.invalidate_region_cache(ver_id).await;
-        if let Ok(store_id) = store_id {
-            pd_client.invalidate_store_cache(store_id).await;
-        }
-        Ok(false)
+        Ok(RegionErrorRetry::Immediate)
     }
 }
 
-// Returns
-// 1. Ok(true): error has been resolved, retry immediately
-// 2. Ok(false): backoff, and then retry
-// 3. Err(Error): can't be resolved, return the error to upper level
+// Mirrors source `RegionCache.OnRegionEpochNotMatch` retry semantics.
 pub(crate) async fn on_region_epoch_not_match<PdC: PdClient>(
     pd_client: Arc<PdC>,
     region_store: RegionStore,
     error: EpochNotMatch,
-) -> Result<bool> {
+) -> Result<EpochNotMatchOutcome> {
     let ver_id = region_store.region_with_leader.ver_id();
     if error.current_regions.is_empty() {
         pd_client.invalidate_region_cache(ver_id).await;
-        return Ok(true);
+        return Ok(EpochNotMatchOutcome::Stop);
     }
 
-    for r in error.current_regions {
+    for r in &error.current_regions {
         if r.id == region_store.region_with_leader.id() {
-            let region_epoch = r.region_epoch.unwrap();
+            let region_epoch = r.region_epoch.as_ref().unwrap();
             let returned_conf_ver = region_epoch.conf_ver;
             let returned_version = region_epoch.version;
             let current_region_epoch = region_store
@@ -441,16 +1017,55 @@ pub(crate) async fn on_region_epoch_not_match<PdC: PdClient>(
 
             // Find whether the current region is ahead of TiKV's. If so, backoff.
             if returned_conf_ver < current_conf_ver || returned_version < current_version {
-                return Ok(false);
+                return Ok(EpochNotMatchOutcome::RetryAfterBackoff);
             }
         }
     }
-    // TODO: finer grained processing
-    pd_client.invalidate_region_cache(ver_id).await;
-    Ok(false)
+
+    // client-go installs every replacement region from the error and seeds
+    // its working leader from the responding store. A following route lookup
+    // can therefore use split/merged metadata without an avoidable PD round
+    // trip. The old entry remains only when TiKV returned that exact version.
+    let responding_store_id = region_store
+        .target_peer
+        .as_ref()
+        .or(region_store.region_with_leader.leader.as_ref())
+        .map(|peer| peer.store_id);
+    // `OnRegionEpochNotMatch` carries the previous bucket metadata into each
+    // replacement until PD provides a newer version. The source treats it as
+    // a cache hint, so split/merged entries may temporarily share it.
+    let inherited_buckets = region_store.region_with_leader.buckets.clone();
+    let preserves_old_region = error.current_regions.iter().any(|region| {
+        region.id == ver_id.id
+            && region.region_epoch.as_ref().is_some_and(|epoch| {
+                epoch.conf_ver == ver_id.conf_ver && epoch.version == ver_id.ver
+            })
+    });
+    if !preserves_old_region {
+        pd_client.invalidate_region_cache(ver_id).await;
+    }
+    let replacements = error
+        .current_regions
+        .into_iter()
+        .map(|region| {
+            let leader = responding_store_id.and_then(|store_id| {
+                region
+                    .peers
+                    .iter()
+                    .find(|peer| peer.store_id == store_id)
+                    .cloned()
+            });
+            let mut replacement = RegionWithLeader::new(region, leader);
+            replacement.buckets = inherited_buckets.clone();
+            replacement
+        })
+        .collect();
+    pd_client.update_region_cache(replacements).await?;
+    Ok(EpochNotMatchOutcome::Stop)
 }
 
-impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
+#[allow(private_bounds)]
+impl<P: Plan, PdC: PdClient, R: RegionRetryState> Clone for RetryableMultiRegion<P, PdC, R> {
     fn clone(&self) -> Self {
         RetryableMultiRegion {
             inner: self.inner.clone(),
@@ -462,7 +1077,9 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableMultiRegion<P, PdC> {
 }
 
 #[async_trait]
-impl<P: Plan + Shardable, PdC: PdClient> Plan for RetryableMultiRegion<P, PdC>
+#[allow(private_bounds)]
+impl<P: Plan + Shardable, PdC: PdClient, R: RegionRetryState> Plan
+    for RetryableMultiRegion<P, PdC, R>
 where
     P::Result: HasKeyErrors + HasRegionError,
 {
@@ -481,6 +1098,7 @@ where
             self.preserve_region_results,
         )
         .await
+        .0
     }
 }
 
@@ -672,6 +1290,8 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
     pub keyspace: Keyspace,
+    pub keyspace_name: Option<String>,
+    pub rpc_interceptor: Option<RpcInterceptorChain>,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -682,12 +1302,14 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
             keyspace: self.keyspace,
+            keyspace_name: self.keyspace_name.clone(),
+            rpc_interceptor: self.rpc_interceptor.clone(),
         }
     }
 }
 
 #[async_trait]
-impl<P: Plan, PdC: PdClient> Plan for ResolveLock<P, PdC>
+impl<P: Plan + Shardable, PdC: PdClient> Plan for ResolveLock<P, PdC>
 where
     P::Result: HasLocks,
 {
@@ -706,16 +1328,24 @@ where
                 return Err(Error::ResolveLockError(locks));
             }
 
+            // Source `KVSnapshot.get` turns a stale read that met a lock
+            // into a threshold-free leader read before resolving/retrying it.
+            // The clone is the retry owner, so this cannot alter a sibling
+            // plan that shares the original immutable `ResolveLock` wrapper.
+            clone.disable_stale_read_after_lock();
+
             let pd_client = self.pd_client.clone();
             let live_locks = resolve_locks(
                 locks,
                 self.timestamp.clone(),
                 pd_client.clone(),
                 self.keyspace,
+                self.keyspace_name.as_deref(),
+                self.rpc_interceptor.clone(),
             )
             .await?;
             if live_locks.is_empty() {
-                result = self.inner.execute().await?;
+                result = clone.inner.execute().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError(live_locks)),
@@ -779,6 +1409,8 @@ pub struct CleanupLocks<P: Plan, PdC: PdClient> {
     pub store: Option<RegionStore>,
     pub pd_client: Arc<PdC>,
     pub keyspace: Keyspace,
+    pub keyspace_name: Option<String>,
+    pub rpc_interceptor: Option<RpcInterceptorChain>,
     pub backoff: Backoff,
 }
 
@@ -791,6 +1423,8 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
             store: None,
             pd_client: self.pd_client.clone(),
             keyspace: self.keyspace,
+            keyspace_name: self.keyspace_name.clone(),
+            rpc_interceptor: self.rpc_interceptor.clone(),
             backoff: self.backoff.clone(),
         }
     }
@@ -806,7 +1440,9 @@ where
     async fn execute(&self) -> Result<Self::Result> {
         let mut result = CleanupLocksResult::default();
         let mut inner = self.inner.clone();
-        let mut lock_resolver = crate::transaction::LockResolver::new(self.ctx.clone());
+        let mut context = self.ctx.clone();
+        context.rpc_interceptor = self.rpc_interceptor.clone();
+        let mut lock_resolver = crate::transaction::LockResolver::new(context);
         let region = &self.store.as_ref().unwrap().region_with_leader;
         let mut has_more_batch = true;
 
@@ -860,6 +1496,7 @@ where
                     locks,
                     self.pd_client.clone(),
                     self.keyspace,
+                    self.keyspace_name.as_deref(),
                 )
                 .await
             {
@@ -995,17 +1632,550 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 
 #[cfg(test)]
 mod test {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
 
     use futures::stream::BoxStream;
     use futures::stream::{self};
+    use tokio::sync::Barrier;
 
     use super::*;
-    use crate::mock::MockPdClient;
+    use crate::mock::{MockKvClient, MockPdClient};
     use crate::proto::kvrpcpb::BatchGetResponse;
+
+    fn region_store() -> RegionStore {
+        RegionStore::new(MockPdClient::region1(), Arc::new(MockKvClient::default()))
+    }
+
+    #[tokio::test]
+    async fn region_error_actions_preserve_client_go_retry_classes() {
+        let pd_client = Arc::new(MockPdClient::default());
+
+        let busy = handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                server_is_busy: Some(Default::default()),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(busy, RegionErrorRetry::Backoff(BO_TIKV_SERVER_BUSY));
+
+        let health = Arc::new(crate::locate::StoreHealthStatus::default());
+        let estimated_busy = handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                server_is_busy: Some(errorpb::ServerIsBusy {
+                    estimated_wait_ms: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            region_store().with_health_status(health.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            estimated_busy,
+            RegionErrorRetry::Backoff(BO_TIKV_SERVER_BUSY)
+        );
+        assert!(!health.is_slow());
+
+        handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                server_is_busy: Some(Default::default()),
+                ..Default::default()
+            },
+            region_store().with_health_status(health.clone()),
+        )
+        .await
+        .unwrap();
+        assert!(health.is_slow());
+
+        let stale = handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                stale_command: Some(Default::default()),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(stale, RegionErrorRetry::Backoff(BO_STALE_CMD));
+
+        let flashback = handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                flashback_in_progress: Some(errorpb::FlashbackInProgress {
+                    region_id: 42,
+                    flashback_start_ts: 99,
+                }),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await;
+        assert!(matches!(
+            flashback,
+            Err(Error::StringError(message))
+                if message == "region 42 is in flashback progress, FlashbackStartTS is 99"
+        ));
+
+        let not_prepared = handle_region_error(
+            pd_client,
+            errorpb::Error {
+                flashback_not_prepared: Some(errorpb::FlashbackNotPrepared { region_id: 43 }),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await;
+        assert!(matches!(
+            not_prepared,
+            Err(Error::StringError(message)) if message == "region 43 is not prepared for the flashback"
+        ));
+
+        let raft_entry = handle_region_error(
+            Arc::new(MockPdClient::default()),
+            errorpb::Error {
+                raft_entry_too_large: Some(Default::default()),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await;
+        assert!(matches!(raft_entry, Err(Error::StringError(_))));
+    }
+
+    #[tokio::test]
+    async fn source_store_identity_errors_stop_the_current_send_loop() {
+        for error in [
+            errorpb::Error {
+                store_not_match: Some(Default::default()),
+                ..Default::default()
+            },
+            errorpb::Error {
+                mismatch_peer_id: Some(Default::default()),
+                ..Default::default()
+            },
+        ] {
+            let pd_client = Arc::new(MockPdClient::default());
+            let store = region_store();
+            let ver_id = store.region_with_leader.ver_id();
+            let result = handle_region_error(pd_client.clone(), error, store).await;
+            assert!(matches!(result, Err(Error::RegionError(_))));
+            assert_eq!(pd_client.invalidated_regions(), vec![ver_id]);
+        }
+    }
+
+    #[tokio::test]
+    async fn source_terminal_region_errors_do_not_retry_the_send_loop() {
+        for (error, expected) in [
+            (
+                errorpb::Error {
+                    recovery_in_progress: Some(Default::default()),
+                    ..Default::default()
+                },
+                Some(RegionErrorRetry::TerminalAfterBackoff(
+                    BO_REGION_RECOVERY_IN_PROGRESS,
+                )),
+            ),
+            (
+                errorpb::Error {
+                    is_witness: Some(Default::default()),
+                    ..Default::default()
+                },
+                Some(RegionErrorRetry::TerminalAfterBackoff(BO_IS_WITNESS)),
+            ),
+            (
+                errorpb::Error {
+                    key_not_in_region: Some(Default::default()),
+                    ..Default::default()
+                },
+                None,
+            ),
+            (
+                errorpb::Error {
+                    region_not_found: Some(Default::default()),
+                    ..Default::default()
+                },
+                None,
+            ),
+            // TiKV creates a replica selector for every TiKV request. An
+            // unclassified error therefore immediately advances selection,
+            // without invalidating the current cache entry.
+            (errorpb::Error::default(), Some(RegionErrorRetry::Immediate)),
+        ] {
+            let pd_client = Arc::new(MockPdClient::default());
+            let store = region_store();
+            let ver_id = store.region_with_leader.ver_id();
+            let is_unknown = error == errorpb::Error::default();
+            let result = handle_region_error(pd_client.clone(), error, store).await;
+            match expected {
+                Some(expected) => assert_eq!(result.unwrap(), expected),
+                None => assert!(matches!(result, Err(Error::RegionError(_)))),
+            }
+            if is_unknown {
+                assert!(pd_client.invalidated_regions().is_empty());
+            } else {
+                assert_eq!(pd_client.invalidated_regions(), vec![ver_id]);
+            }
+        }
+    }
+
+    #[test]
+    fn source_server_busy_fast_retry_keeps_healthy_leader_backoff() {
+        let region = region_store();
+        let mut config = ReplicaReadConfig::default();
+        assert!(!source_fast_server_busy_retry(
+            &config, &region, true, false, 0
+        ));
+
+        config.read_type = crate::kv::ReplicaReadType::Follower;
+        assert!(source_fast_server_busy_retry(
+            &config, &region, true, false, 0
+        ));
+        config.read_type = crate::kv::ReplicaReadType::Mixed;
+        assert!(source_fast_server_busy_retry(
+            &config, &region, true, false, 0
+        ));
+        config.read_type = crate::kv::ReplicaReadType::PreferLeader;
+        assert!(source_fast_server_busy_retry(
+            &config, &region, true, false, 0
+        ));
+
+        config.read_type = crate::kv::ReplicaReadType::Leader;
+        config.busy_threshold_ms = 10;
+        assert!(source_fast_server_busy_retry(
+            &config, &region, true, false, 1
+        ));
+        assert!(!source_fast_server_busy_retry(
+            &config, &region, true, true, 1
+        ));
+        assert!(source_fast_server_busy_retry(
+            &config,
+            &region.with_force_leader_read(),
+            true,
+            false,
+            0
+        ));
+
+        assert!(source_fast_selector_retry(
+            &errorpb::Error {
+                stale_command: Some(Default::default()),
+                ..Default::default()
+            },
+            false
+        ));
+        assert!(!source_fast_selector_retry(
+            &errorpb::Error::default(),
+            false
+        ));
+    }
+
+    #[test]
+    fn source_transport_failure_uses_tiflash_retry_class_only_for_tiflash_endpoints() {
+        let region = region_store();
+        assert_eq!(source_transport_backoff_config(None), BO_TIKV_RPC);
+        assert_eq!(source_transport_backoff_config(Some(&region)), BO_TIKV_RPC);
+        let tiflash = region.with_physical_store(1, crate::store::EndpointType::TiFlash);
+        assert_eq!(
+            source_transport_backoff_config(Some(&tiflash)),
+            BO_TIFLASH_RPC
+        );
+        let tiflash_compute =
+            region_store().with_physical_store(1, crate::store::EndpointType::TiFlashCompute);
+        assert_eq!(
+            source_transport_backoff_config(Some(&tiflash_compute)),
+            BO_TIFLASH_RPC
+        );
+    }
+
+    #[tokio::test]
+    async fn source_epoch_not_match_installs_replacements_from_responding_store() {
+        let pd_client = Arc::new(MockPdClient::default());
+        let mut replacement = MockPdClient::region2().region;
+        replacement.id = 9;
+        replacement.region_epoch = Some(crate::proto::metapb::RegionEpoch {
+            conf_ver: 4,
+            version: 5,
+        });
+        replacement.peers = vec![crate::proto::metapb::Peer {
+            id: 7,
+            store_id: 41,
+            ..Default::default()
+        }];
+        let store = region_store().with_target_peer(replacement.peers[0].clone());
+        let mut store = store;
+        store.region_with_leader.buckets = Some(crate::proto::metapb::Buckets {
+            region_id: 1,
+            version: 3,
+            keys: vec![vec![], vec![9]],
+            ..Default::default()
+        });
+        let old_ver_id = store.region_with_leader.ver_id();
+
+        assert_eq!(
+            on_region_epoch_not_match(
+                pd_client.clone(),
+                store,
+                EpochNotMatch {
+                    current_regions: vec![replacement],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap(),
+            EpochNotMatchOutcome::Stop
+        );
+
+        let installed = pd_client.epoch_not_match_regions();
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].id(), 9);
+        assert_eq!(installed[0].leader.as_ref().map(|peer| peer.id), Some(7));
+        assert_eq!(installed[0].buckets.as_ref().unwrap().version, 3);
+        assert_eq!(pd_client.invalidated_regions(), vec![old_ver_id]);
+    }
+
+    #[tokio::test]
+    async fn source_epoch_not_match_keeps_an_exact_cached_version() {
+        let pd_client = Arc::new(MockPdClient::default());
+        let mut replacement = MockPdClient::region1().region;
+        replacement.peers = vec![crate::proto::metapb::Peer {
+            id: 7,
+            store_id: 41,
+            ..Default::default()
+        }];
+        let store = region_store().with_target_peer(replacement.peers[0].clone());
+
+        assert_eq!(
+            on_region_epoch_not_match(
+                pd_client.clone(),
+                store,
+                EpochNotMatch {
+                    current_regions: vec![replacement],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap(),
+            EpochNotMatchOutcome::Stop
+        );
+
+        assert!(pd_client.invalidated_regions().is_empty());
+        assert_eq!(pd_client.epoch_not_match_regions().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn source_epoch_not_match_retries_only_when_tikv_is_behind() {
+        let pd_client = Arc::new(MockPdClient::default());
+        let mut store = region_store();
+        store
+            .region_with_leader
+            .region
+            .region_epoch
+            .as_mut()
+            .unwrap()
+            .version = 2;
+        let mut stale = store.region_with_leader.region.clone();
+        stale.region_epoch.as_mut().unwrap().version = 1;
+
+        assert_eq!(
+            on_region_epoch_not_match(
+                pd_client.clone(),
+                store.clone(),
+                EpochNotMatch {
+                    current_regions: vec![stale],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap(),
+            EpochNotMatchOutcome::RetryAfterBackoff
+        );
+        assert!(pd_client.invalidated_regions().is_empty());
+
+        let ver_id = store.region_with_leader.ver_id();
+        assert_eq!(
+            on_region_epoch_not_match(pd_client.clone(), store, EpochNotMatch::default(),)
+                .await
+                .unwrap(),
+            EpochNotMatchOutcome::Stop
+        );
+        assert_eq!(pd_client.invalidated_regions(), vec![ver_id]);
+    }
+
+    #[tokio::test]
+    async fn source_bucket_version_mismatch_refreshes_the_cache_and_propagates() {
+        let pd_client = Arc::new(MockPdClient::default());
+        let store = region_store();
+        let ver_id = store.region_with_leader.ver_id();
+
+        let error = handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                bucket_version_not_match: Some(errorpb::BucketVersionNotMatch {
+                    version: 5,
+                    keys: vec![vec![], vec![1]],
+                }),
+                ..Default::default()
+            },
+            store,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, Error::RegionError(_)));
+        assert_eq!(
+            pd_client.bucket_updates(),
+            vec![(ver_id, 5, vec![vec![], vec![1]])]
+        );
+    }
 
     #[derive(Clone)]
     struct ErrPlan;
+
+    #[derive(Clone)]
+    struct RecordingRetryState {
+        forks: Arc<AtomicUsize>,
+        merges: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl RegionRetryState for RecordingRetryState {
+        async fn backoff(&mut self, _config: RetryConfig, _reason: String) -> Result<bool> {
+            Ok(true)
+        }
+
+        fn fork(&self) -> (Self, Cancellation) {
+            self.forks.fetch_add(1, Ordering::SeqCst);
+            (self.clone(), Cancellation::default())
+        }
+
+        fn update_using_forked(&mut self, _forked: &Self) {
+            self.merges.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Clone)]
+    struct TwoShardPlan;
+
+    #[derive(Clone)]
+    struct CancellationProbeRetryState {
+        cancellation: Cancellation,
+        cancellation_seen: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl RegionRetryState for CancellationProbeRetryState {
+        async fn backoff(&mut self, _config: RetryConfig, _reason: String) -> Result<bool> {
+            tokio::select! {
+                _ = self.cancellation.cancelled() => {
+                    self.cancellation_seen.fetch_add(1, Ordering::SeqCst);
+                    Err(Error::StringError("sibling retry cancelled".to_owned()))
+                }
+                _ = sleep(Duration::from_secs(1)) => Ok(true),
+            }
+        }
+
+        fn fork(&self) -> (Self, Cancellation) {
+            let cancellation = self.cancellation.child();
+            (
+                Self {
+                    cancellation: cancellation.clone(),
+                    cancellation_seen: self.cancellation_seen.clone(),
+                },
+                cancellation,
+            )
+        }
+
+        fn update_using_forked(&mut self, _forked: &Self) {}
+    }
+
+    #[derive(Clone)]
+    struct CancellationProbePlan {
+        fails_immediately: bool,
+        dispatched: Arc<Barrier>,
+    }
+
+    #[async_trait]
+    impl Plan for CancellationProbePlan {
+        type Result = BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            self.dispatched.wait().await;
+            if self.fails_immediately {
+                Err(Error::Unimplemented)
+            } else {
+                Ok(BatchGetResponse {
+                    region_error: Some(errorpb::Error {
+                        // Use a source-retryable error that retains a
+                        // backoff under replica selection, so the sibling
+                        // cancellation test observes an actual waiting task.
+                        max_timestamp_not_synced: Some(Default::default()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Plan for TwoShardPlan {
+        type Result = BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            Ok(BatchGetResponse::default())
+        }
+    }
+
+    impl Shardable for TwoShardPlan {
+        type Shard = ();
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, RegionWithLeader)>> {
+            Box::pin(stream::iter(vec![
+                Ok(((), MockPdClient::region1())),
+                Ok(((), MockPdClient::region2())),
+            ]))
+        }
+
+        fn apply_shard(&mut self, _: Self::Shard) {}
+
+        fn apply_store(&mut self, _: &crate::store::RegionStore) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Shardable for CancellationProbePlan {
+        type Shard = bool;
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, RegionWithLeader)>> {
+            Box::pin(stream::iter(vec![
+                Ok((true, MockPdClient::region1())),
+                Ok((false, MockPdClient::region2())),
+            ]))
+        }
+
+        fn apply_shard(&mut self, fails_immediately: Self::Shard) {
+            self.fails_immediately = fails_immediately;
+        }
+
+        fn apply_store(&mut self, _: &crate::store::RegionStore) -> Result<()> {
+            Ok(())
+        }
+    }
 
     #[async_trait]
     impl Plan for ErrPlan {
@@ -1033,6 +2203,149 @@ mod test {
         }
     }
 
+    #[derive(Clone)]
+    struct ConfigurableTimeoutPlan {
+        duration_ms: u64,
+    }
+
+    #[async_trait]
+    impl Plan for ConfigurableTimeoutPlan {
+        type Result = BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            unreachable!("configurable-timeout gate test does not dispatch")
+        }
+    }
+
+    impl Shardable for ConfigurableTimeoutPlan {
+        type Shard = ();
+
+        fn shards(
+            &self,
+            _: &Arc<impl crate::pd::PdClient>,
+        ) -> BoxStream<'static, crate::Result<(Self::Shard, RegionWithLeader)>> {
+            Box::pin(stream::empty())
+        }
+
+        fn apply_shard(&mut self, _: Self::Shard) {}
+
+        fn apply_store(&mut self, _: &crate::store::RegionStore) -> Result<()> {
+            Ok(())
+        }
+
+        fn is_read_request(&self) -> bool {
+            true
+        }
+
+        fn max_execution_duration_ms(&self) -> u64 {
+            self.duration_ms
+        }
+    }
+
+    #[test]
+    fn source_configurable_read_timeout_is_below_read_timeout_short() {
+        assert!(source_configurable_read_timeout(&ConfigurableTimeoutPlan {
+            duration_ms: 0,
+        }));
+        assert!(source_configurable_read_timeout(&ConfigurableTimeoutPlan {
+            duration_ms: 29_999,
+        }));
+        assert!(!source_configurable_read_timeout(
+            &ConfigurableTimeoutPlan {
+                duration_ms: 30_000,
+            }
+        ));
+    }
+
+    #[test]
+    fn source_configurable_server_busy_timeout_requires_the_source_reason() {
+        let short_read = ConfigurableTimeoutPlan {
+            duration_ms: 29_999,
+        };
+        let deadline_busy = errorpb::Error {
+            server_is_busy: Some(errorpb::ServerIsBusy {
+                reason: "deadline is exceeded while waiting for read index".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(source_configurable_server_busy_timeout(
+            &short_read,
+            &deadline_busy
+        ));
+
+        let ordinary_busy = errorpb::Error {
+            server_is_busy: Some(errorpb::ServerIsBusy {
+                reason: "too many requests".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!source_configurable_server_busy_timeout(
+            &short_read,
+            &ordinary_busy
+        ));
+        assert!(!source_configurable_server_busy_timeout(
+            &ConfigurableTimeoutPlan {
+                duration_ms: 30_000,
+            },
+            &deadline_busy
+        ));
+    }
+
+    #[test]
+    fn source_configurable_region_error_timeout_requires_the_source_message() {
+        let short_read = ConfigurableTimeoutPlan {
+            duration_ms: 29_999,
+        };
+        assert!(source_configurable_region_error_timeout(
+            &short_read,
+            &errorpb::Error {
+                message: "Deadline is exceeded while reading".to_owned(),
+                ..Default::default()
+            }
+        ));
+        assert!(!source_configurable_region_error_timeout(
+            &short_read,
+            &errorpb::Error {
+                message: "deadline is exceeded while reading".to_owned(),
+                ..Default::default()
+            }
+        ));
+        assert!(!source_configurable_region_error_timeout(
+            &short_read,
+            &errorpb::Error {
+                message: "Deadline is exceeded while reading".to_owned(),
+                server_is_busy: Some(Default::default()),
+                ..Default::default()
+            }
+        ));
+        assert!(!source_configurable_region_error_timeout(
+            &ConfigurableTimeoutPlan {
+                duration_ms: 30_000,
+            },
+            &errorpb::Error {
+                message: "Deadline is exceeded while reading".to_owned(),
+                ..Default::default()
+            }
+        ));
+    }
+
+    #[test]
+    fn source_configurable_timeout_fast_path_requires_a_grpc_deadline() {
+        assert!(is_grpc_deadline_exceeded(&Error::GrpcAPI(
+            tonic::Status::deadline_exceeded("deadline"),
+        )));
+        assert!(is_grpc_deadline_exceeded(&Error::Connection {
+            source: Box::new(Error::GrpcAPI(tonic::Status::deadline_exceeded("deadline"))),
+            address: "store".to_owned(),
+            version: 1,
+        }));
+        assert!(!is_grpc_deadline_exceeded(&Error::GrpcAPI(
+            tonic::Status::unavailable("unavailable"),
+        )));
+    }
+
     #[tokio::test]
     async fn test_err() {
         let plan = RetryableMultiRegion {
@@ -1042,6 +2355,8 @@ mod test {
                 backoff: Backoff::no_backoff(),
                 pd_client: Arc::new(MockPdClient::default()),
                 keyspace: Keyspace::Disable,
+                keyspace_name: None,
+                rpc_interceptor: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),
@@ -1065,5 +2380,46 @@ mod test {
             .unwrap();
 
         assert_eq!(results, vec![0, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn cumulative_retry_state_forks_each_shard_and_merges_the_final_child() {
+        let retry = RecordingRetryState {
+            forks: Arc::new(AtomicUsize::new(0)),
+            merges: Arc::new(AtomicUsize::new(0)),
+        };
+        let forks = retry.forks.clone();
+        let merges = retry.merges.clone();
+        let plan = RetryableMultiRegion {
+            inner: TwoShardPlan,
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: retry,
+            preserve_region_results: false,
+        };
+
+        assert_eq!(plan.execute().await.unwrap().len(), 2);
+        // One parent child plus one child for each source region batch.
+        assert_eq!(forks.load(Ordering::SeqCst), 3);
+        assert_eq!(merges.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn first_shard_error_cancels_a_sibling_cumulative_backoff() {
+        let cancellation_seen = Arc::new(AtomicUsize::new(0));
+        let plan = RetryableMultiRegion {
+            inner: CancellationProbePlan {
+                fails_immediately: false,
+                dispatched: Arc::new(Barrier::new(2)),
+            },
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: CancellationProbeRetryState {
+                cancellation: Cancellation::default(),
+                cancellation_seen: cancellation_seen.clone(),
+            },
+            preserve_region_results: false,
+        };
+
+        assert!(plan.execute().await.is_err());
+        assert_eq!(cancellation_seen.load(Ordering::SeqCst), 1);
     }
 }

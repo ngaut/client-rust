@@ -41,6 +41,9 @@ pub enum Error {
     /// It's not allowed to perform operations in a transaction after it has been committed or rolled back.
     #[error("Cannot read or write data after any attempt to commit or roll back the transaction")]
     OperationAfterCommitError,
+    /// An optimistic transaction became stale while waiting for local latches.
+    #[error(transparent)]
+    WriteConflictInLatch(#[from] crate::error::WriteConflictInLatchError),
     /// We tried to use 1pc for a transaction, but it didn't work. Probably should have used 2pc.
     #[error("1PC transaction could not be committed.")]
     OnePcFailure,
@@ -69,6 +72,17 @@ pub enum Error {
     /// Wraps a `grpcio::Error`.
     #[error("gRPC api error: {0}")]
     GrpcAPI(#[from] tonic::Status),
+    /// A transport failure annotated with the TiKV connection-pool identity
+    /// that produced it. This is the native counterpart of client-go's
+    /// `internal/client.ErrConn` and lets retry paths retire only the stale
+    /// pool generation.
+    #[error("[{address}]({version}) {source}")]
+    Connection {
+        #[source]
+        source: Box<Error>,
+        address: String,
+        version: u64,
+    },
     /// Wraps a `grpcio::Error`.
     #[error("url error: {0}")]
     Url(#[from] tonic::codegen::http::uri::InvalidUri),
@@ -134,6 +148,18 @@ pub enum Error {
 Use the async TransactionClient instead, or create and use SyncTransactionClient outside of any Tokio runtime.{0}"
     )]
     NestedRuntimeError(String),
+}
+
+impl Error {
+    /// Returns the target and generation carried by a transport error.
+    pub(crate) fn connection_info(&self) -> Option<(&str, u64)> {
+        match self {
+            Error::Connection {
+                address, version, ..
+            } => Some((address, *version)),
+            _ => None,
+        }
+    }
 }
 
 impl From<ProtoRegionError> for Error {

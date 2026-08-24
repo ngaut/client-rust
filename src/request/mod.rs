@@ -7,6 +7,10 @@ pub use self::keyspace::EncodeKeyspace;
 pub use self::keyspace::KeyMode;
 pub use self::keyspace::Keyspace;
 pub use self::keyspace::TruncateKeyspace;
+pub use self::keyspace::{
+    api_v2_prefixes, build_keyspace_name, decode_api_key, parse_keyspace_id, ApiV1Codec,
+    ApiV2Codec, DEFAULT_KEYSPACE_NAME, MAX_KEYSPACE_ID,
+};
 pub use self::plan::Collect;
 pub use self::plan::CollectError;
 pub use self::plan::CollectSingle;
@@ -22,8 +26,10 @@ pub use self::plan::ProcessResponse;
 pub use self::plan::ResolveLock;
 pub use self::plan::ResponseWithShard;
 pub use self::plan::RetryableMultiRegion;
+pub(crate) use self::plan_builder::NoTarget;
 pub use self::plan_builder::PlanBuilder;
 pub use self::plan_builder::SingleKey;
+pub(crate) use self::shard::key_batches;
 pub use self::shard::Batchable;
 pub use self::shard::HasNextBatch;
 pub use self::shard::NextBatch;
@@ -47,6 +53,48 @@ mod shard;
 pub trait KvRequest: Request + Sized + Clone + Sync + Send + 'static {
     /// The expected response to the request.
     type Response: HasKeyErrors + HasLocks + Clone + Send + 'static;
+
+    /// Source `isReadReq` command classification used by load-based replica
+    /// routing. Raw commands deliberately remain false: client-go only
+    /// classifies transactional Get/BatchGet/Scan and coprocessor commands
+    /// here.
+    fn is_read_request(&self) -> bool {
+        matches!(
+            self.label(),
+            "kv_get" | "kv_batch_get" | "kv_scan" | "coprocessor"
+        )
+    }
+
+    /// Source `CmdCop` requests carrying per-store tasks must not retry to a
+    /// replica after `ServerIsBusy`, because those tasks already belong to
+    /// concrete regions. Ordinary coprocessor requests retain the normal
+    /// read classification above.
+    fn is_batched_coprocessor_read(&self) -> bool {
+        false
+    }
+
+    /// Decode transport-level response fields before plans inspect retry, lock, or
+    /// user-visible key data. API V2 implementations use this to mirror
+    /// client-go's `Codec.DecodeResponse` placement.
+    fn key_mode(&self) -> Option<KeyMode> {
+        None
+    }
+
+    fn decode_response(
+        &self,
+        _response: &mut Self::Response,
+        _codec: Option<&ApiV2Codec>,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn decode_v1_response(
+        &self,
+        _response: &mut Self::Response,
+        _codec: Option<&ApiV1Codec>,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
 }
 
 /// For requests or plans which are handled at TiKV store (other than region) level.
@@ -100,6 +148,7 @@ mod test {
     use super::*;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
+    use crate::proto::coprocessor;
     use crate::proto::keyspacepb;
     use crate::proto::kvrpcpb;
     use crate::proto::metapb::{self, RegionEpoch};
@@ -114,10 +163,35 @@ mod test {
     use crate::Key;
     use crate::Result;
 
+    #[test]
+    fn source_load_based_replica_routing_uses_only_read_commands() {
+        assert!(KvRequest::is_read_request(&kvrpcpb::GetRequest::default()));
+        assert!(KvRequest::is_read_request(
+            &kvrpcpb::BatchGetRequest::default()
+        ));
+        assert!(KvRequest::is_read_request(&kvrpcpb::ScanRequest::default()));
+        assert!(KvRequest::is_read_request(&coprocessor::Request::default()));
+        assert!(!KvRequest::is_read_request(
+            &kvrpcpb::PrewriteRequest::default()
+        ));
+        assert!(!KvRequest::is_read_request(
+            &kvrpcpb::RawGetRequest::default()
+        ));
+
+        let mut batched_cop = coprocessor::Request::default();
+        batched_cop.tasks.push(Default::default());
+        assert!(KvRequest::is_batched_coprocessor_read(&batched_cop));
+        assert!(!KvRequest::is_batched_coprocessor_read(
+            &coprocessor::Request::default()
+        ));
+    }
+
     #[tokio::test]
-    async fn test_region_retry() {
+    async fn source_region_error_selector_retries_reuse_the_existing_shard() {
         #[derive(Debug, Clone)]
-        struct MockRpcResponse;
+        struct MockRpcResponse {
+            region_error: Option<crate::proto::errorpb::Error>,
+        }
 
         impl HasKeyErrors for MockRpcResponse {
             fn key_errors(&mut self) -> Option<Vec<Error>> {
@@ -127,7 +201,7 @@ mod test {
 
         impl HasRegionError for MockRpcResponse {
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
-                Some(crate::proto::errorpb::Error::default())
+                self.region_error.clone()
             }
         }
 
@@ -141,7 +215,7 @@ mod test {
         #[async_trait]
         impl Request for MockKvRequest {
             async fn dispatch(&self, _: &TikvClient<Channel>, _: Duration) -> Result<Box<dyn Any>> {
-                Ok(Box::new(MockRpcResponse {}))
+                Ok(Box::new(MockRpcResponse { region_error: None }))
             }
 
             fn label(&self) -> &'static str {
@@ -196,18 +270,56 @@ mod test {
             test_invoking_count: invoking_count.clone(),
         };
 
+        let rpc_invoking_count = Arc::new(AtomicUsize::new(0));
+        let observed_rpc_invoking_count = rpc_invoking_count.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            |_: &dyn Any| Ok(Box::new(MockRpcResponse) as Box<dyn Any>),
+            move |_: &dyn Any| {
+                Ok(Box::new(MockRpcResponse {
+                    region_error: (observed_rpc_invoking_count.fetch_add(1, Ordering::SeqCst) == 0)
+                        .then(crate::proto::errorpb::Error::default),
+                }) as Box<dyn Any>)
+            },
         )));
 
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, request)
             .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
             .extract_error()
             .plan();
-        let _ = plan.execute().await;
+        assert!(plan.execute().await.is_ok());
 
-        // Original call plus the 3 retries
-        assert_eq!(invoking_count.load(std::sync::atomic::Ordering::SeqCst), 4);
+        // Client-go creates a replica selector for every TiKV request. Its
+        // unknown-error fallback immediately selects again: it neither
+        // re-shards nor consumes a region backoff budget.
+        assert_eq!(invoking_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(rpc_invoking_count.load(Ordering::SeqCst), 2);
+
+        let busy_shard_count = Arc::new(AtomicUsize::new(0));
+        let busy_rpc_count = Arc::new(AtomicUsize::new(0));
+        let observed_busy_rpc_count = busy_rpc_count.clone();
+        let busy_pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |_: &dyn Any| {
+                Ok(Box::new(MockRpcResponse {
+                    region_error: (observed_busy_rpc_count.fetch_add(1, Ordering::SeqCst) == 0)
+                        .then(|| crate::proto::errorpb::Error {
+                            server_is_busy: Some(Default::default()),
+                            ..Default::default()
+                        }),
+                }) as Box<dyn Any>)
+            },
+        )));
+        let busy_plan = crate::request::PlanBuilder::new(
+            busy_pd_client,
+            Keyspace::Disable,
+            MockKvRequest {
+                test_invoking_count: busy_shard_count.clone(),
+            },
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
+        .extract_error()
+        .plan();
+        assert!(busy_plan.execute().await.is_ok());
+        assert_eq!(busy_shard_count.load(Ordering::SeqCst), 1);
+        assert_eq!(busy_rpc_count.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -452,6 +564,8 @@ mod test {
             client: MockKvClient,
             invalidate_region_count: AtomicUsize,
             invalidate_store_count: AtomicUsize,
+            region_lookup_count: AtomicUsize,
+            preserve_route_on_failure: bool,
         }
 
         impl InvalidationTrackingPdClient {
@@ -484,6 +598,7 @@ mod test {
             }
 
             async fn region_for_key(&self, _: &Key) -> Result<RegionWithLeader> {
+                self.region_lookup_count.fetch_add(1, Ordering::SeqCst);
                 Ok(Self::region())
             }
 
@@ -516,6 +631,10 @@ mod test {
                 _leader: metapb::Peer,
             ) -> Result<()> {
                 Ok(())
+            }
+
+            async fn on_send_failure(self: Arc<Self>, _route: Option<&RegionStore>) -> bool {
+                !self.preserve_route_on_failure
             }
 
             async fn invalidate_region_cache(&self, _ver_id: RegionVerId) {
@@ -592,6 +711,8 @@ mod test {
             }),
             invalidate_region_count: AtomicUsize::new(0),
             invalidate_store_count: AtomicUsize::new(0),
+            region_lookup_count: AtomicUsize::new(0),
+            preserve_route_on_failure: false,
         });
 
         let plan =
@@ -602,5 +723,49 @@ mod test {
         assert!(response.is_ok());
         assert_eq!(pd_client.invalidate_region_count.load(Ordering::SeqCst), 1);
         assert_eq!(pd_client.invalidate_store_count.load(Ordering::SeqCst), 1);
+        assert_eq!(pd_client.region_lookup_count.load(Ordering::SeqCst), 2);
+
+        let preserve_first_dispatch = Arc::new(AtomicBool::new(true));
+        let preserve_pd_client = Arc::new(InvalidationTrackingPdClient {
+            client: MockKvClient::with_dispatch_hook(move |_: &dyn Any| {
+                if preserve_first_dispatch.swap(false, Ordering::SeqCst) {
+                    Err(Error::GrpcAPI(tonic::Status::unavailable(
+                        "transient failure",
+                    )))
+                } else {
+                    Ok(Box::new(MockOkResponse) as Box<dyn Any>)
+                }
+            }),
+            invalidate_region_count: AtomicUsize::new(0),
+            invalidate_store_count: AtomicUsize::new(0),
+            region_lookup_count: AtomicUsize::new(0),
+            preserve_route_on_failure: true,
+        });
+        let preserve_plan = crate::request::PlanBuilder::new(
+            preserve_pd_client.clone(),
+            Keyspace::Disable,
+            MockKvRequest,
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 1))
+        .plan();
+        assert!(preserve_plan.execute().await.is_ok());
+        assert_eq!(
+            preserve_pd_client
+                .invalidate_region_count
+                .load(Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            preserve_pd_client
+                .invalidate_store_count
+                .load(Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            preserve_pd_client
+                .region_lookup_count
+                .load(Ordering::SeqCst),
+            1
+        );
     }
 }

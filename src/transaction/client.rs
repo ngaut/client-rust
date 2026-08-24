@@ -11,12 +11,18 @@ use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::pdpb::Timestamp;
 use crate::request::plan::CleanupLocksResult;
+use crate::request::Dispatch;
 use crate::request::EncodeKeyspace;
 use crate::request::KeyMode;
-use crate::request::Keyspace;
+use crate::request::KvRequest;
+use crate::request::NoTarget;
 use crate::request::Plan;
+use crate::request::PlanBuilder;
+use crate::request::{build_keyspace_name, Keyspace};
 use crate::timestamp::TimestampExt;
+use crate::transaction::latch::LatchesScheduler;
 use crate::transaction::lock::ResolveLocksOptions;
+use crate::transaction::lowering::new_delete_range_request;
 use crate::transaction::lowering::new_scan_lock_request;
 use crate::transaction::lowering::new_unsafe_destroy_range_request;
 use crate::transaction::resolve_locks;
@@ -57,6 +63,10 @@ const SCAN_LOCK_BATCH_SIZE: u32 = 1024;
 pub struct Client {
     pd: Arc<PdRpcClient>,
     keyspace: Keyspace,
+    /// Canonical API V2 keyspace metadata loaded from PD and sent in each
+    /// request context, as client-go's codec does.
+    keyspace_name: Option<String>,
+    latches: Option<Arc<LatchesScheduler>>,
 }
 
 impl Clone for Client {
@@ -64,6 +74,8 @@ impl Clone for Client {
         Self {
             pd: self.pd.clone(),
             keyspace: self.keyspace,
+            keyspace_name: self.keyspace_name.clone(),
+            latches: self.latches.clone(),
         }
     }
 }
@@ -113,19 +125,23 @@ impl Client {
         pd_endpoints: Vec<S>,
         config: Config,
     ) -> Result<Client> {
+        let latches = transaction_latches(&config)?;
         debug!("creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
-        let keyspace = match config.keyspace {
+        let (keyspace, keyspace_name) = match config.keyspace {
             Some(name) => {
-                let keyspace = pd.load_keyspace(&name).await?;
-                Keyspace::Enable {
-                    keyspace_id: keyspace.id,
-                }
+                let keyspace = pd.load_keyspace(&build_keyspace_name(name)).await?;
+                (Keyspace::try_enable(keyspace.id)?, Some(keyspace.name))
             }
-            None => Keyspace::Disable,
+            None => (Keyspace::Disable, None),
         };
-        Ok(Client { pd, keyspace })
+        Ok(Client {
+            pd,
+            keyspace,
+            keyspace_name,
+            latches,
+        })
     }
 
     /// Create a transactional [`Client`] that uses API V2 without adding or removing any API V2
@@ -141,6 +157,7 @@ impl Client {
                 "config.keyspace must be unset when using api-v2-no-prefix mode".to_owned(),
             ));
         }
+        let latches = transaction_latches(&config)?;
 
         debug!("creating new transactional client (api-v2-no-prefix)");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
@@ -148,6 +165,8 @@ impl Client {
         Ok(Client {
             pd,
             keyspace: Keyspace::ApiV2NoPrefix,
+            keyspace_name: None,
+            latches,
         })
     }
 
@@ -301,7 +320,8 @@ impl Client {
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let req = new_scan_lock_request(range, safepoint, options.batch_size);
-        let plan = crate::request::PlanBuilder::new(self.pd.clone(), self.keyspace, req)
+        let plan = self
+            .plan(req)
             .cleanup_locks(ctx.clone(), options, backoff, self.keyspace)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
@@ -321,7 +341,8 @@ impl Client {
 
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let req = new_scan_lock_request(range, safepoint, batch_size);
-        let plan = crate::request::PlanBuilder::new(self.pd.clone(), self.keyspace, req)
+        let plan = self
+            .plan(req)
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(crate::request::Collect)
             .plan();
@@ -348,6 +369,8 @@ impl Client {
                 timestamp.clone(),
                 self.pd.clone(),
                 self.keyspace,
+                self.keyspace_name.as_deref(),
+                None,
             )
             .await?;
             live_locks = resolved_locks.truncate_keyspace(self.keyspace);
@@ -374,14 +397,80 @@ impl Client {
     pub async fn unsafe_destroy_range(&self, range: impl Into<BoundRange>) -> Result<()> {
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let req = new_unsafe_destroy_range_request(range);
-        let plan = crate::request::PlanBuilder::new(self.pd.clone(), self.keyspace, req)
+        let plan = self
+            .plan(req)
             .all_stores(DEFAULT_STORE_BACKOFF)
             .merge(crate::request::Collect)
             .plan();
         plan.execute().await
     }
 
+    /// Delete every MVCC version in `range` immediately.
+    ///
+    /// This is the transactional equivalent of client-go's `KVStore.DeleteRange`.
+    /// It is destructive, spans regions as needed, and can put substantial load on
+    /// TiKV when invoked frequently. The returned count is the number of regions
+    /// that completed successfully.
+    pub async fn delete_range(&self, range: impl Into<BoundRange>) -> Result<usize> {
+        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+        let request = new_delete_range_request(range);
+        self.plan(request)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .merge(crate::request::Collect)
+            .plan()
+            .execute()
+            .await
+    }
+
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
-        Transaction::new(timestamp, self.pd.clone(), options, self.keyspace)
+        Transaction::new_with_latches_and_keyspace_name(
+            timestamp,
+            self.pd.clone(),
+            options,
+            self.keyspace,
+            self.keyspace_name.clone(),
+            self.latches.clone(),
+        )
+    }
+
+    fn plan<Req: KvRequest>(
+        &self,
+        request: Req,
+    ) -> PlanBuilder<PdRpcClient, Dispatch<Req>, NoTarget> {
+        PlanBuilder::new(self.pd.clone(), self.keyspace, request)
+            .keyspace_name_option(self.keyspace_name.as_deref())
+    }
+}
+
+fn transaction_latches(config: &Config) -> Result<Option<Arc<LatchesScheduler>>> {
+    let latches = config.txn_local_latches;
+    if !latches.enabled {
+        return Ok(None);
+    }
+    if latches.capacity == 0 {
+        return Err(crate::Error::StringError(
+            "txn-local-latches.capacity can not be 0".to_owned(),
+        ));
+    }
+    Ok(Some(LatchesScheduler::new(latches.capacity)))
+}
+
+#[cfg(test)]
+mod latch_config_tests {
+    use super::*;
+
+    #[test]
+    fn transaction_latches_are_disabled_by_default_and_validate_capacity() {
+        assert!(transaction_latches(&Config::default()).unwrap().is_none());
+
+        let invalid = Config::default().with_txn_local_latches(0);
+        let error = match transaction_latches(&invalid) {
+            Ok(_) => panic!("zero latch capacity must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.to_string(), "txn-local-latches.capacity can not be 0");
+
+        let valid = Config::default().with_txn_local_latches(7);
+        assert!(transaction_latches(&valid).unwrap().is_some());
     }
 }

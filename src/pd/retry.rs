@@ -37,13 +37,46 @@ pub trait RetryClientTrait {
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
 
+    /// Requests PD bucket metadata for a key lookup. Custom clients that do
+    /// not model PD options retain their normal region result.
+    async fn get_region_with_buckets(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        self.get_region(key).await
+    }
+
+    async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
+
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader>;
+
+    async fn get_region_by_id_with_buckets(
+        self: Arc<Self>,
+        region_id: RegionId,
+    ) -> Result<RegionWithLeader> {
+        self.get_region_by_id(region_id).await
+    }
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
 
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>>;
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
+
+    async fn get_min_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+        Err(Error::StringError(
+            "PD minimum timestamp is not supported by this client".to_owned(),
+        ))
+    }
+
+    async fn set_external_timestamp(self: Arc<Self>, _timestamp: u64) -> Result<()> {
+        Err(Error::StringError(
+            "PD external timestamp is not supported by this client".to_owned(),
+        ))
+    }
+
+    async fn get_external_timestamp(self: Arc<Self>) -> Result<u64> {
+        Err(Error::StringError(
+            "PD external timestamp is not supported by this client".to_owned(),
+        ))
+    }
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
@@ -139,6 +172,10 @@ impl RetryClient<Cluster> {
             timeout,
         })
     }
+
+    pub async fn cluster_id(&self) -> u64 {
+        self.cluster.read().await.0.id()
+    }
 }
 
 #[async_trait]
@@ -159,10 +196,52 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
+    async fn get_region_with_buckets(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        retry_mut!(self, "get_region_with_buckets", |cluster| {
+            let key = key.clone();
+            async {
+                cluster
+                    .get_region_with_buckets(key.clone(), self.timeout, true)
+                    .await
+                    .and_then(|resp| {
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
+                    })
+            }
+        })
+    }
+
+    async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        retry_mut!(self, "get_prev_region", |cluster| {
+            let key = key.clone();
+            async {
+                cluster
+                    .get_prev_region(key.clone(), self.timeout)
+                    .await
+                    .and_then(|resp| {
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
+                    })
+            }
+        })
+    }
+
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
         retry_mut!(self, "get_region_by_id", |cluster| async {
             cluster
                 .get_region_by_id(region_id, self.timeout)
+                .await
+                .and_then(|resp| {
+                    region_from_response(resp, || Error::RegionNotFoundInResponse { region_id })
+                })
+        })
+    }
+
+    async fn get_region_by_id_with_buckets(
+        self: Arc<Self>,
+        region_id: RegionId,
+    ) -> Result<RegionWithLeader> {
+        retry_mut!(self, "get_region_by_id_with_buckets", |cluster| async {
+            cluster
+                .get_region_by_id_with_buckets(region_id, self.timeout, true)
                 .await
                 .and_then(|resp| {
                     region_from_response(resp, || Error::RegionNotFoundInResponse { region_id })
@@ -190,6 +269,24 @@ impl RetryClientTrait for RetryClient<Cluster> {
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
+    }
+
+    async fn get_min_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+        retry_mut!(self, "get_min_timestamp", |cluster| {
+            cluster.get_min_timestamp(self.timeout)
+        })
+    }
+
+    async fn set_external_timestamp(self: Arc<Self>, timestamp: u64) -> Result<()> {
+        retry_mut!(self, "set_external_timestamp", |cluster| {
+            cluster.set_external_timestamp(timestamp, self.timeout)
+        })
+    }
+
+    async fn get_external_timestamp(self: Arc<Self>) -> Result<u64> {
+        retry_mut!(self, "get_external_timestamp", |cluster| {
+            cluster.get_external_timestamp(self.timeout)
+        })
     }
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
@@ -221,7 +318,11 @@ fn region_from_response(
     err: impl FnOnce() -> Error,
 ) -> Result<RegionWithLeader> {
     let region = resp.region.take().ok_or_else(err)?;
-    Ok(RegionWithLeader::new(region, resp.leader.take()))
+    let mut region = RegionWithLeader::new(region, resp.leader.take());
+    region.buckets = resp.buckets.take();
+    region.pending_peers = std::mem::take(&mut resp.pending_peers);
+    region.down_peers = std::mem::take(&mut resp.down_peers);
+    Ok(region)
 }
 
 // A node-like thing that can be connected to.

@@ -1,6 +1,10 @@
 use crate::transaction::sync_client::safe_block_on;
-use crate::{BoundRange, Key, KvPair, Result, Snapshot, Value};
+use crate::{
+    BoundRange, Key, KvPair, Priority, ReplicaReadAdjuster, ReplicaReadConfig, ReplicaReadType,
+    Result, RpcInterceptorHandle, Snapshot, Value,
+};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// A synchronous read-only snapshot.
 ///
@@ -14,6 +18,56 @@ pub struct SyncSnapshot {
 impl SyncSnapshot {
     pub(crate) fn new(inner: Snapshot, runtime: Arc<tokio::runtime::Runtime>) -> Self {
         Self { inner, runtime }
+    }
+
+    /// Set the priority for subsequent read requests.
+    pub fn set_priority(&mut self, priority: Priority) {
+        self.inner.set_priority(priority);
+    }
+
+    /// Choose the TiKV replica-read type for subsequent snapshot reads.
+    pub fn set_replica_read(&mut self, read_type: ReplicaReadType) {
+        self.inner.set_replica_read(read_type);
+    }
+
+    /// Choose replica-read type plus stable selector constraints.
+    pub fn set_replica_read_config(&mut self, config: ReplicaReadConfig) {
+        self.inner.set_replica_read_config(config);
+    }
+
+    /// Mark subsequent snapshot reads as stale reads.
+    pub fn set_stale_read(&mut self, stale_read: bool) {
+        self.inner.set_stale_read(stale_read);
+    }
+
+    /// Replace store-label constraints used by subsequent replica selection.
+    pub fn set_match_store_labels(
+        &mut self,
+        labels: impl IntoIterator<Item = crate::proto::metapb::StoreLabel>,
+    ) {
+        self.inner.set_match_store_labels(labels);
+    }
+
+    /// Set the TiKV queue-wait threshold that permits load-based replica
+    /// selection for subsequent snapshot reads.
+    pub fn set_load_based_replica_read_threshold(&mut self, busy_threshold: Duration) {
+        self.inner
+            .set_load_based_replica_read_threshold(busy_threshold);
+    }
+
+    /// Set the per-get/batch-get replica selector adjustment callback.
+    pub fn set_replica_read_adjuster(&mut self, adjuster: ReplicaReadAdjuster) {
+        self.inner.set_replica_read_adjuster(adjuster);
+    }
+
+    /// Replace the RPC interceptor used by subsequent snapshot requests.
+    pub fn set_rpc_interceptor(&mut self, interceptor: RpcInterceptorHandle) {
+        self.inner.set_rpc_interceptor(interceptor);
+    }
+
+    /// Add an RPC interceptor after the existing snapshot interceptor chain.
+    pub fn add_rpc_interceptor(&mut self, interceptor: RpcInterceptorHandle) {
+        self.inner.add_rpc_interceptor(interceptor);
     }
 
     /// Get the value associated with the given key.
