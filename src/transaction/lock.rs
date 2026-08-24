@@ -295,6 +295,16 @@ pub(crate) async fn resolve_locks_with_context(
                         )
                         .await?;
                 }
+
+                if lock.lock_type == kvrpcpb::Op::PessimisticLock as i32 {
+                    lock_resolver
+                        .resolve_pessimistic_lock(pd_client.clone(), keyspace, keyspace_name, &lock)
+                        .await?;
+                    if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {
+                        live_locks.push(lock_info.clone());
+                    }
+                    continue;
+                }
                 match &status.kind {
                     TransactionStatusKind::Committed(ts) => {
                         let commit_version = ts.version();
@@ -533,6 +543,43 @@ pub struct LockResolver {
 impl LockResolver {
     pub fn new(ctx: ResolveLocksContext) -> Self {
         Self { ctx }
+    }
+
+    /// Source `resolvePessimisticLock` uses PessimisticRollback after the
+    /// primary status check. It is intentionally not ResolveLock: the latter
+    /// could roll back a different lock type with the same start timestamp.
+    async fn resolve_pessimistic_lock(
+        &mut self,
+        pd_client: Arc<impl PdClient>,
+        keyspace: Keyspace,
+        keyspace_name: Option<&str>,
+        lock: &kvrpcpb::LockInfo,
+    ) -> Result<()> {
+        if lock.key == lock.primary_lock {
+            return Ok(());
+        }
+        let for_update_ts = if lock.lock_for_update_ts == 0 {
+            u64::MAX
+        } else {
+            lock.lock_for_update_ts
+        };
+        let request = requests::new_pessimistic_rollback_request(
+            vec![lock.key.clone()],
+            lock.lock_version,
+            for_update_ts,
+        );
+        let plan = crate::request::PlanBuilder::new(pd_client, keyspace, request)
+            .keyspace_name_option(keyspace_name)
+            .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
+            .resource_group_option(self.ctx.resource_group_name.as_deref())
+            .resource_control_option(self.ctx.resource_control.clone())
+            .ru_details_option(self.ctx.ru_details.clone())
+            .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .extract_error()
+            .plan();
+        plan.execute().await?;
+        Ok(())
     }
 
     /// _Cleanup_ the given locks. Returns whether all the given locks are resolved.
@@ -1322,6 +1369,56 @@ mod tests {
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
         assert_eq!(check_secondary_count.load(Ordering::SeqCst), 1);
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn source_pessimistic_lock_uses_pessimistic_rollback_not_resolve_lock() {
+        let rollback_count = Arc::new(AtomicUsize::new(0));
+        let rollback_count_captured = rollback_count.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .is_some()
+                {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::PessimisticRollbackRequest>() {
+                    rollback_count_captured.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(req.keys, vec![vec![2]]);
+                    assert_eq!(req.start_version, 1);
+                    assert_eq!(req.for_update_ts, u64::MAX);
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                assert!(req.downcast_ref::<kvrpcpb::ResolveLockRequest>().is_none());
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        let lock = kvrpcpb::LockInfo {
+            key: vec![2],
+            primary_lock: vec![1],
+            lock_version: 1,
+            lock_type: kvrpcpb::Op::PessimisticLock as i32,
+            ..Default::default()
+        };
+
+        assert!(resolve_locks_with_context(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        assert_eq!(rollback_count.load(Ordering::SeqCst), 1);
     }
 
     #[test]
