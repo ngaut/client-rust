@@ -200,6 +200,18 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.lock_resolver_context = context;
     }
 
+    /// Reset a read-only snapshot's timestamp and discard retry hints that
+    /// were valid only for the previous read version.
+    pub(crate) fn set_snapshot_timestamp(&mut self, timestamp: Timestamp) {
+        let version = timestamp.version();
+        assert!(
+            version < i64::MAX as u64 || version == u64::MAX,
+            "try to get snapshot with a large ts {version}"
+        );
+        self.timestamp = timestamp;
+        self.read_lock_context = ReadLockContext::default();
+    }
+
     pub(crate) fn set_stale_read(&mut self, stale_read: bool) {
         self.replica_read_config.stale_read = stale_read;
     }
@@ -2225,6 +2237,38 @@ mod tests {
     use crate::TimestampExt;
     use crate::Transaction;
     use crate::TransactionOptions;
+
+    #[test]
+    fn source_snapshot_timestamp_reset_discards_prior_read_lock_hints() {
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.read_lock_context.add_resolved(11);
+        transaction.read_lock_context.add_committed(12);
+
+        transaction.set_snapshot_timestamp(Timestamp::from_version(2));
+
+        assert_eq!(transaction.start_timestamp().version(), 2);
+        assert_eq!(
+            transaction.read_lock_context.snapshot(),
+            (Vec::new(), Vec::new())
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "try to get snapshot with a large ts")]
+    fn source_snapshot_timestamp_rejects_non_max_u64_large_values() {
+        let mut transaction = Transaction::new(
+            Timestamp::default(),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_snapshot_timestamp(Timestamp::from_version(i64::MAX as u64));
+    }
 
     #[test]
     fn transaction_priority_defaults_to_normal_and_has_a_builder() {

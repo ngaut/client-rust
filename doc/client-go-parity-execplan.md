@@ -758,6 +758,8 @@ Plan revision note (2026-08-24): added a source-derived bounded async-resolve-po
 
 Plan revision note (2026-08-24): introduced an internal source-shaped resolve result so live locks carry the minimum remaining TTL rather than losing it at the Rust resolver boundary. Existing Rust APIs retain their live-lock return type, while the request-plan retry owner caps its selected retry sleep by that TTL and emits `wait_expired`. A focused locked-status regression proves the exact remaining-TTL result. This is not yet the complete client-go `BackoffWithMaxSleepTxnLockFast` contract because Rust's plan still owns its older `Backoff` type instead of the full retry backoffer.
 
+Plan revision note (2026-08-24): began `txnkv/txnsnapshot` implementation with source `SetSnapshotTS`. `Snapshot::set_snapshot_timestamp` delegates to the read-only transaction reset, enforces client-go's large-timestamp boundary, and clears per-snapshot resolved/committed lock hints from the prior read version. The cache-invalidation part is native no-op because the current Rust snapshot has no source-equivalent value cache. Focused reset and boundary regressions pass; the package remains seed status.
+
 Plan revision note (2026-08-24): corrected lite-region bookkeeping: a key-scoped ResolveLock no longer marks the whole region clean, while async-commit secondary recovery bypasses the ordinary lite decision so its multi-key region cleanup cannot be suppressed after the first key. Lock-module and full 399-test pinned-nightly suites pass.
 
 Plan revision note (2026-08-24): aligned the empty-lock boundary of `ResolveLocksWithOpts`: Rust now returns before requesting a PD timestamp when the input lock list is empty. The full 399-test pinned-nightly suite passes.

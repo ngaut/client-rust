@@ -27,6 +27,15 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Reset the read timestamp for subsequent snapshot operations.
+    ///
+    /// This is the Rust counterpart of client-go `KVSnapshot.SetSnapshotTS`.
+    /// It clears lock-resolution hints from the prior timestamp; Rust has no
+    /// separate snapshot value cache to invalidate.
+    pub fn set_snapshot_timestamp(&mut self, timestamp: crate::Timestamp) {
+        self.transaction.set_snapshot_timestamp(timestamp);
+    }
+
     /// Choose the TiKV replica-read type for subsequent snapshot reads.
     /// This is the Rust counterpart of client-go `KVSnapshot.SetReplicaRead`.
     pub fn set_replica_read(&mut self, read_type: ReplicaReadType) {
