@@ -1721,7 +1721,9 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
 
 #[cfg(test)]
 mod tests {
-    use super::{SecondaryLocksStatus, TransactionStatus, TransactionStatusKind};
+    use super::{
+        new_prewrite_request, SecondaryLocksStatus, TransactionStatus, TransactionStatusKind,
+    };
     use crate::common::Error::PessimisticLockError;
     use crate::common::Error::ResolveLockError;
     use crate::proto::errorpb;
@@ -1730,6 +1732,7 @@ mod tests {
     use crate::request::Collect;
     use crate::request::CollectWithShard;
     use crate::request::ResponseWithShard;
+    use crate::request::Shardable;
     use crate::request::{ApiV1Codec, ApiV2Codec, KeyMode, KvRequest};
     use crate::store::Request;
     use crate::KvPair;
@@ -1873,6 +1876,35 @@ mod tests {
 
         assert_eq!(status.determine_commit_ts(7, 1).unwrap(), None);
         assert!(status.fallback_2pc);
+    }
+
+    #[test]
+    fn source_prewrite_txn_size_tracks_the_physical_request_shard() {
+        let mut request = new_prewrite_request(
+            vec![
+                kvrpcpb::Mutation {
+                    key: b"a".to_vec(),
+                    ..Default::default()
+                },
+                kvrpcpb::Mutation {
+                    key: b"b".to_vec(),
+                    ..Default::default()
+                },
+            ],
+            b"a".to_vec(),
+            1,
+            10,
+        );
+        assert_eq!(request.txn_size, 2);
+
+        <kvrpcpb::PrewriteRequest as Shardable>::apply_shard(
+            &mut request,
+            vec![kvrpcpb::Mutation {
+                key: b"b".to_vec(),
+                ..Default::default()
+            }],
+        );
+        assert_eq!(request.txn_size, 1);
     }
 
     #[test]

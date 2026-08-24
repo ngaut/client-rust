@@ -731,3 +731,5 @@ Plan revision note (2026-08-24): enabled source-configured lite lock resolution.
 Plan revision note (2026-08-24): corrected lite-region bookkeeping: a key-scoped ResolveLock no longer marks the whole region clean, while async-commit secondary recovery bypasses the ordinary lite decision so its multi-key region cleanup cannot be suppressed after the first key. Lock-module and full 399-test pinned-nightly suites pass.
 
 Plan revision note (2026-08-24): aligned the empty-lock boundary of `ResolveLocksWithOpts`: Rust now returns before requesting a PD timestamp when the input lock list is empty. The full 399-test pinned-nightly suite passes.
+
+Plan revision note (2026-08-24): added a direct source-derived Prewrite shard regression: construction records the full mutation count and `Shardable::apply_shard` replaces it with the physical request's count, proving the TxnSize input used by lite lock resolution. The focused regression and full 400-test pinned-nightly library suite pass.
