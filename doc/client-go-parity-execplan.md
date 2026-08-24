@@ -35,6 +35,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-23) Completed `oracle/oracles`: added the adaptive PD oracle, concrete PD timestamp adapter/RPCs, validation singleflight/retry/cancellation, refresh-task shutdown coverage, source-derived local/PD tests, and oracle metric update sites.
 - [x] (2026-08-24) Advanced `internal/locate` to active package work with the complete `store_cache.go` lifecycle slice: stable store identities, all resolve states and tombstones, independent maintenance schedules, address-keyed liveness singleflight and health loops, active feedback, load/flow/metric accounting, TiFlash-compute discovery, and source-derived tests. The atomic package remains in progress until its other production and test artifacts close together.
 - [x] (2026-08-24) Completed `txnkv/rangetask` as one atomic batch: mapped both production files and the dedicated external integration test, exposed the reusable runner/backoffer/stateful DeleteRange surface, corrected identifier/failure/error-order reuse semantics, and passed 520 default/all-feature library tests plus the all-target gate.
+- [x] (2026-08-24) Completed `internal/resourcecontrol` as one atomic batch: mapped both source artifacts and all five source tests, corrected the narrow request-size and Cop/CopStream/BatchCop boundaries, exposed every request/response controller method, integrated stream settlement, and passed 523 default/all-feature library tests plus all-target/rustdoc gates.
 - [ ] Complete the remaining packages in dependency order recorded in `doc/client-go-parity-ledger.md`.
 - [ ] Run differential integration tests against one TiKV/PD cluster for raw, transactional, API-v1, API-v2, retry, lock, region, and error behavior.
 - [ ] Run final full test, clippy, rustfmt, generated-protobuf, examples, and documentation gates.
@@ -73,6 +74,9 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 
 - Observation: `txnkv/rangetask.RunOnRange` resets `completedRegions` for reuse but intentionally does not reset `failedRegions`; both the field and failed metric therefore accumulate across runs. Its dedicated tests are outside the package at `integration_tests/range_task_test.go`.
   Evidence: client-go `txnkv/rangetask/range_task.go` and `integration_tests/range_task_test.go`; source-derived Rust reuse and complete matrix tests in `src/transaction/range_task.rs`.
+
+- Observation: resource-control request/response sizing intentionally follows `tikvrpc.Request.GetSize`/`Response.GetSize`, not generic protobuf size. RawDelete therefore has request size zero, and CopStream uses its first response for read bytes/CPU while its wrapper response size remains zero. BatchCop participates in NextGen analyze bypass but not the controller's `IsCop` paging branch.
+  Evidence: client-go `internal/resourcecontrol/resource_control.go` and `tikvrpc/tikvrpc.go`; Rust `src/resource_control.rs` and `src/store/request.rs`.
 
 ## Decision Log
 
@@ -142,7 +146,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 
 ## Outcomes & Retrospective
 
-Twenty-four packages are complete at the pinned client-go revision. Foundational state/memory, typed errors, configuration, transport, concrete oracle behavior, mock test-support contracts, the native union-store core, and the complete range-task scheduler remain validated; local optimistic commits use the complete client-go latch behavior through native async scheduling. Consumer behavior remains explicitly attached to retry, routing, snapshots, transactions, metrics, concrete mock-store, and high-level oracle construction rows. The current Rust validation baseline is 520 default and all-feature library tests plus all-target/all-feature compilation and rustfmt. These package contracts use deterministic state, loopback transport, build variants, source mock topologies, callbacks, batching, scheduling, protobuf contexts, error transformation, and byte transformation; final cross-client protocol validation still requires the planned live TiKV/PD matrix.
+Twenty-five packages are complete at the pinned client-go revision. Foundational state/memory, typed errors, configuration, transport, resource-control accounting, concrete oracle behavior, mock test-support contracts, the native union-store core, and the complete range-task scheduler remain validated; local optimistic commits use the complete client-go latch behavior through native async scheduling. Consumer behavior remains explicitly attached to retry, routing, snapshots, transactions, metrics, concrete mock-store, and high-level oracle construction rows. The current Rust validation baseline is 523 default and all-feature library tests plus all-target/all-feature compilation, rustdoc, and rustfmt. These package contracts use deterministic state, loopback transport, build variants, source mock topologies, callbacks, batching, scheduling, protobuf contexts, error transformation, and byte transformation; final cross-client protocol validation still requires the planned live TiKV/PD matrix.
 
 ## Context and Orientation
 

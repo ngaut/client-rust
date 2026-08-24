@@ -82,6 +82,20 @@ streaming_response!(CoprocessorStreamResponse, coprocessor::Response);
 streaming_response!(BatchCoprocessorStreamResponse, coprocessor::BatchResponse);
 streaming_response!(MppStreamResponse, mpp::MppDataPacket);
 
+#[cfg(test)]
+impl CoprocessorStreamResponse {
+    pub(crate) fn from_first_for_test(first: Option<coprocessor::Response>) -> Self {
+        Self {
+            first,
+            stream: None,
+            timeout: Duration::ZERO,
+            ru_details: None,
+            count_read_rpc: false,
+            bypass_ru_v2: true,
+        }
+    }
+}
+
 /// Distinguishes client-go's `CmdCopStream` from the unary `CmdCop`, which
 /// carries the same protobuf request.
 #[derive(Clone)]
@@ -333,6 +347,22 @@ pub trait Request: Any + Sync + Send + 'static {
                 | "raw_batch_put"
                 | "raw_delete"
         )
+    }
+
+    /// Source `resourcecontrol.isCopRequest`: only ordinary and streaming
+    /// coprocessor reads participate in PD's paging accounting. BatchCop is
+    /// deliberately excluded even though it also carries an analyze type.
+    fn is_resource_control_coprocessor(&self) -> bool {
+        matches!(self.label(), "coprocessor" | "coprocessor_stream")
+    }
+
+    /// Returns the coprocessor request type used by NextGen's internal
+    /// analyze bypass. Ordinary Cop can be recovered from its protobuf;
+    /// stream wrappers override this to expose their owned wire request.
+    fn resource_control_coprocessor_type(&self) -> Option<i64> {
+        self.as_any()
+            .downcast_ref::<coprocessor::Request>()
+            .map(|request| request.tp)
     }
 
     /// Dispatch with source `tikvrpc.Request.ForwardedHost` transport
@@ -1214,6 +1244,10 @@ impl Request for CoprocessorStreamRequest {
         self.wire_request().encoded_len() as u64
     }
 
+    fn resource_control_coprocessor_type(&self) -> Option<i64> {
+        Some(self.request.tp)
+    }
+
     fn decode_transport_response(&self, _response: &mut dyn Any) -> Result<()> {
         if self.api_v2_codec.is_some() {
             return Err(Error::StringError(
@@ -1316,6 +1350,10 @@ impl Request for BatchCoprocessorStreamRequest {
 
     fn encoded_request_size(&self) -> u64 {
         self.wire_request().encoded_len() as u64
+    }
+
+    fn resource_control_coprocessor_type(&self) -> Option<i64> {
+        Some(self.request.tp)
     }
 }
 

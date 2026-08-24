@@ -21,7 +21,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `internal/mockstore/cluster` | `src/mock/cluster.rs` | complete | Receipt below; all interface methods, protobuf shapes, nullable results, signed counts, and ownership boundaries are covered. |
 | `internal/mockstore/deadlock` | `src/mock/deadlock.rs` | complete | Receipt below; synchronized detection, source-exact cycle hash, deduplication, cleanup, expiry, and all original tests are covered. |
 | `internal/mockstore/mocktikv` | Rust test support | unassessed | Large mock protocol surface. |
-| `internal/resourcecontrol` | `src/resource_control.rs`, `src/request/{plan,plan_builder}.rs`, `src/store/{mod,request}.rs`, `src/pd/client.rs`, `src/transaction/{transaction,snapshot,lock}.rs`, transaction request contexts / resource manager proto | seed | Complete two-file inventory audited: `resource_control.go` and `resource_control_test.go`, with no generated/build/fixture artifacts. Native response accounting maps coprocessor/Batched-Cop scan-byte and KV-CPU extraction, including NextGen total-versus-processed compatibility and protobuf response sizing. Typed request extraction now maps source transactional/raw-write classification, Prewrite/Commit byte totals, peer store ID, encoded request size, cop identity, ordinary internal-request bypass, and NextGen analyze-coprocessor bypass through the Rust request boundary. A reusable `ResourceGroupController` now performs source-ordered admission before each selected physical RPC, writes penalty and unset override priority into the cloned wire context, lets normal RPC interceptors observe that request, and settles only a successful response; background and bypass selection is preserved. Source-compatible process-wide enable/disable/install/unset APIs govern the default controller, while an explicit handle remains available for native transaction/snapshot composition. Route construction now supplies source `ReplicaNumber` (voter/learner count, empty-peer fallback one) and `AccessLocation` (configured zone versus selected target `zone` label) to controller request information. `PlanBuilder::predicted_read_bytes` retains source caller-supplied read estimates through sharding/retry and supplies them only to reads, while writes remain zero as source `MakeRequestInfo` requires. `PlanBuilder::ru_details` now collects controller request/response consumption and wait durations over every physical dispatch, matching source `RUDetails.Update` ordering. Async/sync transactions and snapshots expose `set_ru_details`; transactions retain it through direct, retry/shard, heartbeat, prewrite, commit, secondary, rollback, and lock-resolution (`CheckTxnStatus`/`ResolveLock`) plans. The pinned `rawkv` package has no resource-control or RU-details owner, and client-go itself only accepts an externally installed PD-controller interface; neither warrants invented Rust ownership. |
+| `internal/resourcecontrol` | `src/resource_control.rs`, `src/request/{plan,plan_builder}.rs`, `src/store/{mod,request}.rs`, transaction request contexts / resource-manager proto | complete | Complete package receipt below and full artifact/symbol/consumer mapping in [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). Both production/test files, both legacy/NextGen variants, exact request/response accounting matrices, stream paths, bypass, routing inputs, controller ordering, RU updates, public native interfaces, and validation gates are covered. The external PD controller algorithm and downstream txn-file protocol retain separate ownership. |
 | `internal/unionstore` | `src/transaction/unionstore.rs` plus native ART/RBT/arena adapters | complete | Receipt below; all eight production files and six source test/support/benchmark artifacts are accounted for. Public transaction consumption remains on the separate `txnkv/transaction` row. |
 | `internal/unionstore/arena` | `src/transaction/arena.rs` | complete | Receipt below; block allocation, addresses, checkpoints, hooks, value-log history/revert/inspection, and all original tests are covered. |
 | `internal/unionstore/art` | `src/transaction/art.rs` | complete | Receipt below; all nine source/test artifacts are covered by a safe ordered-map/value-log mapping, with the parent unionstore integration retained on its own row. |
@@ -54,6 +54,40 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 ## Non-package artifacts still required
 
 The final repository claim must additionally account for root build and policy files, `go.mod`/`go.sum` dependencies, `.github` CI, `examples`, `integration_tests` including its separate Go module, generated protobuf inputs and outputs, configuration fixtures, and client-rust's `proto-build`, `proto`, `tests`, examples, Cargo features, and toolchain files. `proto/keyspacepb.proto` now carries the pinned V3 identity oneof required by `internal/apicodec`, but the same pinned schema's namespace and lookup service expansion remains an explicit generated-input artifact. These artifacts are not package rows, but no full parity claim is possible without their final receipt.
+
+## Complete package receipt: `internal/resourcecontrol`
+
+Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
+
+The complete production/test inventory, SHA-256 identities, per-symbol mapping, native typed-request decision, exact five-test mapping, and source-consumer audit are recorded in [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). The package has no additional support, fixture, generated/build, platform/build-tag, documentation, benchmark, harness, or metadata artifact.
+
+Rust now preserves the source request write matrix and byte totals, deliberately narrow request-size matrix, peer/replica/access routing inputs, predicted-read and Cop identities, internal/analyze/background bypass, legacy/NextGen scan bytes, Cop/BatchCop/CopStream response distinctions, CPU precedence, response sizing, public controller information interfaces, physical admission/settlement ordering, penalty/priority mutation, and RU-detail updates. The external PD controller implementation remains injected, and downstream txn-file behavior remains on `txnkv/transaction`; neither is overclaimed here.
+
+Validation on `nightly-2026-08-22`:
+
+    cargo +nightly-2026-08-22 test -p tikv-client resource_control --lib
+    # 14 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client resource_control --lib --all-features
+    # 14 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet
+    # 523 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet
+    # 523 passed; 0 failed
+
+    cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features
+    # passed with the existing warning backlog
+
+    cargo +nightly-2026-08-22 doc -p tikv-client --all-features --no-deps
+    # passed with two pre-existing unrelated rustdoc warnings
+
+    cargo +nightly-2026-08-22 fmt --all -- --check
+    git diff --check
+    # passed
+
+The pinned Go tests were inspected but not re-executed because this host has no `go` binary. No live cluster is required for this deterministic accounting/interceptor package; final cross-client TiKV/PD validation still covers consumer-level RU behavior.
 
 ## Complete package receipt: `txnkv/rangetask`
 
