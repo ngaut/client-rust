@@ -2087,6 +2087,17 @@ mod tests {
     }
 
     #[test]
+    fn source_delete_range_counts_successful_region_responses() {
+        let completed = Collect
+            .merge(vec![
+                Ok(kvrpcpb::DeleteRangeResponse::default()),
+                Ok(kvrpcpb::DeleteRangeResponse::default()),
+            ])
+            .unwrap();
+        assert_eq!(completed, 2);
+    }
+
+    #[test]
     fn api_v2_decoder_runs_before_pessimistic_lock_errors_are_extracted() {
         let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
         let request = kvrpcpb::PessimisticLockRequest::default();

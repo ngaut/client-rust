@@ -34,6 +34,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-23) Completed `config`: implemented every source section/default/validation path, global snapshot updates, URI parsing, TLS validation/reload, RU-v2 accounting, and both `nextgen` build selections while preserving native Rust builders.
 - [x] (2026-08-23) Completed `oracle/oracles`: added the adaptive PD oracle, concrete PD timestamp adapter/RPCs, validation singleflight/retry/cancellation, refresh-task shutdown coverage, source-derived local/PD tests, and oracle metric update sites.
 - [x] (2026-08-24) Advanced `internal/locate` to active package work with the complete `store_cache.go` lifecycle slice: stable store identities, all resolve states and tombstones, independent maintenance schedules, address-keyed liveness singleflight and health loops, active feedback, load/flow/metric accounting, TiFlash-compute discovery, and source-derived tests. The atomic package remains in progress until its other production and test artifacts close together.
+- [x] (2026-08-24) Completed `txnkv/rangetask` as one atomic batch: mapped both production files and the dedicated external integration test, exposed the reusable runner/backoffer/stateful DeleteRange surface, corrected identifier/failure/error-order reuse semantics, and passed 520 default/all-feature library tests plus the all-target gate.
 - [ ] Complete the remaining packages in dependency order recorded in `doc/client-go-parity-ledger.md`.
 - [ ] Run differential integration tests against one TiKV/PD cluster for raw, transactional, API-v1, API-v2, retry, lock, region, and error behavior.
 - [ ] Run final full test, clippy, rustfmt, generated-protobuf, examples, and documentation gates.
@@ -69,6 +70,9 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 
 - Observation: client-go runs store re-resolution, health ticks, replica-flow reporting, and full-store discovery on independent background schedules. Splitting Rust's combined loop exposed that `Cancellation::cancel` woke only one child waiter, so joining several independent schedules could wait for the longest timer.
   Evidence: client-go `internal/locate/region_cache.go:bgRunner` schedules; client-rust `src/region_cache.rs:start_background_store_maintenance` and `src/async_util.rs:Cancellation`.
+
+- Observation: `txnkv/rangetask.RunOnRange` resets `completedRegions` for reuse but intentionally does not reset `failedRegions`; both the field and failed metric therefore accumulate across runs. Its dedicated tests are outside the package at `integration_tests/range_task_test.go`.
+  Evidence: client-go `txnkv/rangetask/range_task.go` and `integration_tests/range_task_test.go`; source-derived Rust reuse and complete matrix tests in `src/transaction/range_task.rs`.
 
 ## Decision Log
 
@@ -132,9 +136,13 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
   Rationale: client-go replica selectors and health loops retain pointers to the same `Store`; replacing or removing Rust entries would lose liveness, health, load, flow, and failure-epoch state and make restarted-store metadata invisible to active selectors.
   Date/Author: 2026-08-24 / Codex
 
+- Decision: every new commit batch must complete at least one whole upstream package or Rust crate; partial work may remain uncommitted only while reaching that atomic boundary.
+  Rationale: this preserves the repository's package-level transcreation rule and avoids spending review/push overhead on tiny amendments while large inventories remain open.
+  Date/Author: 2026-08-24 / Codex
+
 ## Outcomes & Retrospective
 
-Eighteen packages are complete at the pinned client-go revision. Foundational state/memory, typed errors, configuration, concrete oracle behavior, mock test-support contracts, and the native union-store core remain validated; local optimistic commits use the complete client-go latch behavior through native async scheduling. Consumer behavior remains explicitly attached to retry, routing, snapshots, transactions, metrics, concrete mock-store, and high-level oracle construction rows. The current Rust validation baseline is 167 library tests and 49 doctests, plus scoped all-feature clippy and rustfmt. None of these eighteen package contracts requires a real cluster because their own observable behavior is deterministic state, memory, configuration, build, interface, callbacks, batching, scheduling, protobuf-context, error transformation, or byte transformation; consumer protocol integration still does.
+Twenty-four packages are complete at the pinned client-go revision. Foundational state/memory, typed errors, configuration, transport, concrete oracle behavior, mock test-support contracts, the native union-store core, and the complete range-task scheduler remain validated; local optimistic commits use the complete client-go latch behavior through native async scheduling. Consumer behavior remains explicitly attached to retry, routing, snapshots, transactions, metrics, concrete mock-store, and high-level oracle construction rows. The current Rust validation baseline is 520 default and all-feature library tests plus all-target/all-feature compilation and rustfmt. These package contracts use deterministic state, loopback transport, build variants, source mock topologies, callbacks, batching, scheduling, protobuf contexts, error transformation, and byte transformation; final cross-client protocol validation still requires the planned live TiKV/PD matrix.
 
 ## Context and Orientation
 

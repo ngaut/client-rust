@@ -128,14 +128,14 @@ pub(crate) fn observe_retry_backoff(kind: &'static str, duration: Duration) {
 
 /// Mirrors client-go's range-task completed/failed region gauges. Completed
 /// work is reset when a runner exits; failed work remains cumulative.
-pub(crate) fn reset_range_task_completed(task_type: &'static str) {
+pub(crate) fn reset_range_task_completed(task_type: &str) {
     TIKV_RANGE_TASK_STATS
         .with_label_values(&[task_type, "completed-regions"])
         .set(0.0);
 }
 
 pub(crate) fn add_range_task_stats(
-    task_type: &'static str,
+    task_type: &str,
     completed_regions: usize,
     failed_regions: usize,
 ) {
@@ -149,7 +149,7 @@ pub(crate) fn add_range_task_stats(
 
 /// Records client-go's time spent waiting to enqueue a range subtask for a
 /// worker. This is deliberately the channel-send duration, not handler time.
-pub(crate) fn observe_range_task_push_duration(task_type: &'static str, duration: Duration) {
+pub(crate) fn observe_range_task_push_duration(task_type: &str, duration: Duration) {
     TIKV_RANGE_TASK_PUSH_DURATION
         .with_label_values(&[task_type])
         .observe(duration_to_sec(duration));
@@ -499,14 +499,14 @@ pub(crate) fn store_limit_error_count(address: &str, store_id: u64) -> u64 {
 }
 
 #[cfg(test)]
-pub(crate) fn range_task_stat(task_type: &'static str, result: &'static str) -> f64 {
+pub(crate) fn range_task_stat(task_type: &str, result: &str) -> f64 {
     TIKV_RANGE_TASK_STATS
         .with_label_values(&[task_type, result])
         .get()
 }
 
 #[cfg(test)]
-pub(crate) fn range_task_push_duration_samples(task_type: &'static str) -> u64 {
+pub(crate) fn range_task_push_duration_samples(task_type: &str) -> u64 {
     TIKV_RANGE_TASK_PUSH_DURATION
         .with_label_values(&[task_type])
         .get_sample_count()
