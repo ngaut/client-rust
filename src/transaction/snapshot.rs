@@ -120,6 +120,16 @@ impl Snapshot {
         self.transaction.set_snapshot_scan_batch_size(batch_size);
     }
 
+    /// Attach runtime statistics to subsequent physical snapshot read RPCs.
+    /// Pass `None` to stop collection, matching client-go
+    /// `KVSnapshot.SetRuntimeStats(nil)`.
+    pub fn set_runtime_stats(
+        &mut self,
+        stats: Option<std::sync::Arc<crate::SnapshotRuntimeStats>>,
+    ) {
+        self.transaction.set_snapshot_runtime_stats(stats);
+    }
+
     /// Allow reads to proceed through locks flushed by this pipelined
     /// transaction, matching client-go `KVSnapshot.SetPipelined`.
     pub fn set_pipelined(&mut self, timestamp: u64) {

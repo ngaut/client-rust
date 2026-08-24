@@ -46,6 +46,7 @@ use crate::transaction::lock::format_key_for_log;
 use crate::transaction::lowering::*;
 use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
+use crate::transaction::SnapshotRuntimeStats;
 use crate::BoundRange;
 use crate::Error;
 use crate::Key;
@@ -58,6 +59,18 @@ const SNAPSHOT_READ_TIMEOUT_SHORT: Duration = Duration::from_secs(30);
 const SNAPSHOT_READ_TIMEOUT_MEDIUM: Duration = Duration::from_secs(60);
 /// client-go's `txnkv/txnsnapshot.DefaultScanBatchSize`.
 pub(crate) const DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE: u32 = 256;
+
+fn snapshot_runtime_interceptor(
+    interceptor: Option<RpcInterceptorChain>,
+    stats: Option<Arc<SnapshotRuntimeStats>>,
+) -> Option<RpcInterceptorChain> {
+    let Some(stats) = stats else {
+        return interceptor;
+    };
+    let mut interceptor = interceptor.unwrap_or_default();
+    interceptor.link(stats.interceptor());
+    Some(interceptor)
+}
 
 /// The snapshot read operation for which a resource-group tag is being built.
 ///
@@ -142,6 +155,8 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// Maximum number of pairs requested by one snapshot scan RPC. The
     /// caller's scan limit remains the overall result limit.
     snapshot_scan_batch_size: u32,
+    /// Optional source-compatible collector for physical snapshot read RPCs.
+    snapshot_runtime_stats: Option<Arc<SnapshotRuntimeStats>>,
     /// Enables client-go's pipelined BufferBatchGet tier for this snapshot.
     snapshot_pipelined: bool,
     /// Snapshot-only request-context settings retained through physical read
@@ -227,6 +242,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             sample_step: 0,
             snapshot_key_only: false,
             snapshot_scan_batch_size: DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE,
+            snapshot_runtime_stats: None,
             snapshot_pipelined: false,
             not_fill_cache: false,
             isolation_level: kvrpcpb::IsolationLevel::Si,
@@ -347,6 +363,10 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub(crate) fn set_snapshot_scan_batch_size(&mut self, batch_size: u32) {
         self.snapshot_scan_batch_size = batch_size;
+    }
+
+    pub(crate) fn set_snapshot_runtime_stats(&mut self, stats: Option<Arc<SnapshotRuntimeStats>>) {
+        self.snapshot_runtime_stats = stats;
     }
 
     /// Source pipelined snapshots must read through locks flushed by their
@@ -476,7 +496,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         let retry_options = self.options.retry_options.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
-        let rpc_interceptor = self.rpc_interceptor.clone();
+        let rpc_interceptor = snapshot_runtime_interceptor(
+            self.rpc_interceptor.clone(),
+            self.snapshot_runtime_stats.clone(),
+        );
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -560,7 +583,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         let retry_options = self.options.retry_options.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
-        let rpc_interceptor = self.rpc_interceptor.clone();
+        let rpc_interceptor = snapshot_runtime_interceptor(
+            self.rpc_interceptor.clone(),
+            self.snapshot_runtime_stats.clone(),
+        );
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -751,7 +777,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc = self.rpc.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
-        let rpc_interceptor = self.rpc_interceptor.clone();
+        let rpc_interceptor = snapshot_runtime_interceptor(
+            self.rpc_interceptor.clone(),
+            self.snapshot_runtime_stats.clone(),
+        );
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -850,7 +879,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc = self.rpc.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
-        let rpc_interceptor = self.rpc_interceptor.clone();
+        let rpc_interceptor = snapshot_runtime_interceptor(
+            self.rpc_interceptor.clone(),
+            self.snapshot_runtime_stats.clone(),
+        );
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -970,7 +1002,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         let rpc = self.rpc.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
-        let rpc_interceptor = self.rpc_interceptor.clone();
+        let rpc_interceptor = snapshot_runtime_interceptor(
+            self.rpc_interceptor.clone(),
+            self.snapshot_runtime_stats.clone(),
+        );
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -1609,7 +1644,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         let retry_options = self.options.retry_options.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
-        let rpc_interceptor = self.rpc_interceptor.clone();
+        let rpc_interceptor = snapshot_runtime_interceptor(
+            self.rpc_interceptor.clone(),
+            self.snapshot_runtime_stats.clone(),
+        );
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -3386,6 +3424,58 @@ mod tests {
                 (b"c".to_vec(), b"a".to_vec(), 2),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_runtime_stats_observe_each_physical_read_command() {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |request: &dyn Any| {
+                if request.is::<kvrpcpb::GetRequest>() {
+                    Ok(Box::new(kvrpcpb::GetResponse {
+                        value: b"get-value".to_vec(),
+                        ..Default::default()
+                    }) as Box<dyn Any>)
+                } else if request.is::<kvrpcpb::BatchGetRequest>() {
+                    Ok(Box::new(kvrpcpb::BatchGetResponse::default()) as Box<dyn Any>)
+                } else if request.is::<kvrpcpb::ScanRequest>() {
+                    Ok(Box::new(kvrpcpb::ScanResponse::default()) as Box<dyn Any>)
+                } else {
+                    panic!("unexpected request while collecting snapshot runtime stats");
+                }
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        let stats = Arc::new(crate::SnapshotRuntimeStats::new());
+        transaction.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
+
+        transaction.get("get".to_owned()).await.unwrap();
+        transaction
+            .batch_get(["batch".to_owned()])
+            .await
+            .unwrap()
+            .for_each(drop);
+        transaction
+            .scan(b"scan".to_vec()..b"scanz".to_vec(), 1)
+            .await
+            .unwrap()
+            .for_each(drop);
+
+        assert_eq!(stats.rpc_count(crate::SnapshotRpcCommand::Get), 1);
+        assert_eq!(stats.rpc_count(crate::SnapshotRpcCommand::BatchGet), 1);
+        assert_eq!(stats.rpc_count(crate::SnapshotRpcCommand::Scan), 1);
+        assert_eq!(
+            stats.rpc_count(crate::SnapshotRpcCommand::BufferBatchGet),
+            0
+        );
+
+        transaction.set_snapshot_runtime_stats(None);
+        transaction.get("later".to_owned()).await.unwrap();
+        assert_eq!(stats.rpc_count(crate::SnapshotRpcCommand::Get), 1);
     }
 
     #[tokio::test]

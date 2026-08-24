@@ -41,6 +41,11 @@ impl SyncSnapshot {
         self.inner.set_scan_batch_size(batch_size);
     }
 
+    /// Attach runtime statistics to subsequent physical snapshot read RPCs.
+    pub fn set_runtime_stats(&mut self, stats: Option<Arc<crate::SnapshotRuntimeStats>>) {
+        self.inner.set_runtime_stats(stats);
+    }
+
     /// Allow reads to proceed through locks flushed by this pipelined transaction.
     pub fn set_pipelined(&mut self, timestamp: u64) {
         self.inner.set_pipelined(timestamp);

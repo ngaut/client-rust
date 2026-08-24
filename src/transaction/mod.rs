@@ -13,6 +13,8 @@ pub use client::ProtoLockInfo;
 pub(crate) use lock::HasLocks;
 pub use priority::Priority;
 pub use snapshot::Snapshot;
+pub use snapshot_stats::SnapshotRpcCommand;
+pub use snapshot_stats::SnapshotRuntimeStats;
 pub use sync_client::SyncTransactionClient;
 pub use sync_snapshot::SyncSnapshot;
 pub use sync_transaction::SyncTransaction;
@@ -52,6 +54,7 @@ pub(crate) use lock::ResolvingLocksGuard;
 #[doc(hidden)]
 pub mod arena;
 mod snapshot;
+mod snapshot_stats;
 mod sync_client;
 mod sync_snapshot;
 mod sync_transaction;

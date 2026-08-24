@@ -239,6 +239,10 @@ pub use crate::transaction::SnapshotRequestType;
 #[doc(inline)]
 pub use crate::transaction::SnapshotResourceGroupTagger;
 #[doc(inline)]
+pub use crate::transaction::SnapshotRpcCommand;
+#[doc(inline)]
+pub use crate::transaction::SnapshotRuntimeStats;
+#[doc(inline)]
 pub use crate::transaction::SyncSnapshot;
 #[doc(inline)]
 pub use crate::transaction::SyncTransaction;
