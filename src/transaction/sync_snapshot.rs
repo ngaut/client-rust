@@ -40,6 +40,17 @@ impl SyncSnapshot {
         self.inner.set_pipelined(timestamp);
     }
 
+    /// Set the deadline for each physical snapshot read. A zero duration
+    /// clears the override.
+    pub fn set_kv_read_timeout(&mut self, timeout: Duration) {
+        self.inner.set_kv_read_timeout(timeout);
+    }
+
+    /// Return the configured snapshot read deadline, if any.
+    pub fn kv_read_timeout(&self) -> Option<Duration> {
+        self.inner.kv_read_timeout()
+    }
+
     /// Control whether TiKV should bypass cache population for subsequent
     /// snapshot reads.
     pub fn set_not_fill_cache(&mut self, not_fill_cache: bool) {

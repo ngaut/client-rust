@@ -80,6 +80,9 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
 pub struct Dispatch<Req: KvRequest> {
     pub request: Req,
     pub kv_client: Option<Arc<dyn KvClient + Send + Sync>>,
+    /// Optional caller-specific physical RPC deadline. `None` retains the
+    /// client-wide transport timeout.
+    pub request_timeout: Option<Duration>,
     /// Address of the current TiKV target, set when the request is assigned to a store.
     pub target: String,
     /// Logical TiKV target used only when this request is physically sent to
@@ -162,7 +165,11 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         let next = Box::new(|| {
             Box::pin(async {
                 client
-                    .dispatch_with_forwarded_host(&request, &self.forwarded_host)
+                    .dispatch_with_timeout_and_forwarded_host(
+                        &request,
+                        self.request_timeout,
+                        &self.forwarded_host,
+                    )
                     .await
             }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         });

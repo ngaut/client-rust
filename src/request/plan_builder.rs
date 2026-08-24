@@ -74,6 +74,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
             plan: Dispatch {
                 request,
                 kv_client: None,
+                request_timeout: None,
                 target: String::new(),
                 forwarded_host: String::new(),
                 replica_read_config: ReplicaReadConfig::default(),
@@ -142,6 +143,17 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     pub(crate) fn max_execution_duration(mut self, duration: Duration) -> Self {
         let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
         self.plan.request.set_max_execution_duration_ms(duration_ms);
+        self
+    }
+
+    /// Configure a source snapshot's per-read deadline. It controls both the
+    /// physical RPC deadline and TiKV's matching max-execution context value.
+    pub(crate) fn snapshot_read_timeout(mut self, timeout: Option<Duration>) -> Self {
+        if let Some(timeout) = timeout {
+            let duration_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+            self.plan.request.set_max_execution_duration_ms(duration_ms);
+            self.plan.request_timeout = Some(timeout);
+        }
         self
     }
 
@@ -635,6 +647,47 @@ mod tests {
         assert_eq!(
             cloned.context.as_ref().unwrap().priority,
             kvrpcpb::CommandPri::High as i32
+        );
+    }
+
+    #[test]
+    fn source_snapshot_read_timeout_sets_transport_and_tikv_deadlines() {
+        let timeout = Duration::from_millis(17);
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .snapshot_read_timeout(Some(timeout));
+
+        assert_eq!(builder.plan.request_timeout, Some(timeout));
+        assert_eq!(
+            builder
+                .plan
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .max_execution_duration_ms,
+            17
+        );
+
+        let disabled = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .snapshot_read_timeout(None);
+        assert_eq!(disabled.plan.request_timeout, None);
+        assert_eq!(
+            disabled
+                .plan
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .max_execution_duration_ms,
+            0
         );
     }
 

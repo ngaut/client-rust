@@ -268,6 +268,7 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         Dispatch {
             request: self.request.clone_then_apply_shard(shard),
             kv_client: self.kv_client.clone(),
+            request_timeout: self.request_timeout,
             target: self.target.clone(),
             forwarded_host: self.forwarded_host.clone(),
             replica_read_config: self.replica_read_config.clone(),
@@ -685,6 +686,7 @@ mod test {
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
             kv_client: None,
+            request_timeout: None,
             target: String::new(),
             forwarded_host: String::new(),
             replica_read_config: ReplicaReadConfig {
@@ -741,6 +743,7 @@ mod test {
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
             kv_client: None,
+            request_timeout: None,
             target: String::new(),
             forwarded_host: String::new(),
             replica_read_config: ReplicaReadConfig::default(),
