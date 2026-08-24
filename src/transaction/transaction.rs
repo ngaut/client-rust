@@ -52,6 +52,9 @@ use crate::Priority;
 use crate::Result;
 use crate::Value;
 
+const SNAPSHOT_READ_TIMEOUT_SHORT: Duration = Duration::from_secs(30);
+const SNAPSHOT_READ_TIMEOUT_MEDIUM: Duration = Duration::from_secs(60);
+
 /// The snapshot read operation for which a resource-group tag is being built.
 ///
 /// This is the Rust counterpart of the request type visible to client-go's
@@ -453,7 +456,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .isolation_level(isolation_level)
                 .task_id(task_id)
                 .resource_group_tag(resource_group_tag)
-                .snapshot_read_timeout(snapshot_read_timeout)
+                .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_SHORT)
                 .validate_read_timestamp(
                     read_timestamp_validator,
                     timestamp.version(),
@@ -646,7 +649,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .isolation_level(isolation_level)
                 .task_id(task_id)
                 .resource_group_tag(resource_group_tag)
-                .snapshot_read_timeout(snapshot_read_timeout)
+                .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_MEDIUM)
                 .validate_read_timestamp(
                     read_timestamp_validator,
                     timestamp.version(),
@@ -1250,7 +1253,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         let task_id = self.task_id;
         let resource_group_tag = self.resource_group_tag.clone();
         let resource_group_tagger = self.resource_group_tagger.clone();
-        let snapshot_read_timeout = self.snapshot_read_timeout;
         let read_timestamp_validator = self.read_timestamp_validator.clone();
         let replica_read_config = self.replica_read_config.clone();
         let read_lock_context = self.read_lock_context.clone();
@@ -1293,7 +1295,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .isolation_level(isolation_level)
                     .task_id(task_id)
                     .resource_group_tag(resource_group_tag)
-                    .snapshot_read_timeout(snapshot_read_timeout)
+                    .snapshot_read_timeout(None, SNAPSHOT_READ_TIMEOUT_MEDIUM)
                     .validate_read_timestamp(
                         read_timestamp_validator,
                         timestamp.version(),
@@ -2554,22 +2556,24 @@ mod tests {
         let captured_calls = Arc::clone(&calls);
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |request: &dyn Any| {
-                let context = if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                let (expected_timeout, context) = if let Some(request) =
+                    request.downcast_ref::<kvrpcpb::GetRequest>()
+                {
                     captured_calls.lock().unwrap().push("get");
-                    request.context.as_ref().unwrap()
+                    (17, request.context.as_ref().unwrap())
                 } else if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
                     captured_calls.lock().unwrap().push("batch-get");
-                    request.context.as_ref().unwrap()
+                    (17, request.context.as_ref().unwrap())
                 } else if let Some(request) = request.downcast_ref::<kvrpcpb::ScanRequest>() {
                     captured_calls.lock().unwrap().push("scan");
-                    request.context.as_ref().unwrap()
+                    (60_000, request.context.as_ref().unwrap())
                 } else {
                     panic!("unexpected request while testing snapshot context settings");
                 };
                 assert!(context.not_fill_cache);
                 assert_eq!(context.isolation_level, kvrpcpb::IsolationLevel::Rc as i32);
                 assert_eq!(context.task_id, 42);
-                assert_eq!(context.max_execution_duration_ms, 17);
+                assert_eq!(context.max_execution_duration_ms, expected_timeout);
                 assert_eq!(context.resource_group_tag, b"snapshot-tag");
 
                 if request.is::<kvrpcpb::GetRequest>() {
@@ -2592,6 +2596,68 @@ mod tests {
         transaction.set_task_id(42);
         transaction.set_snapshot_read_timeout(Duration::from_millis(17));
         transaction.set_resource_group_tag(Some(b"snapshot-tag".to_vec()));
+
+        transaction.get("get".to_owned()).await.unwrap();
+        let _: Vec<_> = transaction
+            .batch_get(vec!["batch".to_owned()])
+            .await
+            .unwrap()
+            .collect();
+        let _: Vec<_> = transaction
+            .scan(b"scan-a".to_vec()..b"scan-b".to_vec(), 1)
+            .await
+            .unwrap()
+            .collect();
+
+        assert_eq!(*calls.lock().unwrap(), vec!["get", "batch-get", "scan"]);
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_default_read_timeouts_are_short_for_get_and_medium_for_scans() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let captured_calls = Arc::clone(&calls);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let (name, expected_timeout, context, response): (
+                    &str,
+                    u64,
+                    &kvrpcpb::Context,
+                    Box<dyn Any>,
+                ) = if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    (
+                        "get",
+                        30_000,
+                        request.context.as_ref().unwrap(),
+                        Box::new(kvrpcpb::GetResponse::default()),
+                    )
+                } else if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    (
+                        "batch-get",
+                        60_000,
+                        request.context.as_ref().unwrap(),
+                        Box::new(kvrpcpb::BatchGetResponse::default()),
+                    )
+                } else if let Some(request) = request.downcast_ref::<kvrpcpb::ScanRequest>() {
+                    (
+                        "scan",
+                        60_000,
+                        request.context.as_ref().unwrap(),
+                        Box::new(kvrpcpb::ScanResponse::default()),
+                    )
+                } else {
+                    panic!("unexpected request while testing snapshot default read timeouts");
+                };
+                assert_eq!(context.max_execution_duration_ms, expected_timeout);
+                captured_calls.lock().unwrap().push(name);
+                Ok(response)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
 
         transaction.get("get".to_owned()).await.unwrap();
         let _: Vec<_> = transaction

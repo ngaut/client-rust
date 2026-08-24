@@ -84,6 +84,9 @@ pub struct Dispatch<Req: KvRequest> {
     /// Optional caller-specific physical RPC deadline. `None` retains the
     /// client-wide transport timeout.
     pub request_timeout: Option<Duration>,
+    /// Source snapshot reads use an operation-specific timeout after the
+    /// first retry, even when their initial send used `SetKVReadTimeout`.
+    pub(crate) retry_request_timeout: Option<Duration>,
     /// Optional client-go read-timestamp validation run before every physical
     /// dispatch, including sender retries.
     pub(crate) read_timestamp_validation: Option<ReadTimestampValidation>,

@@ -75,6 +75,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 request,
                 kv_client: None,
                 request_timeout: None,
+                retry_request_timeout: None,
                 read_timestamp_validation: None,
                 target: String::new(),
                 forwarded_host: String::new(),
@@ -156,14 +157,19 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self
     }
 
-    /// Configure a source snapshot's per-read deadline. It controls both the
-    /// physical RPC deadline and TiKV's matching max-execution context value.
-    pub(crate) fn snapshot_read_timeout(mut self, timeout: Option<Duration>) -> Self {
-        if let Some(timeout) = timeout {
-            let duration_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
-            self.plan.request.set_max_execution_duration_ms(duration_ms);
-            self.plan.request_timeout = Some(timeout);
-        }
+    /// Configure a source snapshot's initial and retry deadlines. The source
+    /// uses an optional `SetKVReadTimeout` override only for the initial Get
+    /// or BatchGet send; every resend returns to `retry_timeout`.
+    pub(crate) fn snapshot_read_timeout(
+        mut self,
+        timeout: Option<Duration>,
+        retry_timeout: Duration,
+    ) -> Self {
+        let timeout = timeout.unwrap_or(retry_timeout);
+        let duration_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+        self.plan.request.set_max_execution_duration_ms(duration_ms);
+        self.plan.request_timeout = Some(timeout);
+        self.plan.retry_request_timeout = Some(retry_timeout);
         self
     }
 
@@ -657,6 +663,7 @@ mod tests {
     use super::*;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
+    use crate::request::Shardable;
 
     #[test]
     fn priority_is_written_before_requests_are_cloned_for_execution() {
@@ -687,9 +694,13 @@ mod tests {
             Keyspace::Disable,
             kvrpcpb::GetRequest::default(),
         )
-        .snapshot_read_timeout(Some(timeout));
+        .snapshot_read_timeout(Some(timeout), Duration::from_secs(30));
 
         assert_eq!(builder.plan.request_timeout, Some(timeout));
+        assert_eq!(
+            builder.plan.retry_request_timeout,
+            Some(Duration::from_secs(30))
+        );
         assert_eq!(
             builder
                 .plan
@@ -706,8 +717,12 @@ mod tests {
             Keyspace::Disable,
             kvrpcpb::GetRequest::default(),
         )
-        .snapshot_read_timeout(None);
-        assert_eq!(disabled.plan.request_timeout, None);
+        .snapshot_read_timeout(None, Duration::from_secs(30));
+        assert_eq!(disabled.plan.request_timeout, Some(Duration::from_secs(30)));
+        assert_eq!(
+            disabled.plan.retry_request_timeout,
+            Some(Duration::from_secs(30))
+        );
         assert_eq!(
             disabled
                 .plan
@@ -716,7 +731,20 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .max_execution_duration_ms,
-            0
+            30_000
+        );
+
+        let mut retried = builder.plan;
+        retried.mark_retry_request();
+        assert_eq!(retried.request_timeout, Some(Duration::from_secs(30)));
+        assert_eq!(
+            retried
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .max_execution_duration_ms,
+            30_000
         );
     }
 
