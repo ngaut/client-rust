@@ -93,6 +93,11 @@ impl Snapshot {
         self.transaction.set_resource_control(controller);
     }
 
+    /// Attach resource-unit accounting to subsequent snapshot RPCs.
+    pub fn set_ru_details(&mut self, ru_details: std::sync::Arc<crate::RuDetails>) {
+        self.transaction.set_ru_details(ru_details);
+    }
+
     /// Replace the RPC interceptor used by subsequent snapshot requests.
     pub fn set_rpc_interceptor(&mut self, interceptor: RpcInterceptorHandle) {
         self.transaction.set_rpc_interceptor(interceptor);
