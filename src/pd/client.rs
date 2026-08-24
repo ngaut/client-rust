@@ -627,13 +627,24 @@ where
             .ok_or_else(|| crate::Error::LeaderNotFound {
                 region: region.ver_id(),
             })?;
+        self.region_cache.get_store_by_id(leader.store_id).await?;
+        let leader_liveness = self.region_cache.store_liveness(leader.store_id);
         let proxy = if self.enable_forwarding {
             self.region_cache
-                .proxy_for_unreachable_leader(&region, selector_state)
+                .proxy_for_unavailable_leader(&region, selector_state)
                 .await?
         } else {
             None
         };
+        if source_forwarding_exhausted(
+            self.enable_forwarding,
+            leader_liveness,
+            selector_state,
+            leader.id,
+            proxy.is_some(),
+        ) {
+            return Err(selector_exhausted_error());
+        }
         self.map_region_to_route(region, leader, proxy).await
     }
 
@@ -768,10 +779,17 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         selector_state: ReplicaSelectorState,
         is_read_request: bool,
     ) -> Result<RegionStore> {
+        let config = config.for_source_build();
         let busy_threshold_ms = if selector_state.busy_threshold_disabled() {
             0
         } else {
             config.busy_threshold_ms
+        };
+        let leader_liveness = if let Some(leader) = region.leader.as_ref() {
+            self.region_cache.get_store_by_id(leader.store_id).await?;
+            self.region_cache.store_liveness(leader.store_id)
+        } else {
+            None
         };
         let leader_epoch_stale = match region.leader.as_ref() {
             Some(leader) => {
@@ -796,8 +814,13 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         }
         if matches!(config.read_type, ReplicaReadType::Leader) && !config.stale_read {
             if let Some(leader) = region.leader.clone().filter(|leader| {
-                leader_epoch_stale
-                    || source_leader_falls_back_to_follower(&selector_state, leader.id)
+                source_leader_needs_mixed_fallback(
+                    self.enable_forwarding,
+                    leader_epoch_stale,
+                    leader_liveness,
+                    &selector_state,
+                    leader.id,
+                )
             }) {
                 if !config.leader_only {
                     if let Some(follower) = self
@@ -837,6 +860,29 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                                 route.with_force_leader_read()
                             },
                         );
+                    }
+                    // `ReplicaSelectMixedStrategy.next` gives a leader that
+                    // was skipped only for the busy-leader probe another
+                    // chance after every follower is unavailable or has
+                    // replied without a leader hint. This is deliberately
+                    // before cache invalidation: reloading the unchanged
+                    // region from PD would only resume hammering the same
+                    // cached leader.
+                    self.region_cache.get_store_by_id(leader.store_id).await?;
+                    if source_can_restore_suspect_leader(
+                        &selector_state,
+                        leader.id,
+                        leader_epoch_stale,
+                        leader_liveness,
+                    ) {
+                        return self
+                            .map_leader_route(region, &selector_state)
+                            .await
+                            .map(|route| {
+                                route
+                                    .with_busy_threshold(busy_threshold_ms)
+                                    .with_restored_suspect_leader()
+                            });
                     }
                     if !selector_state.has_deadline_exceeded() {
                         self.region_cache
@@ -1408,7 +1454,44 @@ fn source_leader_falls_back_to_follower(
     selector_state: &ReplicaSelectorState,
     leader_peer_id: u64,
 ) -> bool {
-    !selector_state.is_leader_candidate(leader_peer_id)
+    !selector_state.is_leader_selectable(leader_peer_id)
+}
+
+fn source_leader_needs_mixed_fallback(
+    forwarding_enabled: bool,
+    leader_epoch_stale: bool,
+    leader_liveness: Option<StoreLiveness>,
+    selector_state: &ReplicaSelectorState,
+    leader_peer_id: u64,
+) -> bool {
+    leader_epoch_stale
+        || (!forwarding_enabled && leader_liveness != Some(StoreLiveness::Reachable))
+        || source_leader_falls_back_to_follower(selector_state, leader_peer_id)
+}
+
+fn source_can_restore_suspect_leader(
+    selector_state: &ReplicaSelectorState,
+    leader_peer_id: u64,
+    leader_epoch_stale: bool,
+    leader_liveness: Option<StoreLiveness>,
+) -> bool {
+    selector_state.should_probe_busy_leader(leader_peer_id)
+        && selector_state.is_leader_candidate(leader_peer_id)
+        && !leader_epoch_stale
+        && leader_liveness == Some(StoreLiveness::Reachable)
+}
+
+fn source_forwarding_exhausted(
+    forwarding_enabled: bool,
+    leader_liveness: Option<StoreLiveness>,
+    selector_state: &ReplicaSelectorState,
+    leader_peer_id: u64,
+    has_proxy: bool,
+) -> bool {
+    forwarding_enabled
+        && leader_liveness != Some(StoreLiveness::Reachable)
+        && !selector_state.has_no_leader(leader_peer_id)
+        && !has_proxy
 }
 
 fn source_leader_fallback_uses_replica_read(
@@ -1470,6 +1553,121 @@ pub mod test {
         assert!(source_leader_falls_back_to_follower(&deadline, 11));
         assert!(source_leader_fallback_uses_replica_read(&deadline, 11));
         assert!(!source_leader_fallback_uses_replica_read(&hintless, 11));
+    }
+
+    #[test]
+    fn source_unavailable_leader_uses_mixed_selection_without_forwarding() {
+        let state = ReplicaSelectorState::default();
+        assert!(!source_leader_needs_mixed_fallback(
+            false,
+            false,
+            Some(StoreLiveness::Reachable),
+            &state,
+            11,
+        ));
+        for liveness in [
+            None,
+            Some(StoreLiveness::Unknown),
+            Some(StoreLiveness::Unreachable),
+        ] {
+            assert!(source_leader_needs_mixed_fallback(
+                false, false, liveness, &state, 11,
+            ));
+            assert!(!source_leader_needs_mixed_fallback(
+                true, false, liveness, &state, 11,
+            ));
+        }
+        assert!(source_leader_needs_mixed_fallback(
+            true,
+            true,
+            Some(StoreLiveness::Reachable),
+            &state,
+            11,
+        ));
+    }
+
+    #[test]
+    fn source_busy_probe_restores_only_an_eligible_reachable_leader() {
+        let mut selector_state = ReplicaSelectorState::default();
+        selector_state.record_attempt(11);
+        selector_state.record_attempt(11);
+        selector_state.record_busy_leader(11);
+        selector_state.record_busy_leader(11);
+
+        assert!(source_leader_falls_back_to_follower(&selector_state, 11));
+        assert!(source_can_restore_suspect_leader(
+            &selector_state,
+            11,
+            false,
+            Some(StoreLiveness::Reachable),
+        ));
+        assert!(!source_can_restore_suspect_leader(
+            &selector_state,
+            11,
+            true,
+            Some(StoreLiveness::Reachable),
+        ));
+        assert!(!source_can_restore_suspect_leader(
+            &selector_state,
+            11,
+            false,
+            Some(StoreLiveness::Unreachable),
+        ));
+        assert!(!source_can_restore_suspect_leader(
+            &selector_state,
+            12,
+            false,
+            Some(StoreLiveness::Reachable),
+        ));
+
+        selector_state.mark_deadline_exceeded(11);
+        assert!(!source_can_restore_suspect_leader(
+            &selector_state,
+            11,
+            false,
+            Some(StoreLiveness::Reachable),
+        ));
+    }
+
+    #[test]
+    fn source_forwarding_exhausts_only_after_every_unavailable_leader_proxy() {
+        let clean = ReplicaSelectorState::default();
+        for liveness in [
+            None,
+            Some(StoreLiveness::Unknown),
+            Some(StoreLiveness::Unreachable),
+        ] {
+            assert!(source_forwarding_exhausted(
+                true, liveness, &clean, 11, false,
+            ));
+            assert!(!source_forwarding_exhausted(
+                true, liveness, &clean, 11, true,
+            ));
+        }
+        assert!(!source_forwarding_exhausted(
+            true,
+            Some(StoreLiveness::Reachable),
+            &clean,
+            11,
+            false,
+        ));
+        assert!(!source_forwarding_exhausted(
+            false,
+            Some(StoreLiveness::Unreachable),
+            &clean,
+            11,
+            false,
+        ));
+
+        let mut hintless = ReplicaSelectorState::default();
+        hintless.mark_no_leader(11);
+        assert!(!source_forwarding_exhausted(
+            true,
+            Some(StoreLiveness::Unreachable),
+            &hintless,
+            11,
+            false,
+        ));
     }
 
     #[test]

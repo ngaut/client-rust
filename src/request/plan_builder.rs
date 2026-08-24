@@ -156,6 +156,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     /// Select replicas for this read using client-go's region selector. The
     /// setting is retained through shard and retry clones; leader is default.
     pub fn replica_read(mut self, config: ReplicaReadConfig) -> Self {
+        let config = config.for_source_build();
         self.plan.network_stale_read = config.stale_read;
         self.plan.replica_read_config = config;
         self
@@ -887,6 +888,27 @@ mod tests {
                 .max_execution_duration_ms,
             30_000
         );
+    }
+
+    #[test]
+    fn source_plan_builder_applies_nextgen_read_feature_gate_before_cloning() {
+        let requested = ReplicaReadConfig {
+            read_type: crate::kv::ReplicaReadType::PreferLeader,
+            stale_read: true,
+            prefer_leader: true,
+            busy_threshold_ms: 123,
+            ..Default::default()
+        };
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .replica_read(requested.clone());
+        let expected = requested.for_source_build();
+
+        assert_eq!(builder.plan.replica_read_config, expected);
+        assert_eq!(builder.plan.network_stale_read, expected.stale_read);
     }
 
     #[test]

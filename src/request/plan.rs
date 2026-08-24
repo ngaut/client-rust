@@ -1290,7 +1290,7 @@ fn source_fast_server_busy_retry(
         return true;
     };
     threshold_redirect
-        || !selector_state.is_leader_candidate(leader.id)
+        || !selector_state.is_leader_selectable(leader.id)
         || selector_state.is_server_busy(leader.id)
 }
 

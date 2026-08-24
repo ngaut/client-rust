@@ -2814,12 +2814,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .cloned())
     }
 
-    /// Returns a source-compatible forwarding proxy only for a leader known
-    /// to be unreachable. Unknown leader liveness deliberately does not
-    /// authorize forwarding. The returned peer is always a non-leader whose
+    /// Returns a source-compatible forwarding proxy whenever the leader is
+    /// not known reachable. The returned peer is always a non-leader whose
     /// cached store is reachable; callers retain the leader as the logical
-    /// request peer.
-    pub(crate) async fn proxy_for_unreachable_leader(
+    /// request peer. A prior hintless NotLeader bypasses forwarding so mixed
+    /// selection can probe another logical peer directly.
+    pub(crate) async fn proxy_for_unavailable_leader(
         &self,
         region: &RegionWithLeader,
         selector_state: &ReplicaSelectorState,
@@ -2827,7 +2827,9 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let Some(leader) = region.leader.as_ref() else {
             return Ok(None);
         };
-        if self.store_liveness(leader.store_id) != Some(StoreLiveness::Unreachable) {
+        if self.store_liveness(leader.store_id) == Some(StoreLiveness::Reachable)
+            || selector_state.has_no_leader(leader.id)
+        {
             self.set_region_proxy_store(&region.ver_id(), None).await;
             return Ok(None);
         }
@@ -2859,6 +2861,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             })
             .or_else(|| region.region.peers.iter().find(is_proxy_candidate).cloned());
         if proxy.is_none() {
+            self.invalidate_store_epoch_for_region(&region.ver_id(), leader.store_id)
+                .await;
             self.mark_region_reload_on_access(&region.ver_id()).await;
         }
         Ok(proxy)
@@ -4396,7 +4400,7 @@ mod test {
 
         assert!(cache.set_store_liveness(1, StoreLiveness::Unreachable));
         let proxy = cache
-            .proxy_for_unreachable_leader(&region, &ReplicaSelectorState::default())
+            .proxy_for_unavailable_leader(&region, &ReplicaSelectorState::default())
             .await
             .unwrap();
         assert_eq!(proxy, Some(follower));
@@ -4432,13 +4436,32 @@ mod test {
         };
         let mut region = region(1, vec![], vec![]);
         region.region.peers = vec![leader.clone(), first_proxy.clone(), cached_proxy.clone()];
-        region.leader = Some(leader);
+        region.leader = Some(leader.clone());
         cache.add_region(region.clone()).await;
+
+        assert!(cache.set_store_liveness(1, StoreLiveness::Unknown));
+        assert_eq!(
+            cache
+                .proxy_for_unavailable_leader(&region, &ReplicaSelectorState::default())
+                .await
+                .unwrap(),
+            Some(first_proxy.clone())
+        );
+        let mut hintless_not_leader = ReplicaSelectorState::default();
+        hintless_not_leader.mark_no_leader(11);
+        assert_eq!(
+            cache
+                .proxy_for_unavailable_leader(&region, &hintless_not_leader)
+                .await
+                .unwrap(),
+            None
+        );
+
         assert!(cache.set_store_liveness(1, StoreLiveness::Unreachable));
 
         assert_eq!(
             cache
-                .proxy_for_unreachable_leader(&region, &ReplicaSelectorState::default())
+                .proxy_for_unavailable_leader(&region, &ReplicaSelectorState::default())
                 .await
                 .unwrap(),
             Some(first_proxy.clone())
@@ -4450,7 +4473,7 @@ mod test {
         );
         assert_eq!(
             cache
-                .proxy_for_unreachable_leader(&region, &ReplicaSelectorState::default())
+                .proxy_for_unavailable_leader(&region, &ReplicaSelectorState::default())
                 .await
                 .unwrap(),
             Some(cached_proxy.clone())
@@ -4460,7 +4483,7 @@ mod test {
         attempted.record_attempt(cached_proxy.id);
         assert_eq!(
             cache
-                .proxy_for_unreachable_leader(&region, &attempted)
+                .proxy_for_unavailable_leader(&region, &attempted)
                 .await
                 .unwrap(),
             Some(first_proxy.clone())
@@ -4468,10 +4491,15 @@ mod test {
         attempted.record_attempt(first_proxy.id);
         assert_eq!(
             cache
-                .proxy_for_unreachable_leader(&region, &attempted)
+                .proxy_for_unavailable_leader(&region, &attempted)
                 .await
                 .unwrap(),
             None
+        );
+        assert!(
+            cache
+                .store_epoch_is_stale(&region.ver_id(), leader.store_id)
+                .await
         );
         assert!(cache
             .region_cache

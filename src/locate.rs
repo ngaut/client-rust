@@ -483,7 +483,14 @@ impl ReplicaSelectorState {
             Some(MAX_REPLICA_ATTEMPT_TIME),
         ) && !self.deadline_exceeded(peer_id)
             && !self.has_no_leader(peer_id)
-            && !self.should_probe_busy_leader(peer_id)
+    }
+
+    /// Source leader selection treats the busy-probe suspicion as a
+    /// temporary skip layered on top of ordinary leader eligibility. Keeping
+    /// the predicates separate is important because the mixed strategy may
+    /// clear the suspicion and restore an otherwise healthy cached leader.
+    pub(crate) fn is_leader_selectable(&self, peer_id: u64) -> bool {
+        self.is_leader_candidate(peer_id) && !self.should_probe_busy_leader(peer_id)
     }
 
     pub(crate) fn mark_data_is_not_ready(&mut self, peer_id: u64) {
@@ -525,6 +532,13 @@ impl ReplicaSelectorState {
         self.suspect_not_leader.contains(&leader_peer_id)
     }
 
+    /// Clears source's selector-local suspicion after every follower probe is
+    /// exhausted. The shared region cache remains valid and the old leader is
+    /// retried with the ordinary server-busy backoff behavior.
+    pub(crate) fn restore_suspect_leader(&mut self, leader_peer_id: u64) -> bool {
+        self.suspect_not_leader.remove(&leader_peer_id) && self.is_leader_candidate(leader_peer_id)
+    }
+
     /// A concrete replacement leader switches client-go's selector to
     /// leader-read mode when that peer has not already been exhausted.
     pub(crate) fn record_not_leader(&mut self, target_peer_id: u64, leader_peer_id: u64) {
@@ -549,7 +563,7 @@ impl ReplicaSelectorState {
     }
 
     pub(crate) fn should_force_leader(&self, leader_peer_id: u64) -> bool {
-        self.force_leader && self.is_leader_candidate(leader_peer_id)
+        self.force_leader && self.is_leader_selectable(leader_peer_id)
     }
 
     /// A hintless NotLeader reply marks only the current selector's attempted
@@ -631,9 +645,11 @@ impl ReplicaSelectorState {
     }
 
     /// Source stale-read retries switch to a normal replica read once the
-    /// leader has already been attempted and is not marked busy.
+    /// leader has already been attempted and is neither timed out nor busy.
     pub(crate) fn should_retry_stale_as_replica(&self, leader_peer_id: u64) -> bool {
-        self.attempts(leader_peer_id) > 0 && !self.is_server_busy(leader_peer_id)
+        self.attempts(leader_peer_id) > 0
+            && !self.deadline_exceeded(leader_peer_id)
+            && !self.is_server_busy(leader_peer_id)
     }
 }
 
@@ -1003,6 +1019,32 @@ mod tests {
     }
 
     #[test]
+    fn source_suspect_leader_is_temporarily_skipped_then_restored() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        state.record_attempt(1);
+        state.record_busy_leader(1);
+        state.record_busy_leader(1);
+
+        // Go's `isLeaderCandidate` deliberately ignores the temporary
+        // suspect flag; only leader selection applies that extra skip.
+        assert!(state.is_leader_candidate(1));
+        assert!(!state.is_leader_selectable(1));
+        assert!(state.restore_suspect_leader(1));
+        assert!(state.is_leader_selectable(1));
+
+        let mut exhausted = ReplicaSelectorState::default();
+        for _ in 0..10 {
+            exhausted.record_attempt(1);
+        }
+        exhausted.record_busy_leader(1);
+        exhausted.record_busy_leader(1);
+        assert!(!exhausted.restore_suspect_leader(1));
+        assert!(!exhausted.should_probe_busy_leader(1));
+        assert!(!exhausted.is_leader_candidate(1));
+    }
+
+    #[test]
     fn source_not_leader_switches_to_an_untried_concrete_leader() {
         let mut state = ReplicaSelectorState::default();
         state.record_attempt(1);
@@ -1055,6 +1097,11 @@ mod tests {
         assert!(!state.should_retry_stale_as_replica(1));
         state.record_attempt(1);
         assert!(state.should_retry_stale_as_replica(1));
+
+        let mut deadline = state.clone();
+        deadline.mark_deadline_exceeded(1);
+        assert!(!deadline.should_retry_stale_as_replica(1));
+
         state.record_server_busy(1);
         assert!(!state.should_retry_stale_as_replica(1));
     }

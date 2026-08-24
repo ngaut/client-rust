@@ -383,6 +383,12 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         if store.busy_threshold_disabled {
             self.replica_selector_state.disable_busy_threshold();
         }
+        if store.restores_suspect_leader {
+            if let Some(leader) = store.region_with_leader.leader.as_ref() {
+                self.replica_selector_state
+                    .restore_suspect_leader(leader.id);
+            }
+        }
         self.request.apply_store(store).map(|()| {
             self.request
                 .set_buckets_version(store.region_with_leader.buckets_version())
@@ -872,7 +878,7 @@ mod test {
     }
 
     #[test]
-    fn source_dispatch_carries_cached_bucket_version_into_context() {
+    fn source_dispatch_applies_route_metadata_and_restores_suspect_leader() {
         let mut region = RegionWithLeader::default();
         region.region.id = 1;
         region.region.region_epoch = Some(metapb::RegionEpoch {
@@ -891,7 +897,8 @@ mod test {
         });
         let store = RegionStore::new(region, Arc::new(MockKvClient::default()))
             .with_target("proxy:20160")
-            .with_forwarded_host("leader:20160");
+            .with_forwarded_host("leader:20160")
+            .with_restored_suspect_leader();
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
             kv_client: None,
@@ -925,6 +932,12 @@ mod test {
             v1_response_codec: None,
         };
 
+        dispatch.replica_selector_state.record_attempt(2);
+        dispatch.replica_selector_state.record_attempt(2);
+        dispatch.replica_selector_state.record_busy_leader(2);
+        dispatch.replica_selector_state.record_busy_leader(2);
+        assert!(dispatch.replica_selector_state.should_probe_busy_leader(2));
+
         dispatch.apply_store(&store).unwrap();
         assert_eq!(dispatch.request.context.unwrap().buckets_version, 9);
         assert_eq!(dispatch.target, "proxy:20160");
@@ -934,6 +947,7 @@ mod test {
             &dispatch.store_token_count,
             &store.store_token_count
         ));
+        assert!(dispatch.replica_selector_state.is_leader_selectable(2));
     }
 
     #[test]
