@@ -754,6 +754,8 @@ Plan revision note (2026-08-24): added the resolver action counters with a direc
 
 Plan revision note (2026-08-24): extended resolver action metrics at source-visible status classification: final committed/rolled-back and expired lock outcomes increment `expired`; still-live locks increment `not_expired`; and an expired async-commit primary increments `resolve_async_commit` before secondary determination. `wait_expired` remains open because Rust's lock resolver returns live locks rather than client-go's TTL result, and CheckSecondaryLocks remains open because its physical request count is inside the multi-region plan. The focused lock suite passes.
 
+Plan revision note (2026-08-24): added a source-derived bounded async-resolve-pool regression. An isolated five-permit pool proves three admissions, one release, three more admissions to saturation, three inline fallback executions, re-admission after another release, and eventual running-gauge balance. Client-go's close-and-cancel assertion remains open: it belongs to the missing `KVStore`-owned resolver lifecycle, not a global Rust semaphore.
+
 Plan revision note (2026-08-24): corrected lite-region bookkeeping: a key-scoped ResolveLock no longer marks the whole region clean, while async-commit secondary recovery bypasses the ordinary lite decision so its multi-key region cleanup cannot be suppressed after the first key. Lock-module and full 399-test pinned-nightly suites pass.
 
 Plan revision note (2026-08-24): aligned the empty-lock boundary of `ResolveLocksWithOpts`: Rust now returns before requesting a PD timestamp when the input lock list is empty. The full 399-test pinned-nightly suite passes.

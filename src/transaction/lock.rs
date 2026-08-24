@@ -2612,6 +2612,112 @@ mod tests {
         drop(permits);
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn source_async_resolve_pool_releases_capacity_and_falls_back() {
+        const TEST_TASK_KIND: &str = "source_pool_test";
+        const TEST_FALLBACK_ACTION: &str = "source_pool_test_fallback";
+        let semaphore = Arc::new(Semaphore::new(5));
+        let running_before = crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND);
+        let fallback_before = crate::stats::lock_resolver_action_count(TEST_FALLBACK_ACTION);
+        let latches = (0..6)
+            .map(|_| Arc::new(tokio::sync::Notify::new()))
+            .collect::<Vec<_>>();
+
+        for latch in latches.iter().take(3) {
+            let latch = Arc::clone(latch);
+            assert!(schedule_read_cleanup_task_with_semaphore(
+                Arc::clone(&semaphore),
+                async move { latch.notified().await },
+                TEST_TASK_KIND,
+                TEST_FALLBACK_ACTION,
+            )
+            .await
+            .is_some());
+        }
+        assert_eq!(
+            crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND),
+            running_before + 3.0
+        );
+
+        latches[1].notify_one();
+        for _ in 0..10 {
+            if crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND)
+                == running_before + 2.0
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND),
+            running_before + 2.0
+        );
+
+        for latch in latches.iter().skip(3).take(3) {
+            let latch = Arc::clone(latch);
+            assert!(schedule_read_cleanup_task_with_semaphore(
+                Arc::clone(&semaphore),
+                async move { latch.notified().await },
+                TEST_TASK_KIND,
+                TEST_FALLBACK_ACTION,
+            )
+            .await
+            .is_some());
+        }
+        assert_eq!(
+            crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND),
+            running_before + 5.0
+        );
+
+        for _ in 0..3 {
+            assert!(schedule_read_cleanup_task_with_semaphore(
+                Arc::clone(&semaphore),
+                async {},
+                TEST_TASK_KIND,
+                TEST_FALLBACK_ACTION,
+            )
+            .await
+            .is_none());
+        }
+        assert_eq!(
+            crate::stats::lock_resolver_action_count(TEST_FALLBACK_ACTION),
+            fallback_before + 3
+        );
+
+        latches[3].notify_one();
+        for _ in 0..10 {
+            if crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND)
+                == running_before + 4.0
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(schedule_read_cleanup_task_with_semaphore(
+            Arc::clone(&semaphore),
+            async {},
+            TEST_TASK_KIND,
+            TEST_FALLBACK_ACTION,
+        )
+        .await
+        .is_some());
+
+        for latch in latches {
+            latch.notify_one();
+        }
+        for _ in 0..10 {
+            if crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND) <= running_before {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND),
+            running_before
+        );
+    }
+
     #[test]
     fn source_read_resolution_classifies_ignore_and_read_through_transaction_ids() {
         let read_locks = ReadLockContext::default();
