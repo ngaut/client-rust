@@ -2,13 +2,14 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use fail::fail_point;
 use log::debug;
 use log::error;
 use log::warn;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 
 use crate::backoff::Backoff;
@@ -43,6 +44,15 @@ use crate::Result;
 pub(crate) fn format_key_for_log(key: &[u8]) -> String {
     let prefix_len = key.len().min(16);
     format!("len={}, prefix={}", key.len(), HexRepr(&key[..prefix_len]))
+}
+
+/// client-go's `txnlock.ResolvedCacheSize`.
+const RESOLVED_CACHE_SIZE: usize = 2048;
+
+#[derive(Default)]
+struct ResolvedStatusCache {
+    statuses: HashMap<u64, Arc<TransactionStatus>>,
+    insertion_order: VecDeque<u64>,
 }
 
 /// Extract the lock carried by a TiKV key error.
@@ -352,7 +362,7 @@ async fn resolve_lock_with_retry(
 #[derive(Default, Clone)]
 pub struct ResolveLocksContext {
     // Record the status of each transaction.
-    pub(crate) resolved: Arc<RwLock<HashMap<u64, Arc<TransactionStatus>>>>,
+    resolved: Arc<Mutex<ResolvedStatusCache>>,
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
     pub(crate) rpc_interceptor: Option<RpcInterceptorChain>,
     pub(crate) resource_group_name: Option<String>,
@@ -377,11 +387,31 @@ impl Default for ResolveLocksOptions {
 
 impl ResolveLocksContext {
     pub async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
-        self.resolved.read().await.get(&txn_id).cloned()
+        self.resolved.lock().await.statuses.get(&txn_id).cloned()
     }
 
     pub async fn save_resolved(&mut self, txn_id: u64, txn_status: Arc<TransactionStatus>) {
-        self.resolved.write().await.insert(txn_id, txn_status);
+        assert!(
+            txn_status.is_cacheable(),
+            "only determined transaction statuses may enter the resolved cache"
+        );
+        let mut cache = self.resolved.lock().await;
+        if let Some(existing) = cache.statuses.get(&txn_id) {
+            assert!(
+                same_determined_status(existing, &txn_status),
+                "conflicting determined status for transaction {txn_id}"
+            );
+            return;
+        }
+        cache.statuses.insert(txn_id, txn_status);
+        cache.insertion_order.push_back(txn_id);
+        if cache.statuses.len() > RESOLVED_CACHE_SIZE {
+            let oldest = cache
+                .insertion_order
+                .pop_front()
+                .expect("nonempty status cache has an insertion order");
+            cache.statuses.remove(&oldest);
+        }
     }
 
     pub async fn is_region_cleaned(&self, txn_id: u64, region: &RegionVerId) -> bool {
@@ -400,6 +430,16 @@ impl ResolveLocksContext {
             .entry(txn_id)
             .or_insert_with(HashSet::new)
             .insert(region);
+    }
+}
+
+fn same_determined_status(left: &TransactionStatus, right: &TransactionStatus) -> bool {
+    match (&left.kind, &right.kind) {
+        (TransactionStatusKind::RolledBack, TransactionStatusKind::RolledBack) => true,
+        (TransactionStatusKind::Committed(left), TransactionStatusKind::Committed(right)) => {
+            left.version() == right.version()
+        }
+        _ => false,
     }
 }
 
@@ -893,6 +933,30 @@ mod tests {
             extract_locks_from_key_error(&kvrpcpb::KeyError::default()),
             Err(Error::KeyError(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn source_resolved_status_cache_is_fifo_and_bounded() {
+        let mut context = ResolveLocksContext::default();
+        for txn_id in 0..=RESOLVED_CACHE_SIZE as u64 {
+            context
+                .save_resolved(
+                    txn_id,
+                    Arc::new(TransactionStatus {
+                        kind: TransactionStatusKind::Committed(Timestamp::from_version(txn_id + 1)),
+                        action: kvrpcpb::Action::NoAction,
+                        is_expired: false,
+                    }),
+                )
+                .await;
+        }
+
+        assert!(context.get_resolved(0).await.is_none());
+        assert!(context.get_resolved(1).await.is_some());
+        assert!(context
+            .get_resolved(RESOLVED_CACHE_SIZE as u64)
+            .await
+            .is_some());
     }
 
     #[rstest::rstest]
