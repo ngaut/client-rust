@@ -546,7 +546,6 @@ where
         tokio::spawn(async move {
             let mut route = route;
             let mut last_resolve = std::time::Instant::now();
-            let mut liveness = StoreLiveness::Unreachable;
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let Some(client) = client.upgrade() else {
@@ -558,16 +557,11 @@ where
                 }
                 if last_resolve.elapsed() >= STORE_RE_RESOLVE_INTERVAL {
                     last_resolve = std::time::Instant::now();
-                    client.region_cache.invalidate_store_cache(store_id).await;
-                    match client.region_cache.get_store_by_id(store_id).await {
+                    match client.region_cache.refresh_store_by_id(store_id).await {
                         Ok(store) => {
                             let endpoint_type = crate::store::EndpointType::from_store(&store);
                             route.target = store.address;
                             route.physical_endpoint_type = endpoint_type;
-                            // The refreshed entry begins reachable by default,
-                            // but source keeps its prior liveness until this
-                            // loop's next Health/Check result is known.
-                            client.region_cache.set_store_liveness(store_id, liveness);
                         }
                         Err(error) => {
                             log::debug!(
@@ -576,7 +570,7 @@ where
                         }
                     }
                 }
-                liveness = client.request_store_liveness(&route).await;
+                let liveness = client.request_store_liveness(&route).await;
                 client.region_cache.set_store_liveness(store_id, liveness);
                 if liveness == StoreLiveness::Reachable {
                     client.region_cache.finish_store_health_check(store_id);

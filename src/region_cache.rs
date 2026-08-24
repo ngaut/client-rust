@@ -1412,17 +1412,20 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             region_cache_guard.on_my_way_id.insert(id, notify.clone());
         }
 
-        let region = self.inner_client.clone().get_region_by_id(id).await?;
-        self.add_region(region.clone()).await;
+        let result = self.inner_client.clone().get_region_by_id(id).await;
+        if let Ok(region) = &result {
+            self.add_region(region.clone()).await;
+        }
 
-        // notify others
+        // Notify waiters even when PD failed. Leaving the singleflight entry
+        // behind would strand every subsequent by-ID lookup indefinitely.
         {
             let mut region_cache_guard = self.region_cache.write().await;
             notify.notify_waiters();
             region_cache_guard.on_my_way_id.remove(&id);
         }
 
-        Ok(region)
+        result
     }
 
     async fn read_through_store_by_id(&self, id: StoreId) -> Result<Store> {
@@ -1435,6 +1438,13 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             }
         }
         Ok(store)
+    }
+
+    /// Source `Store.reResolve` updates address, peer/status addresses, type,
+    /// and labels on the existing cache entry. Health, liveness, failure
+    /// epoch, token/load state, and in-flight references must survive.
+    pub(crate) async fn refresh_store_by_id(&self, id: StoreId) -> Result<Store> {
+        self.read_through_store_by_id(id).await
     }
 
     /// Insert a PD region unless it is older than the cached region epoch.
@@ -2275,6 +2285,7 @@ mod test {
         pub get_region_with_buckets_count: AtomicU64,
         pub get_region_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
         pub get_prev_region_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
+        pub get_region_by_id_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
         pub batch_scan_count: AtomicU64,
         pub batch_scan_unimplemented: AtomicBool,
         pub batch_scan_options: StdMutex<Vec<RegionScanOptions>>,
@@ -2345,6 +2356,9 @@ mod test {
             region_id: crate::region::RegionId,
         ) -> Result<crate::region::RegionWithLeader> {
             self.get_region_count.fetch_add(1, SeqCst);
+            if let Some(response) = self.get_region_by_id_responses.lock().await.pop_front() {
+                return response;
+            }
             self.regions
                 .lock()
                 .await
@@ -2407,9 +2421,15 @@ mod test {
 
         async fn get_store(
             self: Arc<Self>,
-            _id: crate::region::StoreId,
+            id: crate::region::StoreId,
         ) -> Result<crate::proto::metapb::Store> {
-            todo!()
+            self.stores
+                .lock()
+                .await
+                .iter()
+                .find(|store| store.id == id)
+                .cloned()
+                .ok_or_else(|| Error::StringError("MockRetryClient: store not found".to_owned()))
         }
 
         async fn get_all_stores(self: Arc<Self>) -> Result<Vec<crate::proto::metapb::Store>> {
@@ -2540,6 +2560,24 @@ mod test {
         assert_eq!(cache.get_region_by_id(2).await?.leader.unwrap().store_id, 2);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_by_id_singleflight_is_released_after_pd_failure() {
+        let client = Arc::new(MockRetryClient::default());
+        client.get_region_by_id_responses.lock().await.extend([
+            Err(Error::StringError("injected PD failure".to_owned())),
+            Ok(region_with_leader(42, b"a", b"b")),
+        ]);
+        let cache = RegionCache::new(client);
+
+        assert_eq!(
+            cache.get_region_by_id(42).await.unwrap_err().to_string(),
+            "injected PD failure"
+        );
+        assert!(cache.region_cache.read().await.on_my_way_id.is_empty());
+        assert_eq!(cache.get_region_by_id(42).await.unwrap().id(), 42);
+        assert!(cache.region_cache.read().await.on_my_way_id.is_empty());
     }
 
     #[tokio::test]
@@ -3051,6 +3089,64 @@ mod test {
         );
         cache.tick_store_health(start + std::time::Duration::from_secs(15));
         assert_eq!(cache.store_health(9).unwrap().tikv_side_slow_score, 35);
+    }
+
+    #[tokio::test]
+    async fn source_store_reresolve_updates_metadata_without_resetting_runtime_state() -> Result<()>
+    {
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.push(metapb::Store {
+            id: 7,
+            address: "old-address".to_owned(),
+            peer_address: "old-peer".to_owned(),
+            status_address: "old-status".to_owned(),
+            labels: vec![metapb::StoreLabel {
+                key: "zone".to_owned(),
+                value: "old".to_owned(),
+            }],
+            ..Default::default()
+        });
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(7).await?.address, "old-address");
+        let health = cache.store_health_status(7).unwrap();
+        cache.record_health_feedback(&crate::proto::kvrpcpb::HealthFeedback {
+            store_id: 7,
+            slow_score: 80,
+            ..Default::default()
+        });
+        assert!(cache.set_store_liveness(7, StoreLiveness::Unreachable));
+        cache.record_server_load(7, 1_000);
+        cache.store_cache.read().unwrap()[&7]
+            .epoch
+            .store(9, std::sync::atomic::Ordering::Release);
+
+        *client.stores.lock().await = vec![metapb::Store {
+            id: 7,
+            address: "new-address".to_owned(),
+            peer_address: "new-peer".to_owned(),
+            status_address: "new-status".to_owned(),
+            labels: vec![metapb::StoreLabel {
+                key: "zone".to_owned(),
+                value: "new".to_owned(),
+            }],
+            ..Default::default()
+        }];
+        let refreshed = cache.refresh_store_by_id(7).await?;
+        assert_eq!(refreshed.address, "new-address");
+        assert_eq!(refreshed.peer_address, "new-peer");
+        assert_eq!(refreshed.status_address, "new-status");
+        assert_eq!(refreshed.labels[0].value, "new");
+        assert!(Arc::ptr_eq(&health, &cache.store_health_status(7).unwrap()));
+        assert_eq!(cache.store_health(7).unwrap().tikv_side_slow_score, 80);
+        assert_eq!(cache.store_liveness(7), Some(StoreLiveness::Unreachable));
+        assert_eq!(
+            cache.store_cache.read().unwrap()[&7]
+                .epoch
+                .load(std::sync::atomic::Ordering::Acquire),
+            9
+        );
+        assert!(cache.estimated_store_wait(7).unwrap() > Duration::ZERO);
+        Ok(())
     }
 
     #[test]
