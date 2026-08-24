@@ -15,6 +15,7 @@ use log::debug;
 use log::error;
 use log::warn;
 use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 use crate::backoff::Backoff;
@@ -613,7 +614,7 @@ async fn schedule_read_lock_cleanup(
     let resource_group_name = context.resource_group_name.clone();
     let resource_control = context.resource_control.clone();
     let ru_details = context.ru_details.clone();
-    let resolve = async move {
+    let resolve = Box::pin(async move {
         let _ = resolve_lock_with_retry_for_read_cleanup(
             &key,
             start_version,
@@ -633,9 +634,10 @@ async fn schedule_read_lock_cleanup(
             Backoff::no_jitter_backoff(2, 500, 87),
         )
         .await;
-    };
+    });
 
-    schedule_read_cleanup_task(resolve, "read_resolve", "read_async_resolve_fallback").await;
+    let _ =
+        schedule_read_cleanup_task(resolve, "read_resolve", "read_async_resolve_fallback").await;
 }
 
 /// Resolve the collected lite keys once per current region. The source defers
@@ -659,27 +661,29 @@ async fn schedule_read_lite_cleanup(
     let resource_group_name = context.resource_group_name.clone();
     let resource_control = context.resource_control.clone();
     let ru_details = context.ru_details.clone();
-    let resolve = async move {
-        let _ = resolve_lite_locks_with_retry_for_read_cleanup(
-            &keys,
-            &primary_lock,
+    let resolve = Box::pin(async move {
+        schedule_grouped_read_cleanup(
+            keys,
+            primary_lock,
             true,
             start_version,
             commit_version,
             is_txn_file,
             pd_client,
             keyspace,
-            keyspace_name.as_deref(),
+            keyspace_name,
             rpc_interceptor,
-            resource_group_name.as_deref(),
+            resource_group_name,
             resource_control,
             ru_details,
-            Backoff::no_jitter_backoff(2, 500, 87),
+            "read_resolve",
+            "read_async_resolve_fallback",
         )
         .await;
-    };
+    });
 
-    schedule_read_cleanup_task(resolve, "read_resolve", "read_async_resolve_fallback").await;
+    let _ =
+        schedule_read_cleanup_task(resolve, "read_resolve", "read_async_resolve_fallback").await;
 }
 
 /// Expired async-commit recovery determines the full transaction outcome, so
@@ -703,11 +707,104 @@ async fn schedule_read_async_commit_cleanup(
     let resource_group_name = context.resource_group_name.clone();
     let resource_control = context.resource_control.clone();
     let ru_details = context.ru_details.clone();
-    let resolve = async move {
+    let resolve = Box::pin(async move {
+        schedule_grouped_read_cleanup(
+            keys,
+            primary_lock,
+            false,
+            start_version,
+            commit_version,
+            is_txn_file,
+            pd_client,
+            keyspace,
+            keyspace_name,
+            rpc_interceptor,
+            resource_group_name,
+            resource_control,
+            ru_details,
+            "resolve_async_commit_region",
+            "async_resolve_async_commit_region_fallback",
+        )
+        .await;
+    });
+
+    let _ = schedule_read_cleanup_task(
+        resolve,
+        "resolve_async_commit",
+        "async_resolve_async_commit_fallback",
+    )
+    .await;
+}
+
+async fn schedule_read_cleanup_task<F>(
+    resolve: F,
+    task_kind: &'static str,
+    fallback_action: &'static str,
+) -> Option<JoinHandle<()>>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    schedule_read_cleanup_task_with_semaphore(
+        ASYNC_READ_RESOLVE_LOCKS.clone(),
+        resolve,
+        task_kind,
+        fallback_action,
+    )
+    .await
+}
+
+async fn schedule_read_cleanup_task_with_semaphore<F>(
+    semaphore: Arc<Semaphore>,
+    resolve: F,
+    task_kind: &'static str,
+    fallback_action: &'static str,
+) -> Option<JoinHandle<()>>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    match semaphore.try_acquire_owned() {
+        Ok(permit) => {
+            stats::add_lock_resolver_async_running_tasks(task_kind, 1);
+            Some(tokio::spawn(async move {
+                let _permit = permit;
+                resolve.await;
+                stats::add_lock_resolver_async_running_tasks(task_kind, -1);
+            }))
+        }
+        Err(_) => {
+            stats::increment_lock_resolver_action(fallback_action);
+            resolve.await;
+            None
+        }
+    }
+}
+
+/// client-go schedules one task to group a multi-key cleanup, then fans its
+/// region RPCs back out through the same bounded pool. Each child retains the
+/// native per-key retry and regrouping behavior when a region changes.
+#[allow(clippy::too_many_arguments)]
+async fn schedule_grouped_read_cleanup(
+    keys: Vec<Vec<u8>>,
+    primary_lock: Vec<u8>,
+    skip_checked_primary: bool,
+    start_version: u64,
+    commit_version: u64,
+    is_txn_file: bool,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<String>,
+    rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<String>,
+    resource_control: Option<ResourceGroupControllerHandle>,
+    ru_details: Option<Arc<crate::RuDetails>>,
+    region_task_kind: &'static str,
+    region_fallback_action: &'static str,
+) {
+    if keys.len() == 1 {
         let _ = resolve_lite_locks_with_retry_for_read_cleanup(
             &keys,
             &primary_lock,
-            false,
+            skip_checked_primary,
             start_version,
             commit_version,
             is_txn_file,
@@ -721,36 +818,57 @@ async fn schedule_read_async_commit_cleanup(
             Backoff::no_jitter_backoff(2, 500, 87),
         )
         .await;
-    };
+        return;
+    }
 
-    schedule_read_cleanup_task(
-        resolve,
-        "resolve_async_commit",
-        "async_resolve_async_commit_fallback",
-    )
-    .await;
-}
+    let mut regions: HashMap<RegionVerId, Vec<Vec<u8>>> = HashMap::new();
+    for key in &keys {
+        let Ok(store) = pd_client.clone().store_for_key(&key.clone().into()).await else {
+            return;
+        };
+        regions
+            .entry(store.region_with_leader.ver_id())
+            .or_default()
+            .push(key.clone());
+    }
 
-async fn schedule_read_cleanup_task<F>(
-    resolve: F,
-    task_kind: &'static str,
-    fallback_action: &'static str,
-) where
-    F: Future<Output = ()> + Send + 'static,
-{
-    match ASYNC_READ_RESOLVE_LOCKS.clone().try_acquire_owned() {
-        Ok(permit) => {
-            stats::add_lock_resolver_async_running_tasks(task_kind, 1);
-            tokio::spawn(async move {
-                let _permit = permit;
-                resolve.await;
-                stats::add_lock_resolver_async_running_tasks(task_kind, -1);
-            });
+    let mut region_tasks = Vec::with_capacity(regions.len());
+    for region_keys in regions.into_values() {
+        let primary_lock = primary_lock.clone();
+        let pd_client = pd_client.clone();
+        let keyspace_name = keyspace_name.clone();
+        let rpc_interceptor = rpc_interceptor.clone();
+        let resource_group_name = resource_group_name.clone();
+        let resource_control = resource_control.clone();
+        let ru_details = ru_details.clone();
+        let resolve = async move {
+            let _ = resolve_lite_locks_with_retry_for_read_cleanup(
+                &region_keys,
+                &primary_lock,
+                false,
+                start_version,
+                commit_version,
+                is_txn_file,
+                pd_client,
+                keyspace,
+                keyspace_name.as_deref(),
+                rpc_interceptor,
+                resource_group_name.as_deref(),
+                resource_control,
+                ru_details,
+                Backoff::no_jitter_backoff(2, 500, 87),
+            )
+            .await;
+        };
+        if let Some(task) =
+            schedule_read_cleanup_task(resolve, region_task_kind, region_fallback_action).await
+        {
+            region_tasks.push(task);
         }
-        Err(_) => {
-            stats::increment_lock_resolver_action(fallback_action);
-            resolve.await;
-        }
+    }
+
+    for task in region_tasks {
+        let _ = task.await;
     }
 }
 
@@ -2416,46 +2534,56 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn source_read_cleanup_metrics_track_running_tasks_and_fallbacks() {
+        // Ordinary read-cleanup regressions intentionally leave their
+        // detached task unjoined, so use a test-only label that concurrent
+        // library tests never touch.
+        const TEST_TASK_KIND: &str = "source_metrics_test";
+        const TEST_FALLBACK_ACTION: &str = "source_metrics_test_fallback";
+        let semaphore = Arc::new(Semaphore::new(1));
+        let running_before = crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND);
         let started = Arc::new(tokio::sync::Notify::new());
         let started_by_task = Arc::clone(&started);
         let release = Arc::new(tokio::sync::Notify::new());
         let release_by_task = Arc::clone(&release);
-        schedule_read_cleanup_task(
+        schedule_read_cleanup_task_with_semaphore(
+            Arc::clone(&semaphore),
             async move {
                 started_by_task.notify_one();
                 release_by_task.notified().await;
             },
-            "read_resolve",
-            "read_async_resolve_fallback",
+            TEST_TASK_KIND,
+            TEST_FALLBACK_ACTION,
         )
         .await;
         tokio::time::timeout(Duration::from_secs(1), started.notified())
             .await
             .expect("detached cleanup task should start");
         assert_eq!(
-            crate::stats::lock_resolver_async_running_tasks("read_resolve"),
-            1.0
+            crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND),
+            running_before + 1.0
         );
         release.notify_one();
         for _ in 0..10 {
-            if crate::stats::lock_resolver_async_running_tasks("read_resolve") == 0.0 {
+            if crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND) <= running_before {
                 break;
             }
             tokio::task::yield_now().await;
         }
-        assert_eq!(
-            crate::stats::lock_resolver_async_running_tasks("read_resolve"),
-            0.0
-        );
+        assert!(crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND) <= running_before);
 
-        let permits = ASYNC_READ_RESOLVE_LOCKS
-            .clone()
-            .try_acquire_many_owned(ASYNC_READ_RESOLVE_LOCK_LIMIT as u32)
-            .expect("test owns every cleanup permit");
-        let before = crate::stats::lock_resolver_action_count("read_async_resolve_fallback");
-        schedule_read_cleanup_task(async {}, "read_resolve", "read_async_resolve_fallback").await;
+        let permits = Arc::clone(&semaphore)
+            .try_acquire_owned()
+            .expect("test owns its cleanup permit");
+        let before = crate::stats::lock_resolver_action_count(TEST_FALLBACK_ACTION);
+        schedule_read_cleanup_task_with_semaphore(
+            semaphore,
+            async {},
+            TEST_TASK_KIND,
+            TEST_FALLBACK_ACTION,
+        )
+        .await;
         assert_eq!(
-            crate::stats::lock_resolver_action_count("read_async_resolve_fallback"),
+            crate::stats::lock_resolver_action_count(TEST_FALLBACK_ACTION),
             before + 1
         );
         drop(permits);
