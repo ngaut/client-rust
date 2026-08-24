@@ -94,6 +94,8 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 interceptor: None,
                 execution_details_trace_handler:
                     crate::trace::current_execution_details_trace_handler(),
+                network_traffic_details: crate::traffic::current_network_traffic_details(),
+                network_stale_read: false,
                 resource_control: None,
                 response_codec,
                 v1_response_codec,
@@ -149,6 +151,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     /// Select replicas for this read using client-go's region selector. The
     /// setting is retained through shard and retry clones; leader is default.
     pub fn replica_read(mut self, config: ReplicaReadConfig) -> Self {
+        self.plan.network_stale_read = config.stale_read;
         self.plan.replica_read_config = config;
         self
     }
@@ -733,6 +736,19 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     ru_details: Option<Arc<crate::RuDetails>>,
 ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
     plan.request.set_leader(&store.request_region())?;
+    plan.request.set_replica_read(store.is_replica_read());
+    plan.request.set_stale_read(store.stale_read);
+    plan.request.set_busy_threshold_ms(store.busy_threshold_ms);
+    plan.request
+        .set_buckets_version(store.region_with_leader.buckets_version());
+    plan.network_stale_read |= store.stale_read;
+    plan.resource_control_replica_number = store.resource_control_replica_number;
+    plan.resource_control_access_location = store.resource_control_access_location;
+    plan.store_token_count = store.store_token_count;
+    plan.store_token_store_id = store.target_peer.as_ref().map_or(0, |peer| peer.store_id);
+    if store.busy_threshold_disabled {
+        plan.replica_selector_state.disable_busy_threshold();
+    }
     plan.kv_client = Some(store.client);
     plan.target = store.target;
     plan.forwarded_host = store.forwarded_host;

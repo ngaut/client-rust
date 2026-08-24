@@ -181,6 +181,54 @@ pub(crate) fn increment_store_limit_error(address: &str, store_id: u64) {
         .inc();
 }
 
+pub(crate) fn observe_stale_read_request(size: u64, cross_zone: bool) {
+    let zone = if cross_zone { "cross-zone" } else { "local" };
+    TIKV_STALE_READ_BYTES
+        .with_label_values(&[zone, "out"])
+        .inc_by(size);
+    TIKV_STALE_READ_REQUESTS.with_label_values(&[zone]).inc();
+}
+
+pub(crate) fn observe_stale_read_response(size: u64, cross_zone: bool) {
+    let zone = if cross_zone { "cross-zone" } else { "local" };
+    TIKV_STALE_READ_BYTES
+        .with_label_values(&[zone, "in"])
+        .inc_by(size);
+}
+
+pub(crate) fn observe_read_request_bytes(
+    size: u64,
+    follower: bool,
+    access_location: crate::kv::AccessLocationType,
+) {
+    let location = match access_location {
+        crate::kv::AccessLocationType::LocalZone => "local",
+        crate::kv::AccessLocationType::CrossZone => "cross-zone",
+        crate::kv::AccessLocationType::Unknown | crate::kv::AccessLocationType::Other(_) => return,
+    };
+    TIKV_READ_REQUEST_BYTES
+        .with_label_values(&[if follower { "follower" } else { "leader" }, location])
+        .observe(size as f64);
+}
+
+#[cfg(test)]
+pub(crate) fn stale_read_request_count(zone: &str) -> u64 {
+    TIKV_STALE_READ_REQUESTS.with_label_values(&[zone]).get()
+}
+
+#[cfg(test)]
+pub(crate) fn stale_read_bytes(zone: &str, direction: &str) -> u64 {
+    TIKV_STALE_READ_BYTES
+        .with_label_values(&[zone, direction])
+        .get()
+}
+
+#[cfg(test)]
+pub(crate) fn read_request_bytes_samples(replica: &str, location: &str) -> (u64, f64) {
+    let metric = TIKV_READ_REQUEST_BYTES.with_label_values(&[replica, location]);
+    (metric.get_sample_count(), metric.get_sample_sum())
+}
+
 /// Source `TiKVGRPCConnTransientFailureCounter`, observed immediately before
 /// sending on a selected non-batch connection already known to be transient.
 pub(crate) fn increment_grpc_connection_transient_failure(address: &str, store_id: u64) {
@@ -741,6 +789,24 @@ lazy_static::lazy_static! {
         "tikv_client_go_get_store_limit_token_error_total",
         "Store token is up to the limit, probably because the store is hot or unavailable",
         &["address", "store"]
+    )
+    .unwrap();
+    static ref TIKV_STALE_READ_REQUESTS: IntCounterVec = register_int_counter_vec!(
+        "tikv_client_go_stale_read_req_counter",
+        "Counter of stale read requests",
+        &["type"]
+    )
+    .unwrap();
+    static ref TIKV_STALE_READ_BYTES: IntCounterVec = register_int_counter_vec!(
+        "tikv_client_go_stale_read_bytes",
+        "Counter of stale read request bytes",
+        &["result", "direction"]
+    )
+    .unwrap();
+    static ref TIKV_READ_REQUEST_BYTES: HistogramVec = register_histogram_vec!(
+        "tikv_client_go_read_request_bytes",
+        "Summary-compatible read request byte observations",
+        &["type", "result"]
     )
     .unwrap();
     static ref TIKV_GRPC_CONNECTION_STATE: GaugeVec = register_gauge_vec!(

@@ -118,6 +118,10 @@ pub struct Dispatch<Req: KvRequest> {
     /// Task-scoped execution-detail trace sink captured before this dispatch
     /// may move into a fan-out task.
     pub(crate) execution_details_trace_handler: Option<crate::trace::ExecutionDetailsTraceHandler>,
+    pub(crate) network_traffic_details: Option<Arc<crate::traffic::NetworkTrafficDetails>>,
+    /// Original request invariant retained when a stale read falls back to a
+    /// normal leader read after meeting a lock.
+    pub(crate) network_stale_read: bool,
     /// Optional client-go-compatible resource-group controller applied before
     /// the user interceptor and settled after a successful response.
     pub resource_control: Option<ResourceGroupControllerHandle>,
@@ -218,6 +222,19 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
             None => next().await,
         };
+        let network_collector = crate::traffic::NetworkCollector {
+            stale_read: self.network_stale_read || self.replica_read_config.stale_read,
+            access_location: self.resource_control_access_location,
+            endpoint_type: self.physical_endpoint_type,
+            details: self
+                .network_traffic_details
+                .clone()
+                .or_else(crate::traffic::current_network_traffic_details),
+        };
+        network_collector.on_request(&request);
+        if let Ok(response) = &result {
+            network_collector.on_response(&request, response.as_ref());
+        }
         let result = match result {
             Ok(response) => {
                 if let Some(selected) = selected_resource_control {
@@ -2071,7 +2088,7 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 
 #[cfg(test)]
 mod test {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -2085,9 +2102,69 @@ mod test {
     use crate::proto::kvrpcpb;
     use crate::proto::kvrpcpb::BatchGetResponse;
     use crate::request::PlanBuilder;
+    use crate::store::Request;
 
     fn region_store() -> RegionStore {
         RegionStore::new(MockPdClient::region1(), Arc::new(MockKvClient::default()))
+    }
+
+    #[tokio::test]
+    async fn physical_dispatch_collects_task_scoped_network_traffic() {
+        let observed_request_size = Arc::new(AtomicU64::new(0));
+        let hook_size = observed_request_size.clone();
+        let client = MockKvClient::with_dispatch_hook(move |request| {
+            let request = request.downcast_ref::<kvrpcpb::GetRequest>().unwrap();
+            hook_size.store(request.network_request_size(), Ordering::SeqCst);
+            Ok(Box::new(kvrpcpb::GetResponse {
+                value: b"value".to_vec(),
+                ..Default::default()
+            }))
+        });
+        let details = Arc::new(crate::traffic::NetworkTrafficDetails::default());
+        let captured = details.clone();
+        crate::traffic::with_network_traffic_details(details.clone(), async move {
+            let route = RegionStore::new(MockPdClient::region1(), Arc::new(client))
+                .with_resource_control_access_location(
+                    "zone-a",
+                    &crate::proto::metapb::Store {
+                        labels: vec![crate::proto::metapb::StoreLabel {
+                            key: "zone".to_owned(),
+                            value: "zone-b".to_owned(),
+                        }],
+                        ..Default::default()
+                    },
+                )
+                .with_stale_read(true);
+            PlanBuilder::new(
+                Arc::new(MockPdClient::default()),
+                Keyspace::Disable,
+                kvrpcpb::GetRequest {
+                    key: b"key".to_vec(),
+                    ..Default::default()
+                },
+            )
+            .replica_read(crate::kv::ReplicaReadConfig {
+                stale_read: true,
+                ..Default::default()
+            })
+            .single_region_with_store(route)
+            .await
+            .unwrap()
+            .plan()
+            .execute()
+            .await
+            .unwrap();
+        })
+        .await;
+
+        let snapshot = captured.snapshot();
+        assert_eq!(
+            snapshot.sent_kv_total,
+            observed_request_size.load(Ordering::SeqCst) as i64
+        );
+        assert_eq!(snapshot.sent_kv_cross_zone, snapshot.sent_kv_total);
+        assert_eq!(snapshot.received_kv_total, 7);
+        assert_eq!(snapshot.received_kv_cross_zone, 7);
     }
 
     #[tokio::test]

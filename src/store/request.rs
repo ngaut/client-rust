@@ -260,6 +260,48 @@ pub trait Request: Any + Sync + Send + 'static {
         0
     }
 
+    /// Source `tikvrpc.Request.GetSize` intentionally covers only this
+    /// historical command subset; other protobuf requests report zero even
+    /// though their wire encoding has a size.
+    fn network_request_size(&self) -> u64 {
+        if matches!(
+            self.label(),
+            "kv_get"
+                | "kv_batch_get"
+                | "kv_scan"
+                | "coprocessor"
+                | "kv_prewrite"
+                | "kv_commit"
+                | "kv_pessimistic_lock"
+                | "kv_pessimistic_rollback"
+                | "kv_batch_rollback"
+                | "kv_check_secondary_locks_request"
+                | "kv_scan_lock"
+                | "kv_resolve_lock"
+                | "kv_flush"
+                | "kv_check_txn_status"
+                | "dispatch_mpp_task"
+        ) {
+            self.encoded_request_size()
+        } else {
+            0
+        }
+    }
+
+    /// Source `isReadReq` classification used only by replica-read byte
+    /// observations, not the broader resource-control read/write split.
+    fn is_network_read_request(&self) -> bool {
+        matches!(
+            self.label(),
+            "kv_get"
+                | "kv_batch_get"
+                | "kv_scan"
+                | "coprocessor"
+                | "batch_coprocessor"
+                | "coprocessor_stream"
+        )
+    }
+
     /// Apply the source transport-level codec after observability has consumed
     /// the physical response. Most Rust requests decode in their typed plan;
     /// stream wrappers use this hook because they cannot implement `KvRequest`
@@ -376,6 +418,39 @@ pub(crate) fn exec_details_v2(response: &dyn Any) -> Option<&kvrpcpb::ExecDetail
             .and_then(|response| response.exec_details_v2.as_ref());
     }
     None
+}
+
+/// Source `tikvrpc.Response.GetSize` matrix. Keep this deliberately narrower
+/// than all generated response types: unlisted commands report zero.
+pub(crate) fn network_response_size(response: &dyn Any) -> u64 {
+    macro_rules! response_size {
+        ($($response:ty),+ $(,)?) => {
+            $(
+                if let Some(response) = response.downcast_ref::<$response>() {
+                    return response.encoded_len() as u64;
+                }
+            )+
+        };
+    }
+    response_size!(
+        kvrpcpb::GetResponse,
+        kvrpcpb::BatchGetResponse,
+        kvrpcpb::ScanResponse,
+        coprocessor::Response,
+        kvrpcpb::PrewriteResponse,
+        kvrpcpb::CommitResponse,
+        kvrpcpb::PessimisticLockResponse,
+        kvrpcpb::PessimisticRollbackResponse,
+        kvrpcpb::BatchRollbackResponse,
+        kvrpcpb::CheckSecondaryLocksResponse,
+        kvrpcpb::ScanLockResponse,
+        kvrpcpb::ResolveLockResponse,
+        kvrpcpb::FlushResponse,
+        kvrpcpb::CheckTxnStatusResponse,
+        mpp::MppDataPacket,
+        mpp::DispatchTaskResponse,
+    );
+    0
 }
 
 fn with_forwarded_host<T>(
