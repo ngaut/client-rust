@@ -263,7 +263,10 @@ pub(crate) async fn resolve_locks_with_context(
                                 lock.lock_version,
                                 commit_version,
                                 lock.is_txn_file,
-                                lock.txn_size,
+                                // Async-commit recovery supplies the complete
+                                // region key set itself; it must not use the
+                                // ordinary single-key lite path.
+                                u64::MAX,
                                 pd_client.clone(),
                                 keyspace,
                                 keyspace_name,
@@ -347,10 +350,12 @@ pub(crate) async fn resolve_locks_with_context(
                 OPTIMISTIC_BACKOFF,
             )
             .await?;
-            clean_regions
-                .entry(lock.lock_version)
-                .or_default()
-                .insert(cleaned_region);
+            if !resolve_lite {
+                clean_regions
+                    .entry(lock.lock_version)
+                    .or_default()
+                    .insert(cleaned_region);
+            }
         }
     }
     Ok(live_locks)
