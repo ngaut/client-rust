@@ -737,3 +737,5 @@ Plan revision note (2026-08-24): added a direct source-derived Prewrite shard re
 Plan revision note (2026-08-24): added the paired resolver regression: a transaction one below the configured lite threshold emits ResolveLock with exactly the observed key. The focused regression and full 401-test pinned-nightly library suite pass.
 
 Plan revision note (2026-08-24): added the source lite-primary regression: a small primary lock with a final CheckTxnStatus result dispatches no ResolveLock request. The focused regression and full 402-test pinned-nightly library suite pass.
+
+Plan revision note (2026-08-24): covered the strict lite threshold boundary: TxnSize equal to the configured threshold retains an empty-key, region-level ResolveLock request; only smaller transactions use key-scoped resolution. The focused regression and full 403-test pinned-nightly library suite pass.

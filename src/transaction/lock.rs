@@ -1356,6 +1356,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_lite_threshold_itself_uses_region_resolution() {
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                let req = req
+                    .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                    .expect("expected ResolveLock request");
+                assert!(req.keys.is_empty());
+                Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let key = vec![1];
+        resolve_lock_with_retry(
+            &key,
+            1,
+            2,
+            false,
+            get_global_config().tikv_client.resolve_lock_lite_threshold,
+            client,
+            Keyspace::Disable,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Backoff::no_jitter_backoff(0, 0, 1),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn source_lite_primary_skips_resolve_lock_after_status_check() {
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |req: &dyn Any| {
