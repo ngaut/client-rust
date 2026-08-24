@@ -151,6 +151,10 @@ pub use config::RawApiVersion;
 #[doc(inline)]
 pub use config::TxnLocalLatches;
 #[doc(inline)]
+pub use proto::kvrpcpb::RequestOrigin;
+#[doc(inline)]
+pub use store::{get_default_request_origin, set_default_request_origin};
+#[doc(inline)]
 pub use util::RuDetails;
 
 #[doc(inline)]

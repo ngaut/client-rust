@@ -34,7 +34,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `rawkv` | `src/raw` | in-progress | Full source/integration inventory audited: `rawkv.go`, `rawkv_test.go`, `test_prob.go`, and `integration_tests/raw/{api_mock_test.go,api_test.go,util_test.go,tikv-v1ttl.toml,tikv-v2.toml}`. Initial end-to-end RawChecksum support, source-compatible positional RawBatchGet values, 512-key and 16 KiB batch boundaries, end-inclusive reverse-scan region traversal and empty unbounded-upper behavior, arbitrary column-family pass-through/reset, chainable in-place `SetColumnFamily(string)` and reversible `SetAtomicForCAS(bool)` semantics (alongside Rust clone builders), retained PD cluster ID, shared PD accessor and consuming close lifecycle, V1/V1TTL/V2 constructor selection (V1TTL correctly emits V1 request context), source-exact server execution-duration contexts, BatchPutWithTTL validation/defaulting and legacy first-TTL wire compatibility, source-exact atomic BatchDelete and flagless DeleteRange dispatch, no-dispatch empty bounded DeleteRange behavior, unbounded multi-region DeleteRange sharding, point read/CAS server-error propagation, and source 10,240 scan-limit guards are present. Scoped `raw_ttl` live validation was attempted on 2026-08-23, but no `PD_ADDRS` was configured and the default `127.0.0.1:2379` refused the connection before setup; live coverage remains required in an available TiKV/PD environment. Completion still requires every raw API/options/error path and source test/support artifact. |
 | `testutils` | Rust test support | seed | The sole 61-line file is an alias/factory façade over `internal/mockstore/cluster` and `internal/mockstore/mocktikv`; completion must follow the concrete mocktikv implementation rather than invent empty aliases. |
 | `tikv` | `src/{pd,region_cache,request,store}`, `src/transaction/client.rs`, `src/async_util.rs` | seed | Atomic inventory: production `backoff.go` (101), `client.go` (73), `compatible_txn_safe_point_loader.go` (139), `gc.go` (423), `interface.go` (91), `kv.go` (1,093), `logutil.go` (32), `pool.go` (45), `region.go` (281), `safepoint.go` (243), `split_region.go` (417), `unionstore_export.go` (68), plus production test hooks `failpoint_export.go` (23), `test_probe.go` (267), and `test_util.go` (153); tests `kv_test.go` (417) and goleak `main_test.go` (29). There are no package-local non-Go fixtures, generated inputs, or build variants. Rust already has compatible client construction, PD/region cache ownership, pool/run-loop support, GC/safepoint RPC primitives, unsafe range deletion, and SplitRegion transport, but not the source `KVStore` lifecycle, compatible transaction-safe-point loader, full GC worker/service-safe-point flow, split/scatter orchestration, public region/store interfaces, hooks, or original tests. Completion is downstream of `internal/client`, `internal/locate`, `tikvrpc`, and `txnkv/transaction`; this is an assessed seed, not a package claim. |
-| `tikvrpc` | `src/store/{command,endpoint,request}.rs`, generated proto, request plans | seed | `endpoint.go` is source-mapped and reused by region-cache store filtering: engine labels select TiKV, TiFlash, TiDB, or TiFlash-compute classification exactly. `tikvrpc.go` command IDs/names plus debug, interruptibility, Green-GC, transactional-write, and raw-write classification are also represented (with source iota offsets). Typed batch request/response enums map every concrete branch in client-go's `ToBatchCommandsRequest` and `FromBatchCommandsResponse` switches to/from the generated oneofs, preserving its unknown-empty error and impossible unsupported-response invariant. The typed transport covers source unary Register/RemoveLockObserver, GetHealthFeedback, BroadcastTxnStatus, MPP Cancel/IsAlive, Compact (including its non-context API/keyspace fields), and GetTiFlashSystemTable. The dynamic command wrapper, context-cloning matrix, generated-command inventory, high-level caller ownership, and bidirectional batch/stream transport plus test/leak artifacts remain unassessed; this is not a package receipt. |
+| `tikvrpc` | `src/store/{command,endpoint,errors,request}.rs`, `src/lib.rs` exports, request plans/routing, generated protocol bindings | complete | Complete package receipt below and full six-artifact/protocol/symbol/test/consumer mapping in [`tikvrpc-source-artifact-audit.md`](tikvrpc-source-artifact-audit.md). Every command, route, context, batch, unary/debug/stream, size/detail/error, endpoint, origin, start-TS, tagger, timeout/close, original-test, generated-list, and 74-consumer boundary is accounted for. Typed payloads and owned snapshots replace Go's unchecked dynamic wrapper and revision race without weakening behavior; unfinished high-level consumers retain their own rows. |
 | `tikvrpc/interceptor` | `src/interceptor.rs`, transaction/snapshot dispatch plans | complete | Receipt below; native async wrappers preserve ordered onion execution, duplicate-name replacement, chain flattening, transaction/snapshot set/add APIs, and physical-RPC dispatch integration. |
 | `trace` | `src/trace.rs` | complete | Receipt below; flags, categories, independently replaceable global hooks, typed contexts/fields, trace IDs, defaults, resets, and all original tests are covered. |
 | `txnkv` | `src/transaction/{client,mod,snapshot,lock,priority}.rs`, `src/lib.rs` exports | seed | Complete root-package inventory: production `client.go` (138), `lock_export.go` (41), `snapshot_export.go` (61), `transaction_export.go` (58), and `util_export.go` (27); compile-only `client_test.go` (25); no package-local generated/build/fixture artifact. Rust exposes the native transaction client, current timestamp, keyspace-configured construction, lock resolver, snapshot, priority, and transaction APIs, but does not yet own client-go's single `tikv.KVStore` wrapper, API-version/safe-point-prefix construction topology, or close-time txn-file idle-connection cleanup. The dependent transaction, snapshot, lock, and high-level `tikv` package receipts remain required before this root package can be complete. |
@@ -95,6 +95,51 @@ Validation on `nightly-2026-08-22`:
     # all eight inputs byte-identical
 
 The pinned Go tests were inspected but not re-executed because this host has no Go toolchain. Deterministic byte/protobuf behavior needs no live cluster; final API-v1/API-v2 cross-client validation remains mandatory on the incomplete high-level `tikv`, `rawkv`, locate, snapshot, and transaction rows.
+
+## Complete package receipt: `tikvrpc`
+
+Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`; required protocol pin: `kvproto@059694ae4472276644613acccefa24cbc89d959f`.
+
+The complete six-file/2,624-line inventory, source and protocol SHA-256 identities, generated-command decision, per-symbol mapping, every original test, and all 74 importing Go files are recorded in [`tikvrpc-source-artifact-audit.md`](tikvrpc-source-artifact-audit.md). There is no other package-local source, build/platform variant, fixture, benchmark, example, metadata, or build file; `tikvrpc/interceptor` remains a separately completed child package.
+
+Rust now preserves every continued-`iota` command value, name, alias, and classification; all 54 ordinary/debug physical routes; exact 42-command generated context registry plus CopStream and MPP/Empty special cases; process-wide default origin; owned context replacement and relocation-safe batch snapshots; all batch request/response oneofs including Empty; narrow size/detail/error matrices; all 37 concrete region-error response types; 22 start-timestamp branches; typed response-address and request-tagger carriers; four endpoint types and engine labels; and unary, BatchCommands, Cop/BatchCop/MPP stream timeout/first-response/close behavior. Static payload types replace Go's unchecked `interface{}` assertions, and per-receive Tokio deadlines replace the grpc-go lease-scanner task. The CopStream bypass branch consumes its one-time RPC count while leaving server details and RU totals untouched.
+
+Validation on `nightly-2026-08-22`:
+
+    cargo +nightly-2026-08-22 test -p tikv-client store::request::tests --lib
+    # 14 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client store::command::tests --lib
+    # 8 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client store::endpoint::tests --lib
+    # 2 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client store::errors::test::source_gen_region_error_response_matrix_is_complete --lib
+    # 1 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet
+    # 541 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet
+    # 541 passed; 0 failed
+
+    cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features
+    # passed with the existing warning backlog
+
+    cargo +nightly-2026-08-22 doc -p tikv-client --all-features --no-deps
+    # passed with two pre-existing unrelated rustdoc warnings
+
+    cargo +nightly-2026-08-22 fmt --all -- --check
+    git diff --check
+    # passed
+
+    for proto in coprocessor debugpb errorpb kvrpcpb metapb mpp tikvpb; do
+        cmp "proto/$proto.proto" "/private/tmp/kvproto-client-go-pin/proto/$proto.proto"
+    done
+    # all seven direct inputs byte-identical
+
+The pinned Go tests were inspected but not re-executed because this host has no Go toolchain. No live cluster is needed for the deterministic command/context/codec behavior or for stream behavior already exercised by the completed loopback transport receipt. Locate, raw, snapshot, transaction, and high-level `tikv` behavior remain on their own non-complete rows and the final differential cluster gate.
 
 ## Complete package receipt: `config/retry`
 
