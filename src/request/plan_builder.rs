@@ -344,6 +344,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                     resolve_locks_context
                 },
                 read_lock_context: None,
+                snapshot_runtime_stats: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -364,6 +365,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         keyspace: Keyspace,
         read_lock_context: ReadLockContext,
         mut resolve_locks_context: ResolveLocksContext,
+        snapshot_runtime_stats: Option<Arc<crate::SnapshotRuntimeStats>>,
     ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
         P: Shardable,
@@ -390,6 +392,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                     resolve_locks_context
                 },
                 read_lock_context: Some(read_lock_context),
+                snapshot_runtime_stats,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,

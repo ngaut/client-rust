@@ -500,6 +500,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc_interceptor.clone(),
             self.snapshot_runtime_stats.clone(),
         );
+        let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -553,6 +554,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     keyspace,
                     read_lock_context,
                     lock_resolver_context,
+                    snapshot_runtime_stats,
                 )
                 .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(CollectSingle)
@@ -587,6 +589,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc_interceptor.clone(),
             self.snapshot_runtime_stats.clone(),
         );
+        let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -645,6 +648,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         keyspace,
                         read_lock_context,
                         lock_resolver_context,
+                        snapshot_runtime_stats,
                     )
                     .retry_multi_region(DEFAULT_REGION_BACKOFF)
                     .merge(CollectSingle)
@@ -781,6 +785,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc_interceptor.clone(),
             self.snapshot_runtime_stats.clone(),
         );
+        let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -846,6 +851,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     keyspace,
                     read_lock_context,
                     lock_resolver_context,
+                    snapshot_runtime_stats,
                 )
                 .retry_multi_region(retry_options.region_backoff)
                 .merge(Collect)
@@ -883,6 +889,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc_interceptor.clone(),
             self.snapshot_runtime_stats.clone(),
         );
+        let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -953,6 +960,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         keyspace,
                         read_lock_context,
                         lock_resolver_context,
+                        snapshot_runtime_stats,
                     )
                     .retry_multi_region(retry_options.region_backoff)
                     .plan();
@@ -1006,6 +1014,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc_interceptor.clone(),
             self.snapshot_runtime_stats.clone(),
         );
+        let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -1066,6 +1075,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             keyspace,
             read_lock_context,
             lock_resolver_context,
+            snapshot_runtime_stats,
         )
         .retry_multi_region(retry_options.region_backoff)
         .merge(Collect)
@@ -1648,6 +1658,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.rpc_interceptor.clone(),
             self.snapshot_runtime_stats.clone(),
         );
+        let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -1727,6 +1738,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                             keyspace,
                             read_lock_context.clone(),
                             lock_resolver_context.clone(),
+                            snapshot_runtime_stats.clone(),
                         )
                         .retry_multi_region(retry_options.region_backoff.clone())
                         .merge(Collect)
@@ -4123,6 +4135,7 @@ mod tests {
                     return Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>);
                 }
                 if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    std::thread::sleep(Duration::from_millis(2));
                     return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
                         commit_version: 2,
                         ..Default::default()
@@ -4140,9 +4153,13 @@ mod tests {
             TransactionOptions::new_optimistic().read_only(),
             Keyspace::Disable,
         );
+        let stats = Arc::new(crate::SnapshotRuntimeStats::new());
+        txn.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
 
         assert_eq!(txn.get("read".to_owned()).await.unwrap(), Some(Vec::new()));
         assert_eq!(get_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(stats.rpc_count(crate::SnapshotRpcCommand::Get), 2);
+        assert!(stats.resolve_lock_duration() >= Duration::from_millis(2));
     }
 
     #[tokio::test]

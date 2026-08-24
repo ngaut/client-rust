@@ -48,6 +48,7 @@ struct SnapshotRuntimeStatsInner {
     rpc: BTreeMap<SnapshotRpcCommand, RpcRuntimeStat>,
     scan_detail: SnapshotScanDetail,
     time_detail: SnapshotTimeDetail,
+    resolve_lock_duration: Duration,
 }
 
 /// Aggregated TiKV MVCC/RocksDB scan details returned with snapshot reads.
@@ -224,6 +225,14 @@ impl SnapshotRuntimeStats {
             .clone()
     }
 
+    /// Return time spent resolving locks encountered by this snapshot's reads.
+    pub fn resolve_lock_duration(&self) -> Duration {
+        self.inner
+            .lock()
+            .expect("snapshot stats lock poisoned")
+            .resolve_lock_duration
+    }
+
     /// Merge another collector into this one, matching client-go's
     /// `SnapshotRuntimeStats.Merge` ownership model.
     pub fn merge(&self, other: &Self) {
@@ -240,6 +249,7 @@ impl SnapshotRuntimeStats {
         }
         inner.scan_detail.merge(&other.scan_detail);
         inner.time_detail.merge(&other.time_detail);
+        inner.resolve_lock_duration += other.resolve_lock_duration;
     }
 
     pub(crate) fn interceptor(self: &Arc<Self>) -> Arc<dyn RpcInterceptor> {
@@ -263,6 +273,13 @@ impl SnapshotRuntimeStats {
         inner
             .time_detail
             .merge_from_pb(detail.time_detail_v2.as_ref(), detail.time_detail.as_ref());
+    }
+
+    pub(crate) fn record_resolve_lock(&self, duration: Duration) {
+        self.inner
+            .lock()
+            .expect("snapshot stats lock poisoned")
+            .resolve_lock_duration += duration;
     }
 }
 
@@ -378,6 +395,7 @@ mod tests {
             }),
             ..Default::default()
         });
+        stats.record_resolve_lock(Duration::from_millis(6));
         let cloned = stats.clone();
         stats.record_rpc(SnapshotRpcCommand::Get, Duration::from_millis(2));
 
@@ -388,6 +406,7 @@ mod tests {
         );
         assert_eq!(cloned.time_detail().process_time, Duration::from_millis(4));
         assert_eq!(cloned.scan_detail().processed_keys, 5);
+        assert_eq!(cloned.resolve_lock_duration(), Duration::from_millis(6));
 
         cloned.merge(&stats);
         assert_eq!(cloned.rpc_count(SnapshotRpcCommand::Get), 3);
@@ -397,5 +416,6 @@ mod tests {
         );
         assert_eq!(cloned.time_detail().process_time, Duration::from_millis(8));
         assert_eq!(cloned.scan_detail().processed_keys, 10);
+        assert_eq!(cloned.resolve_lock_duration(), Duration::from_millis(12));
     }
 }

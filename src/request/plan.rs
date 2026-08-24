@@ -54,6 +54,7 @@ use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
 use crate::transaction::ResolvingLocksGuard;
+use crate::transaction::SnapshotRuntimeStats;
 use crate::util::iter::FlatMapOkIterExt;
 use crate::Error;
 use crate::Result;
@@ -1449,6 +1450,8 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub ru_details: Option<Arc<crate::RuDetails>>,
     pub(crate) resolve_locks_context: ResolveLocksContext,
     pub(crate) read_lock_context: Option<ReadLockContext>,
+    /// Present only for snapshot reads that enabled runtime statistics.
+    pub(crate) snapshot_runtime_stats: Option<Arc<SnapshotRuntimeStats>>,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1466,6 +1469,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             ru_details: self.ru_details.clone(),
             resolve_locks_context: self.resolve_locks_context.clone(),
             read_lock_context: self.read_lock_context.clone(),
+            snapshot_runtime_stats: self.snapshot_runtime_stats.clone(),
         }
     }
 }
@@ -1508,6 +1512,7 @@ where
             clone.disable_stale_read_after_lock();
 
             let pd_client = self.pd_client.clone();
+            let started = self.snapshot_runtime_stats.as_ref().map(|_| Instant::now());
             let lock_result = match &self.read_lock_context {
                 Some(read_lock_context) => {
                     resolve_locks_for_read_with_context_result(
@@ -1519,7 +1524,7 @@ where
                         self.resolve_locks_context.clone(),
                         read_lock_context,
                     )
-                    .await?
+                    .await
                 }
                 None => {
                     resolve_locks_with_context_result(
@@ -1530,9 +1535,13 @@ where
                         self.keyspace_name.as_deref(),
                         self.resolve_locks_context.clone(),
                     )
-                    .await?
+                    .await
                 }
             };
+            if let (Some(stats), Some(started)) = (&self.snapshot_runtime_stats, started) {
+                stats.record_resolve_lock(started.elapsed());
+            }
+            let lock_result = lock_result?;
             let live_locks = lock_result.live_locks;
             if live_locks.is_empty() {
                 result = clone.execute_inner().await?;
@@ -2713,6 +2722,7 @@ mod test {
                 ru_details: None,
                 resolve_locks_context: ResolveLocksContext::default(),
                 read_lock_context: None,
+                snapshot_runtime_stats: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),
