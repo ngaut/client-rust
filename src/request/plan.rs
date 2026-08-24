@@ -1614,6 +1614,8 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub(crate) snapshot_runtime_stats: Option<Arc<SnapshotRuntimeStats>>,
     /// Snapshot reads own client-go's cumulative `txnLockFast` state.
     pub(crate) snapshot_lock_backoff: Option<SnapshotLockBackoff>,
+    /// Leave pair-level locks in the response for scanner-owned point reads.
+    pub(crate) response_locks_only: bool,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1633,6 +1635,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             read_lock_context: self.read_lock_context.clone(),
             snapshot_runtime_stats: self.snapshot_runtime_stats.clone(),
             snapshot_lock_backoff: self.snapshot_lock_backoff.clone(),
+            response_locks_only: self.response_locks_only,
         }
     }
 }
@@ -1649,7 +1652,11 @@ where
         let mut resolving_locks_guard: Option<ResolvingLocksGuard> = None;
         let mut result = clone.execute_inner().await?;
         loop {
-            let locks = result.take_locks();
+            let locks = if clone.response_locks_only {
+                result.take_response_locks()
+            } else {
+                result.take_locks()
+            };
             if locks.is_empty() {
                 return Ok(result);
             }
@@ -2920,6 +2927,7 @@ mod test {
                 read_lock_context: None,
                 snapshot_runtime_stats: None,
                 snapshot_lock_backoff: None,
+                response_locks_only: false,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),

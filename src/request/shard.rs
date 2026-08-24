@@ -13,6 +13,8 @@ use crate::request::plan::CleanupLocks;
 use crate::request::Dispatch;
 use crate::request::KvRequest;
 use crate::request::Plan;
+use crate::request::Process;
+use crate::request::ProcessResponse;
 use crate::request::ResolveLock;
 use crate::store::RegionStore;
 use crate::store::Request;
@@ -186,6 +188,14 @@ pub trait Shardable {
     fn disable_stale_read_after_lock(&mut self) -> bool {
         false
     }
+}
+
+impl<P, Pr> Shardable for ProcessResponse<P, Pr>
+where
+    P: Plan + Shardable,
+    Pr: Process<P::Result>,
+{
+    impl_inner_shardable!();
 }
 
 pub trait Batchable {

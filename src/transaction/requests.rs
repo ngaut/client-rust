@@ -43,6 +43,7 @@ use crate::store::RegionStore;
 use crate::store::Request;
 use crate::store::Store;
 use crate::store::{region_stream_for_keys, region_stream_for_range};
+use crate::store::{HasKeyErrors, HasRegionError};
 use crate::timestamp::TimestampExt;
 use crate::transaction::requests::kvrpcpb::prewrite_request::PessimisticAction;
 use crate::transaction::HasLocks;
@@ -70,6 +71,14 @@ macro_rules! pair_locks {
                     .filter_map(|pair| pair.error.as_mut().and_then(|error| error.locked.take()))
                     .collect()
             }
+
+            fn take_response_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+                self.error
+                    .as_mut()
+                    .and_then(|error| error.locked.take())
+                    .into_iter()
+                    .collect()
+            }
         }
     };
 }
@@ -85,6 +94,10 @@ macro_rules! error_locks {
                     .and_then(|error| error.locked.take())
                     .into_iter()
                     .collect()
+            }
+
+            fn take_response_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+                self.take_locks()
             }
         }
     };
@@ -355,6 +368,58 @@ impl Merge<kvrpcpb::ScanResponse> for Collect {
         input
             .into_iter()
             .flat_map_ok(|resp| resp.pairs.into_iter().map(Into::into))
+            .collect()
+    }
+}
+
+/// Scan response whose pair errors remain available to the snapshot scanner.
+/// Region retry may inspect only the response-level error; pair errors are
+/// source-owned iterator entries and are recovered with point reads.
+#[derive(Clone)]
+pub(crate) struct ScannerBatchResponse {
+    pub(crate) pairs: Vec<kvrpcpb::KvPair>,
+    region_error: Option<crate::proto::errorpb::Error>,
+    error: Option<kvrpcpb::KeyError>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PreserveScannerPairErrors;
+
+impl Process<kvrpcpb::ScanResponse> for PreserveScannerPairErrors {
+    type Out = ScannerBatchResponse;
+
+    fn process(&self, input: Result<kvrpcpb::ScanResponse>) -> Result<Self::Out> {
+        let response = input?;
+        Ok(ScannerBatchResponse {
+            pairs: response.pairs,
+            region_error: response.region_error,
+            error: response.error,
+        })
+    }
+}
+
+impl HasKeyErrors for ScannerBatchResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        self.error.take().map(|error| vec![error.into()])
+    }
+}
+
+impl HasRegionError for ScannerBatchResponse {
+    fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
+        self.region_error.take()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CollectScannerPairs;
+
+impl Merge<ScannerBatchResponse> for CollectScannerPairs {
+    type Out = Vec<kvrpcpb::KvPair>;
+
+    fn merge(&self, input: Vec<Result<ScannerBatchResponse>>) -> Result<Self::Out> {
+        input
+            .into_iter()
+            .flat_map_ok(|response| response.pairs)
             .collect()
     }
 }

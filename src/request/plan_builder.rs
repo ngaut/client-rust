@@ -347,6 +347,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 read_lock_context: None,
                 snapshot_runtime_stats: None,
                 snapshot_lock_backoff: None,
+                response_locks_only: false,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -360,6 +361,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// Resolve locks encountered by a snapshot read. Unlike a mutation,
     /// client-go reissues the read with TiKV's resolved/committed-lock hints
     /// instead of waiting for secondary-lock cleanup.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn resolve_lock_for_read(
         self,
         timestamp: Timestamp,
@@ -400,6 +402,59 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                     snapshot_variables,
                 )),
                 snapshot_runtime_stats,
+                response_locks_only: false,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Resolve only a response-level snapshot lock. Pair-level errors remain
+    /// attached for the scanner to recover with key-local point reads.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_response_lock_for_read(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+        keyspace: Keyspace,
+        read_lock_context: ReadLockContext,
+        mut resolve_locks_context: ResolveLocksContext,
+        snapshot_runtime_stats: Option<Arc<crate::SnapshotRuntimeStats>>,
+        snapshot_variables: Arc<crate::Variables>,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    where
+        P: Shardable,
+        P::Result: HasLocks,
+    {
+        resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
+        resolve_locks_context.resource_group_name = self.resource_group_name.clone();
+        resolve_locks_context.resource_control = self.resource_control.clone();
+        resolve_locks_context.ru_details = self.ru_details.clone();
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: ResolveLock {
+                inner: self.plan,
+                timestamp,
+                backoff,
+                pd_client: self.pd_client,
+                keyspace,
+                keyspace_name: self.keyspace_name.clone(),
+                rpc_interceptor: self.rpc_interceptor.clone(),
+                resource_group_name: self.resource_group_name.clone(),
+                resource_control: self.resource_control.clone(),
+                ru_details: self.ru_details.clone(),
+                resolve_locks_context,
+                read_lock_context: Some(read_lock_context),
+                snapshot_lock_backoff: Some(SnapshotLockBackoff::new(
+                    snapshot_runtime_stats.clone(),
+                    snapshot_variables,
+                )),
+                snapshot_runtime_stats,
+                response_locks_only: true,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -485,6 +540,27 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             plan: ProcessResponse {
                 inner: self.plan,
                 processor: DefaultProcessor,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Transform one plan response before a later routing/retry stage.
+    pub(crate) fn process<Pr>(self, processor: Pr) -> PlanBuilder<PdC, ProcessResponse<P, Pr>, Ph>
+    where
+        P: Plan,
+        Pr: Process<P::Result>,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: ProcessResponse {
+                inner: self.plan,
+                processor,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
