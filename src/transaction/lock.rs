@@ -555,6 +555,13 @@ impl LockResolver {
             };
         }
 
+        // Source `BatchResolveLocks` returns immediately when every lock was
+        // already handled by its per-region deduplication cache. Do not emit
+        // an empty BatchResolveLock RPC.
+        if txn_infos.is_empty() {
+            return Ok(());
+        }
+
         debug!(
             "batch resolve locks, region:{:?}, txn:{:?}",
             store.region_with_leader.ver_id(),
@@ -948,6 +955,34 @@ mod tests {
             .await
             .is_some());
         assert!(context.clone().get_resolved(1).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_skips_an_empty_batch_resolve() {
+        let region = MockPdClient::region1();
+        let mut context = ResolveLocksContext::default();
+        context.save_cleaned_region(7, region.ver_id()).await;
+        let mut resolver = LockResolver::new(context);
+        let store = RegionStore::new(
+            region,
+            Arc::new(MockKvClient::with_dispatch_hook(|_| {
+                panic!("an already-clean lock must not send BatchResolveLock")
+            })),
+        );
+
+        resolver
+            .cleanup_locks(
+                store,
+                vec![kvrpcpb::LockInfo {
+                    lock_version: 7,
+                    ..Default::default()
+                }],
+                Arc::new(MockPdClient::default()),
+                Keyspace::Disable,
+                None,
+            )
+            .await
+            .unwrap();
     }
 
     #[rstest::rstest]
