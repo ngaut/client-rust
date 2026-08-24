@@ -301,6 +301,8 @@ async fn resolve_locks_with_context_inner(
                 };
 
                 if let Some((secondary_keys, primary_min_commit_ts)) = async_primary {
+                    stats::increment_lock_resolver_action("expired");
+                    stats::increment_lock_resolver_action("resolve_async_commit");
                     let mut secondary_status = lock_resolver
                         .check_all_secondaries(
                             pd_client.clone(),
@@ -418,6 +420,7 @@ async fn resolve_locks_with_context_inner(
                 }
                 match &status.kind {
                     TransactionStatusKind::Committed(ts) => {
+                        stats::increment_lock_resolver_action("expired");
                         let commit_version = ts.version();
                         if let Some(read_lock_context) = read_lock_context {
                             schedule_or_collect_read_lite_cleanup(
@@ -443,6 +446,7 @@ async fn resolve_locks_with_context_inner(
                         Some(commit_version)
                     }
                     TransactionStatusKind::RolledBack => {
+                        stats::increment_lock_resolver_action("expired");
                         if let Some(read_lock_context) = read_lock_context {
                             schedule_or_collect_read_lite_cleanup(
                                 &mut read_lite_cleanups,
@@ -466,6 +470,11 @@ async fn resolve_locks_with_context_inner(
                                 read_lock_context.add_resolved(lock.lock_version);
                                 continue;
                             }
+                        }
+                        if status.is_expired {
+                            stats::increment_lock_resolver_action("expired");
+                        } else {
+                            stats::increment_lock_resolver_action("not_expired");
                         }
                         live_locks.push(lock_info.clone());
                         None
