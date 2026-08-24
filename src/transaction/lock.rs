@@ -629,6 +629,15 @@ impl LockResolver {
                 )
                 .await?;
 
+            // client-go's BatchResolveLocks handles pessimistic locks after
+            // their status check with PessimisticRollback. They must not be
+            // included in the ordinary batch ResolveLock transaction list.
+            if l.lock_type == kvrpcpb::Op::PessimisticLock as i32 {
+                self.resolve_pessimistic_lock(pd_client.clone(), keyspace, keyspace_name, &l)
+                    .await?;
+                continue;
+            }
+
             // If the transaction uses async commit, check_txn_status will reject rolling back the primary lock.
             // Then we need to check the secondary locks to determine the final status of the transaction.
             let async_primary = match &status.kind {
@@ -1151,6 +1160,60 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_pessimistic_lock_uses_rollback_not_batch_resolve() {
+        let rollback_count = Arc::new(AtomicUsize::new(0));
+        let rollback_count_captured = rollback_count.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .is_some()
+                {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if req
+                    .downcast_ref::<kvrpcpb::PessimisticRollbackRequest>()
+                    .is_some()
+                {
+                    rollback_count_captured.fetch_add(1, Ordering::SeqCst);
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                assert!(req.downcast_ref::<kvrpcpb::ResolveLockRequest>().is_none());
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        let store = RegionStore::new(
+            MockPdClient::region1(),
+            Arc::new(MockKvClient::with_dispatch_hook(|_| {
+                panic!("pessimistic cleanup must not send BatchResolveLock")
+            })),
+        );
+        let mut resolver = LockResolver::new(ResolveLocksContext::default());
+        resolver
+            .cleanup_locks(
+                store,
+                vec![kvrpcpb::LockInfo {
+                    key: vec![2],
+                    primary_lock: vec![1],
+                    lock_version: 1,
+                    lock_type: kvrpcpb::Op::PessimisticLock as i32,
+                    ..Default::default()
+                }],
+                client,
+                Keyspace::Disable,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(rollback_count.load(Ordering::SeqCst), 1);
     }
 
     #[rstest::rstest]
