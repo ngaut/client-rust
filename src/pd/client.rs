@@ -1049,6 +1049,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         enable_codec: bool,
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
+        Cl: Send + Sync + 'static,
         PdFut: Future<Output = Result<RetryClient<Cl>>>,
         MakeKvC: FnOnce(Arc<SecurityManager>) -> KvC,
         MakePd: FnOnce(Arc<SecurityManager>) -> PdFut,
@@ -1073,6 +1074,8 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         let kv_client_closed = Default::default();
         let store_token_counts = Default::default();
         crate::kv::STORE_LIMIT.store(config.tikv_client.store_limit, Ordering::Relaxed);
+        let region_cache = Arc::new(RegionCache::new(pd.clone()));
+        region_cache.start_background_gc();
         Ok(PdRpcClient {
             pd: pd.clone(),
             kv_client_cache,
@@ -1086,7 +1089,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             zone_label: config.zone_label,
             security_mgr,
             store_liveness_timeout,
-            region_cache: Arc::new(RegionCache::new(pd)),
+            region_cache,
         })
     }
 
@@ -1131,7 +1134,10 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
 
     /// Retires all pooled TiKV clients and prevents future connections. This
     /// is the owning counterpart of client-go `RPCClient.Close`.
-    pub async fn close(&self) {
+    pub async fn close(&self)
+    where
+        Cl: Send + Sync + 'static,
+    {
         if self.kv_client_closed.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -1146,6 +1152,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         for client in retired {
             client.close();
         }
+        self.region_cache.close_background_gc().await;
     }
 }
 

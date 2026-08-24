@@ -11,7 +11,9 @@ use log::debug;
 use rand::Rng;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 
+use crate::async_util::Cancellation;
 use crate::common::Error;
 use crate::kv::ReplicaReadType;
 use crate::locate::{
@@ -36,6 +38,8 @@ use crate::Result;
 const MAX_RETRY_WAITING_CONCURRENT_REQUEST: usize = 4;
 const REGION_CACHE_TTL_SECS: i64 = 600;
 const REGION_CACHE_TTL_JITTER_SECS: i64 = 60;
+const CLEAN_CACHE_INTERVAL: Duration = Duration::from_secs(1);
+const CLEAN_REGION_NUM_PER_ROUND: usize = 50;
 
 /// Cache-local state that client-go keeps beside immutable PD region metadata.
 #[derive(Clone, Debug)]
@@ -249,6 +253,9 @@ pub struct RegionCache<Client = RetryClient<Cluster>> {
     region_cache: RwLock<RegionCacheMap>,
     store_cache: StdRwLock<HashMap<StoreId, CachedStore>>,
     bucket_refreshes: StdMutex<HashSet<RegionId>>,
+    gc_cursor: StdMutex<Option<Key>>,
+    gc_cancellation: Cancellation,
+    gc_task: StdMutex<Option<JoinHandle<()>>>,
     inner_client: Arc<Client>,
 }
 
@@ -258,8 +265,116 @@ impl<Client> RegionCache<Client> {
             region_cache: RwLock::new(RegionCacheMap::new()),
             store_cache: StdRwLock::new(HashMap::new()),
             bucket_refreshes: StdMutex::new(HashSet::new()),
+            gc_cursor: StdMutex::new(None),
+            gc_cancellation: Cancellation::default(),
+            gc_task: StdMutex::new(None),
             inner_client,
         }
+    }
+}
+
+impl<C: Send + Sync> RegionCache<C> {
+    pub(crate) fn start_background_gc(self: &Arc<Self>)
+    where
+        C: 'static,
+    {
+        let mut task = self.gc_task.lock().unwrap();
+        if task.is_some() {
+            return;
+        }
+        let cache = Arc::downgrade(self);
+        let cancellation = self.gc_cancellation.child();
+        *task = Some(tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = cancellation.cancelled() => return,
+                    _ = tokio::time::sleep(CLEAN_CACHE_INTERVAL) => {}
+                }
+                let Some(cache) = cache.upgrade() else {
+                    return;
+                };
+                cache
+                    .gc_round_at(now_epoch_secs(), CLEAN_REGION_NUM_PER_ROUND)
+                    .await;
+            }
+        }));
+    }
+
+    pub(crate) async fn close_background_gc(&self) {
+        self.gc_cancellation.cancel();
+        let task = self.gc_task.lock().unwrap().take();
+        if let Some(task) = task {
+            let _ = task.await;
+        }
+    }
+
+    /// One bounded source `gcRoundFunc` pass. The cursor retains the first
+    /// unscanned start key for the next pass and resets after reaching the end.
+    /// Live regions backed by a stale or unreachable store stop renewing and
+    /// are removed only after their existing TTL expires.
+    pub(crate) async fn gc_round_at(&self, now: i64, limit: usize) -> (usize, usize, bool) {
+        let limit = limit.max(1);
+        let cursor = self.gc_cursor.lock().unwrap().clone().unwrap_or_default();
+        let stores = self
+            .store_cache
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(id, store)| {
+                (
+                    *id,
+                    (
+                        store.epoch.load(Ordering::Acquire),
+                        StoreLiveness::from_encoded(store.liveness.load(Ordering::Acquire)),
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let mut cache = self.region_cache.write().await;
+        let candidates = cache
+            .key_to_ver_id
+            .range(cursor..)
+            .take(limit + 1)
+            .map(|(key, ver_id)| (key.clone(), ver_id.clone()))
+            .collect::<Vec<_>>();
+        let has_more = candidates.len() > limit;
+        let scanned = candidates.len().min(limit);
+        let next_cursor = has_more.then(|| candidates[limit].0.clone());
+        let mut removed = 0;
+
+        for (start_key, ver_id) in candidates.into_iter().take(limit) {
+            let expired = cache
+                .ver_id_to_region
+                .get(&ver_id)
+                .is_some_and(|region| now > region.ttl);
+            if expired {
+                if let Some(region) = cache.ver_id_to_region.remove(&ver_id) {
+                    cache.key_to_ver_id.remove(&start_key);
+                    if cache.id_to_ver_id.get(&region.region.id()) == Some(&ver_id) {
+                        cache.id_to_ver_id.remove(&region.region.id());
+                    }
+                    removed += 1;
+                }
+                continue;
+            }
+            if let Some(region) = cache.ver_id_to_region.get_mut(&ver_id) {
+                if !region.expire_after_ttl
+                    && region
+                        .store_epochs
+                        .iter()
+                        .any(|(store_id, expected_epoch)| {
+                            stores.get(store_id).is_some_and(|(epoch, liveness)| {
+                                epoch != expected_epoch || *liveness != StoreLiveness::Reachable
+                            })
+                        })
+                {
+                    region.expire_after_ttl = true;
+                }
+            }
+        }
+        drop(cache);
+        *self.gc_cursor.lock().unwrap() = next_cursor;
+        (scanned, removed, has_more)
     }
 }
 
@@ -1708,6 +1823,68 @@ mod test {
         assert_eq!(cache.get_region_by_key(&vec![1].into()).await?, cached);
         assert_eq!(retry_client.get_region_count.load(SeqCst), 1);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_gc_round_is_bounded_and_expires_regions_with_unhealthy_stores() {
+        let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
+        cache.store_cache.write().unwrap().insert(
+            9,
+            CachedStore::new(metapb::Store {
+                id: 9,
+                ..Default::default()
+            }),
+        );
+        let first = region(1, vec![], vec![10]);
+        let mut unhealthy = region(2, vec![10], vec![20]);
+        unhealthy.region.peers.push(metapb::Peer {
+            id: 2,
+            store_id: 9,
+            ..Default::default()
+        });
+        let last = region(3, vec![20], vec![]);
+        assert!(cache.add_region(first.clone()).await);
+        assert!(cache.add_region(unhealthy.clone()).await);
+        assert!(cache.add_region(last.clone()).await);
+
+        let now = now_epoch_secs();
+        cache
+            .region_cache
+            .write()
+            .await
+            .ver_id_to_region
+            .get_mut(&first.ver_id())
+            .unwrap()
+            .ttl = now - 1;
+        assert!(cache.set_store_liveness(9, StoreLiveness::Unreachable));
+
+        assert_eq!(cache.gc_round_at(now, 1).await, (1, 1, true));
+        assert_eq!(cache.gc_round_at(now, 1).await, (1, 0, true));
+        assert!(
+            cache.region_cache.read().await.ver_id_to_region[&unhealthy.ver_id()].expire_after_ttl
+        );
+        assert_eq!(cache.gc_round_at(now, 1).await, (1, 0, false));
+
+        cache
+            .region_cache
+            .write()
+            .await
+            .ver_id_to_region
+            .get_mut(&unhealthy.ver_id())
+            .unwrap()
+            .ttl = now - 1;
+        assert_eq!(cache.gc_round_at(now, 1).await, (1, 1, true));
+        assert!(!cache
+            .region_cache
+            .read()
+            .await
+            .ver_id_to_region
+            .contains_key(&unhealthy.ver_id()));
+
+        cache.start_background_gc();
+        assert!(cache.gc_task.lock().unwrap().is_some());
+        cache.close_background_gc().await;
+        assert!(cache.gc_task.lock().unwrap().is_none());
     }
 
     #[tokio::test]
