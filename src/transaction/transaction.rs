@@ -3461,8 +3461,9 @@ mod tests {
         transaction.set_snapshot_scan_batch_size(2);
         let mut snapshot = crate::Snapshot::new(transaction);
 
-        let mut iterator = snapshot.iter(b"a".to_vec()..b"z".to_vec());
+        let mut iterator = snapshot.iter(b"a".to_vec()..b"z".to_vec()).await.unwrap();
         assert!(iterator.is_valid());
+        assert_eq!(*requests.lock().unwrap(), [(b"a".to_vec(), 2)]);
         assert_eq!(
             iterator.next().await.unwrap().unwrap().key(),
             &Key::from(b"a".to_vec())

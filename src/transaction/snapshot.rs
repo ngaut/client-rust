@@ -60,19 +60,14 @@ impl<'a, PdC: PdClient> SnapshotIterator<'a, PdC> {
         }
     }
 
-    /// Fetch and return the next pair, or `None` after the scan is exhausted.
-    pub async fn next(&mut self) -> Result<Option<KvPair>> {
-        if !self.valid {
-            return Ok(None);
-        }
-        if let Some(pair) = self.buffered.pop_front() {
-            return Ok(Some(pair));
+    async fn refill(&mut self) -> Result<()> {
+        if !self.valid || !self.buffered.is_empty() {
+            return Ok(());
         }
         if self.exhausted {
             self.valid = false;
-            return Ok(None);
+            return Ok(());
         }
-
         let pairs = if self.reverse {
             self.snapshot
                 .scan_reverse(self.range.clone(), self.batch_size)
@@ -87,7 +82,7 @@ impl<'a, PdC: PdClient> SnapshotIterator<'a, PdC> {
         if pairs.is_empty() {
             self.exhausted = true;
             self.valid = false;
-            return Ok(None);
+            return Ok(());
         }
         self.exhausted = pairs.len() < self.batch_size as usize;
         let last_key = pairs.last().expect("non-empty scan batch").key().clone();
@@ -97,6 +92,12 @@ impl<'a, PdC: PdClient> SnapshotIterator<'a, PdC> {
             self.range.from = Bound::Included(last_key.next_key());
         }
         self.buffered = pairs.into();
+        Ok(())
+    }
+
+    /// Fetch and return the next pair, or `None` after the scan is exhausted.
+    pub async fn next(&mut self) -> Result<Option<KvPair>> {
+        self.refill().await?;
         Ok(self.buffered.pop_front())
     }
 
@@ -406,15 +407,26 @@ impl<PdC: PdClient> Snapshot<PdC> {
         self.transaction.batch_get_from_buffer(keys).await
     }
 
-    /// Create a stateful forward scanner, matching client-go `KVSnapshot.Iter`.
-    pub fn iter(&mut self, range: impl Into<BoundRange>) -> SnapshotIterator<'_, PdC> {
-        SnapshotIterator::new(self, range.into(), false)
+    /// Create and prefetch a stateful forward scanner, matching client-go
+    /// `KVSnapshot.Iter`'s construction-time first fetch.
+    pub async fn iter(
+        &mut self,
+        range: impl Into<BoundRange>,
+    ) -> Result<SnapshotIterator<'_, PdC>> {
+        let mut iterator = SnapshotIterator::new(self, range.into(), false);
+        iterator.refill().await?;
+        Ok(iterator)
     }
 
-    /// Create a stateful reverse scanner, matching client-go
-    /// `KVSnapshot.IterReverse`.
-    pub fn iter_reverse(&mut self, range: impl Into<BoundRange>) -> SnapshotIterator<'_, PdC> {
-        SnapshotIterator::new(self, range.into(), true)
+    /// Create and prefetch a stateful reverse scanner, matching client-go
+    /// `KVSnapshot.IterReverse`'s construction-time first fetch.
+    pub async fn iter_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+    ) -> Result<SnapshotIterator<'_, PdC>> {
+        let mut iterator = SnapshotIterator::new(self, range.into(), true);
+        iterator.refill().await?;
+        Ok(iterator)
     }
 
     /// Scan a range, return at most `limit` key-value pairs that lying in the range.

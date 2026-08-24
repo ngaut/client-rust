@@ -42,17 +42,13 @@ impl<'a> SyncSnapshotIterator<'a> {
         }
     }
 
-    /// Fetch and return the next pair, or `None` after the scan is exhausted.
-    pub fn next(&mut self) -> Result<Option<KvPair>> {
-        if !self.valid {
-            return Ok(None);
-        }
-        if let Some(pair) = self.buffered.pop_front() {
-            return Ok(Some(pair));
+    fn refill(&mut self) -> Result<()> {
+        if !self.valid || !self.buffered.is_empty() {
+            return Ok(());
         }
         if self.exhausted {
             self.valid = false;
-            return Ok(None);
+            return Ok(());
         }
         let pairs = if self.reverse {
             safe_block_on(
@@ -74,7 +70,7 @@ impl<'a> SyncSnapshotIterator<'a> {
         if pairs.is_empty() {
             self.exhausted = true;
             self.valid = false;
-            return Ok(None);
+            return Ok(());
         }
         self.exhausted = pairs.len() < self.batch_size as usize;
         let last_key = pairs.last().expect("non-empty scan batch").key().clone();
@@ -84,6 +80,12 @@ impl<'a> SyncSnapshotIterator<'a> {
             self.range.from = Bound::Included(last_key.next_key());
         }
         self.buffered = pairs.into();
+        Ok(())
+    }
+
+    /// Fetch and return the next pair, or `None` after the scan is exhausted.
+    pub fn next(&mut self) -> Result<Option<KvPair>> {
+        self.refill()?;
         Ok(self.buffered.pop_front())
     }
 
@@ -333,14 +335,21 @@ impl SyncSnapshot {
         safe_block_on(&self.runtime, self.inner.batch_get_from_buffer(keys))
     }
 
-    /// Create a blocking stateful forward scanner.
-    pub fn iter(&mut self, range: impl Into<BoundRange>) -> SyncSnapshotIterator<'_> {
-        SyncSnapshotIterator::new(self, range.into(), false)
+    /// Create and prefetch a blocking stateful forward scanner.
+    pub fn iter(&mut self, range: impl Into<BoundRange>) -> Result<SyncSnapshotIterator<'_>> {
+        let mut iterator = SyncSnapshotIterator::new(self, range.into(), false);
+        iterator.refill()?;
+        Ok(iterator)
     }
 
-    /// Create a blocking stateful reverse scanner.
-    pub fn iter_reverse(&mut self, range: impl Into<BoundRange>) -> SyncSnapshotIterator<'_> {
-        SyncSnapshotIterator::new(self, range.into(), true)
+    /// Create and prefetch a blocking stateful reverse scanner.
+    pub fn iter_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+    ) -> Result<SyncSnapshotIterator<'_>> {
+        let mut iterator = SyncSnapshotIterator::new(self, range.into(), true);
+        iterator.refill()?;
+        Ok(iterator)
     }
 
     /// Scan a range, return at most `limit` key-value pairs that lie in the range.
