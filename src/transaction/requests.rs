@@ -58,20 +58,17 @@ macro_rules! pair_locks {
     ($response_type:ty) => {
         impl HasLocks for $response_type {
             fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
-                if self.pairs.is_empty() {
-                    self.error
-                        .as_mut()
-                        .and_then(|error| error.locked.take())
-                        .into_iter()
-                        .collect()
-                } else {
-                    self.pairs
-                        .iter_mut()
-                        .filter_map(|pair| {
-                            pair.error.as_mut().and_then(|error| error.locked.take())
-                        })
-                        .collect()
+                // A response-level key error means TiKV returned an
+                // incomplete `pairs` list. client-go resolves that lock and
+                // retries the original request; pair-level locks are only
+                // meaningful when the response itself succeeded.
+                if let Some(lock) = self.error.as_mut().and_then(|error| error.locked.take()) {
+                    return vec![lock];
                 }
+                self.pairs
+                    .iter_mut()
+                    .filter_map(|pair| pair.error.as_mut().and_then(|error| error.locked.take()))
+                    .collect()
             }
         }
     };
@@ -1807,6 +1804,7 @@ mod tests {
     use crate::request::Shardable;
     use crate::request::{ApiV1Codec, ApiV2Codec, KeyMode, KvRequest};
     use crate::store::Request;
+    use crate::transaction::HasLocks;
     use crate::KvPair;
     use crate::Timestamp;
     use crate::TimestampExt;
@@ -2074,6 +2072,39 @@ mod tests {
             .unwrap();
         assert_eq!(batch_get_response.pairs[0].key, b"key");
         assert_eq!(scan_response.pairs[0].key, b"key");
+    }
+
+    #[test]
+    fn pair_response_lock_takes_precedence_over_incomplete_pairs() {
+        let response_lock = kvrpcpb::LockInfo {
+            key: b"response-lock".to_vec(),
+            ..Default::default()
+        };
+        let pair_lock = kvrpcpb::LockInfo {
+            key: b"pair-lock".to_vec(),
+            ..Default::default()
+        };
+        let mut response = kvrpcpb::ScanResponse {
+            error: Some(kvrpcpb::KeyError {
+                locked: Some(response_lock.clone()),
+                ..Default::default()
+            }),
+            pairs: vec![kvrpcpb::KvPair {
+                error: Some(kvrpcpb::KeyError {
+                    locked: Some(pair_lock),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_eq!(response.take_locks(), vec![response_lock]);
+        assert!(response.pairs[0]
+            .error
+            .as_ref()
+            .and_then(|error| error.locked.as_ref())
+            .is_some());
     }
 
     #[test]
