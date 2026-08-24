@@ -138,6 +138,19 @@ impl Snapshot {
             .set_resource_group_tagger(resource_group_tagger);
     }
 
+    /// Set the transaction and replica-read scope used by subsequent Get and
+    /// BatchGet read-timestamp validation. This is the native counterpart of
+    /// both client-go `SetTxnScope` and `SetReadReplicaScope`.
+    pub fn set_read_replica_scope(&mut self, scope: impl Into<String>) {
+        self.transaction.set_read_replica_scope(scope);
+    }
+
+    /// Alias for [`Self::set_read_replica_scope`], retained for client-go API
+    /// compatibility.
+    pub fn set_txn_scope(&mut self, scope: impl Into<String>) {
+        self.set_read_replica_scope(scope);
+    }
+
     /// Return the configured snapshot read deadline, or `None` when the
     /// client-wide transport timeout remains in effect.
     pub fn kv_read_timeout(&self) -> Option<Duration> {

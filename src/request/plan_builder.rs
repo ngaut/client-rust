@@ -75,6 +75,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 request,
                 kv_client: None,
                 request_timeout: None,
+                read_timestamp_validation: None,
                 target: String::new(),
                 forwarded_host: String::new(),
                 replica_read_config: ReplicaReadConfig::default(),
@@ -163,6 +164,25 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
             self.plan.request.set_max_execution_duration_ms(duration_ms);
             self.plan.request_timeout = Some(timeout);
         }
+        self
+    }
+
+    /// Validate every physical snapshot read timestamp before dispatch.
+    /// `None` preserves the behavior of manually constructed plans.
+    pub(crate) fn validate_read_timestamp(
+        mut self,
+        validator: Option<Arc<dyn crate::oracle::ReadTimestampValidator>>,
+        read_timestamp: u64,
+        stale_read: bool,
+        txn_scope: String,
+    ) -> Self {
+        self.plan.read_timestamp_validation =
+            validator.map(|validator| crate::request::plan::ReadTimestampValidation {
+                validator,
+                read_timestamp,
+                stale_read,
+                option: crate::oracle::OracleOption { txn_scope },
+            });
         self
     }
 

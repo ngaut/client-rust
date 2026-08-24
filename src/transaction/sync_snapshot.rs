@@ -59,6 +59,17 @@ impl SyncSnapshot {
         self.inner.set_resource_group_tagger(resource_group_tagger);
     }
 
+    /// Set the transaction and replica-read scope for subsequent snapshot
+    /// Get and BatchGet timestamp validation.
+    pub fn set_read_replica_scope(&mut self, scope: impl Into<String>) {
+        self.inner.set_read_replica_scope(scope);
+    }
+
+    /// Alias for [`Self::set_read_replica_scope`].
+    pub fn set_txn_scope(&mut self, scope: impl Into<String>) {
+        self.inner.set_txn_scope(scope);
+    }
+
     /// Return the configured snapshot read deadline, if any.
     pub fn kv_read_timeout(&self) -> Option<Duration> {
         self.inner.kv_read_timeout()

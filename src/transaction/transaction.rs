@@ -17,6 +17,7 @@ use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::interceptor::RpcInterceptorChain;
 use crate::interceptor::RpcInterceptorHandle;
 use crate::kv::{ReplicaReadAdjuster, ReplicaReadConfig};
+use crate::oracle::ReadTimestampValidator;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::kvrpcpb;
@@ -138,6 +139,14 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     resource_group_tag: Option<Vec<u8>>,
     resource_group_tagger: Option<SnapshotResourceGroupTagger>,
     snapshot_read_timeout: Option<Duration>,
+    /// Client-go validates each physical snapshot read timestamp before it is
+    /// sent. Directly constructed transactions intentionally retain no
+    /// validator; transaction clients provide the PD-backed implementation.
+    read_timestamp_validator: Option<Arc<dyn ReadTimestampValidator>>,
+    /// Source `KVSnapshot.readReplicaScope`, used by Get and BatchGet
+    /// timestamp validation. Scanner requests retain client-go's global
+    /// default because the source scanner does not copy this field.
+    read_replica_scope: String,
     /// client-go keeps resolved/committed transaction IDs on each snapshot;
     /// they must not leak across transactions with different read timestamps.
     read_lock_context: ReadLockContext,
@@ -210,6 +219,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             resource_group_tag: None,
             resource_group_tagger: None,
             snapshot_read_timeout: None,
+            read_timestamp_validator: None,
+            read_replica_scope: String::new(),
             read_lock_context: ReadLockContext::default(),
             lock_resolver_context: ResolveLocksContext::default(),
             is_heartbeat_started: false,
@@ -303,6 +314,17 @@ impl<PdC: PdClient> Transaction<PdC> {
         resource_group_tagger: Option<SnapshotResourceGroupTagger>,
     ) {
         self.resource_group_tagger = resource_group_tagger;
+    }
+
+    pub(crate) fn set_read_timestamp_validator(
+        &mut self,
+        validator: Arc<dyn ReadTimestampValidator>,
+    ) {
+        self.read_timestamp_validator = Some(validator);
+    }
+
+    pub(crate) fn set_read_replica_scope(&mut self, scope: impl Into<String>) {
+        self.read_replica_scope = scope.into();
     }
 
     pub(crate) fn set_snapshot_read_timeout(&mut self, timeout: Duration) {
@@ -401,6 +423,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         let resource_group_tag = self.resource_group_tag.clone();
         let resource_group_tagger = self.resource_group_tagger.clone();
         let snapshot_read_timeout = self.snapshot_read_timeout;
+        let read_timestamp_validator = self.read_timestamp_validator.clone();
+        let read_replica_scope = self.read_replica_scope.clone();
         let replica_read_config = self.replica_read_config_for_items(1);
         let read_lock_context = self.read_lock_context.clone();
         let lock_resolver_context = self.lock_resolver_context.clone();
@@ -430,6 +454,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .task_id(task_id)
                 .resource_group_tag(resource_group_tag)
                 .snapshot_read_timeout(snapshot_read_timeout)
+                .validate_read_timestamp(
+                    read_timestamp_validator,
+                    timestamp.version(),
+                    replica_read_config.stale_read,
+                    read_replica_scope,
+                )
                 .resolve_lock_for_read(
                     timestamp,
                     retry_options.lock_backoff,
@@ -578,6 +608,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         let resource_group_tag = self.resource_group_tag.clone();
         let resource_group_tagger = self.resource_group_tagger.clone();
         let snapshot_read_timeout = self.snapshot_read_timeout;
+        let read_timestamp_validator = self.read_timestamp_validator.clone();
+        let read_replica_scope = self.read_replica_scope.clone();
         let replica_read_config = self.replica_read_config.clone();
         let replica_read_adjuster = self.replica_read_adjuster.clone();
         let read_lock_context = self.read_lock_context.clone();
@@ -591,6 +623,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     replica_read_adjuster.as_ref(),
                     keys.len(),
                 );
+                let stale_read = replica_read_config.stale_read;
                 let request = new_batch_get_request(keys.into_iter(), timestamp.clone());
                 let resource_group_tag = resource_group_tag.clone().or_else(|| {
                     resource_group_tagger
@@ -614,6 +647,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .task_id(task_id)
                 .resource_group_tag(resource_group_tag)
                 .snapshot_read_timeout(snapshot_read_timeout)
+                .validate_read_timestamp(
+                    read_timestamp_validator,
+                    timestamp.version(),
+                    stale_read,
+                    read_replica_scope,
+                )
                 .resolve_lock_for_read(
                     timestamp,
                     retry_options.lock_backoff,
@@ -1212,6 +1251,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let resource_group_tag = self.resource_group_tag.clone();
         let resource_group_tagger = self.resource_group_tagger.clone();
         let snapshot_read_timeout = self.snapshot_read_timeout;
+        let read_timestamp_validator = self.read_timestamp_validator.clone();
         let replica_read_config = self.replica_read_config.clone();
         let read_lock_context = self.read_lock_context.clone();
         let lock_resolver_context = self.lock_resolver_context.clone();
@@ -1254,6 +1294,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .task_id(task_id)
                     .resource_group_tag(resource_group_tag)
                     .snapshot_read_timeout(snapshot_read_timeout)
+                    .validate_read_timestamp(
+                        read_timestamp_validator,
+                        timestamp.version(),
+                        replica_read_config.stale_read,
+                        String::new(),
+                    )
                     .resolve_lock_for_read(
                         timestamp,
                         retry_options.lock_backoff,
@@ -2300,6 +2346,7 @@ mod tests {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::new_rpc_interceptor;
+    use crate::oracle::{OracleError, OracleOption, OracleResult, ReadTimestampValidator};
     use crate::proto::kvrpcpb;
     use crate::proto::pdpb::Timestamp;
     use crate::proto::resource_manager;
@@ -2318,6 +2365,30 @@ mod tests {
     use crate::ResponseWaitResult;
 
     static GLOBAL_RESOURCE_CONTROL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    struct RecordingReadTimestampValidator {
+        calls: Arc<Mutex<Vec<(u64, bool, String)>>>,
+        error: Option<&'static str>,
+    }
+
+    #[async_trait::async_trait]
+    impl ReadTimestampValidator for RecordingReadTimestampValidator {
+        async fn validate_read_timestamp(
+            &self,
+            read_timestamp: u64,
+            stale_read: bool,
+            option: &OracleOption,
+        ) -> OracleResult<()> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((read_timestamp, stale_read, option.txn_scope.clone()));
+            match self.error {
+                Some(error) => Err(Box::new(io::Error::other(error)) as OracleError),
+                None => Ok(()),
+            }
+        }
+    }
 
     struct RecordingResourceController {
         events: Arc<Mutex<Vec<&'static str>>>,
@@ -2630,6 +2701,93 @@ mod tests {
                 b"tag-scan".to_vec(),
                 b"static".to_vec(),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_scope_validates_physical_reads_before_dispatch() {
+        let validations = Arc::new(Mutex::new(Vec::new()));
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                captured_dispatches.fetch_add(1, Ordering::SeqCst);
+                if request.is::<kvrpcpb::GetRequest>() {
+                    Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>)
+                } else if request.is::<kvrpcpb::BatchGetRequest>() {
+                    Ok(Box::new(kvrpcpb::BatchGetResponse::default()) as Box<dyn Any>)
+                } else if request.is::<kvrpcpb::ScanRequest>() {
+                    Ok(Box::new(kvrpcpb::ScanResponse::default()) as Box<dyn Any>)
+                } else {
+                    panic!("unexpected request while testing snapshot timestamp validation");
+                }
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(7),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_read_timestamp_validator(Arc::new(RecordingReadTimestampValidator {
+            calls: Arc::clone(&validations),
+            error: None,
+        }));
+        transaction.set_read_replica_scope("zone-a");
+        transaction.set_stale_read(true);
+
+        transaction.get("get".to_owned()).await.unwrap();
+        let _: Vec<_> = transaction
+            .batch_get(vec!["batch".to_owned()])
+            .await
+            .unwrap()
+            .collect();
+        let _: Vec<_> = transaction
+            .scan(b"scan-a".to_vec()..b"scan-b".to_vec(), 1)
+            .await
+            .unwrap()
+            .collect();
+
+        assert_eq!(dispatches.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            *validations.lock().unwrap(),
+            vec![
+                (7, true, "zone-a".to_owned()),
+                (7, true, "zone-a".to_owned()),
+                (7, true, String::new()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_timestamp_validation_failure_prevents_transport_dispatch() {
+        let validations = Arc::new(Mutex::new(Vec::new()));
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |_request: &dyn Any| {
+                captured_dispatches.fetch_add(1, Ordering::SeqCst);
+                unreachable!("timestamp validation must run before transport dispatch")
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(9),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_read_timestamp_validator(Arc::new(RecordingReadTimestampValidator {
+            calls: Arc::clone(&validations),
+            error: Some("read timestamp is unsafe"),
+        }));
+        transaction.set_read_replica_scope("zone-b");
+
+        let error = transaction.get("get".to_owned()).await.unwrap_err();
+        assert_eq!(error.to_string(), "read timestamp is unsafe");
+        assert_eq!(dispatches.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            *validations.lock().unwrap(),
+            vec![(9, false, "zone-b".to_owned())]
         );
     }
 

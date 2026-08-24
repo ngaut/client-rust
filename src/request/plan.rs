@@ -21,6 +21,7 @@ use crate::backoff::Backoff;
 use crate::interceptor::RpcInterceptorChain;
 use crate::kv::{AccessLocationType, ReplicaReadConfig};
 use crate::locate::ReplicaSelectorState;
+use crate::oracle::{OracleOption, ReadTimestampValidator};
 use crate::pd::PdClient;
 use crate::proto::errorpb;
 use crate::proto::errorpb::EpochNotMatch;
@@ -83,6 +84,9 @@ pub struct Dispatch<Req: KvRequest> {
     /// Optional caller-specific physical RPC deadline. `None` retains the
     /// client-wide transport timeout.
     pub request_timeout: Option<Duration>,
+    /// Optional client-go read-timestamp validation run before every physical
+    /// dispatch, including sender retries.
+    pub(crate) read_timestamp_validation: Option<ReadTimestampValidation>,
     /// Address of the current TiKV target, set when the request is assigned to a store.
     pub target: String,
     /// Logical TiKV target used only when this request is physically sent to
@@ -110,11 +114,30 @@ pub struct Dispatch<Req: KvRequest> {
     pub v1_response_codec: Option<super::keyspace::ApiV1Codec>,
 }
 
+#[derive(Clone)]
+pub(crate) struct ReadTimestampValidation {
+    pub(crate) validator: Arc<dyn ReadTimestampValidator>,
+    pub(crate) read_timestamp: u64,
+    pub(crate) stale_read: bool,
+    pub(crate) option: OracleOption,
+}
+
 #[async_trait]
 impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
+        if let Some(validation) = &self.read_timestamp_validation {
+            validation
+                .validator
+                .validate_read_timestamp(
+                    validation.read_timestamp,
+                    validation.stale_read,
+                    &validation.option,
+                )
+                .await
+                .map_err(|error| Error::StringError(error.to_string()))?;
+        }
         let store_token_limit = crate::kv::STORE_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
         let store_token_addr = if self.forwarded_host.is_empty() {
             self.target.as_str()
