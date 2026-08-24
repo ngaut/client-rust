@@ -35,6 +35,7 @@ use crate::request::Plan;
 use crate::request::PlanBuilder;
 use crate::request::RetryOptions;
 use crate::request::TruncateKeyspace;
+use crate::resource_control::ResourceGroupControllerHandle;
 use crate::timestamp::TimestampExt;
 use crate::transaction::buffer::Buffer;
 use crate::transaction::latch::LatchesScheduler;
@@ -97,6 +98,8 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// direct and retry/shard-cloned requests receive the same context.
     keyspace_name: Option<String>,
     rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<String>,
+    resource_control: Option<ResourceGroupControllerHandle>,
     /// Snapshot-only callers may replace this with source replica-read
     /// settings; ordinary transactions retain direct leader reads.
     replica_read_config: ReplicaReadConfig,
@@ -157,6 +160,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             keyspace,
             keyspace_name,
             rpc_interceptor: None,
+            resource_group_name: None,
+            resource_control: None,
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
             is_heartbeat_started: false,
@@ -170,6 +175,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         PlanBuilder::new(self.rpc.clone(), self.keyspace, request)
             .keyspace_name_option(self.keyspace_name.as_deref())
             .rpc_interceptor_option(self.rpc_interceptor.clone())
+            .resource_group_option(self.resource_group_name.as_deref())
+            .resource_control_option(self.resource_control.clone())
             .replica_read(self.replica_read_config.clone())
     }
 
@@ -224,6 +231,17 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
     }
 
+    /// Assign subsequent transaction requests to `resource_group_name`.
+    /// The group is sent on every physical TiKV request, including retries.
+    pub fn set_resource_group(&mut self, resource_group_name: impl Into<String>) {
+        self.resource_group_name = Some(resource_group_name.into());
+    }
+
+    /// Attach a PD resource-group controller to subsequent transaction RPCs.
+    pub fn set_resource_control(&mut self, controller: ResourceGroupControllerHandle) {
+        self.resource_control = Some(controller);
+    }
+
     /// Create a new 'get' request
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
@@ -252,6 +270,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
         let rpc_interceptor = self.rpc_interceptor.clone();
+        let resource_group_name = self.resource_group_name.clone();
+        let resource_control = self.resource_control.clone();
         let priority = self.options.priority;
         let replica_read_config = self.replica_read_config_for_items(1);
 
@@ -263,6 +283,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                     keyspace,
                     keyspace_name.as_deref(),
                     rpc_interceptor,
+                    resource_group_name.as_deref(),
+                    resource_control,
                     replica_read_config.clone(),
                     request,
                 )
@@ -395,6 +417,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
         let rpc_interceptor = self.rpc_interceptor.clone();
+        let resource_group_name = self.resource_group_name.clone();
+        let resource_control = self.resource_control.clone();
         let keys = keys
             .into_iter()
             .map(move |k| k.into().encode_keyspace(keyspace, KeyMode::Txn));
@@ -417,6 +441,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                     keyspace,
                     keyspace_name.as_deref(),
                     rpc_interceptor,
+                    resource_group_name.as_deref(),
+                    resource_control,
                     replica_read_config,
                     request,
                 )
@@ -846,6 +872,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.keyspace,
             self.keyspace_name.clone(),
             self.rpc_interceptor.clone(),
+            self.resource_group_name.clone(),
+            self.resource_control.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -921,6 +949,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.keyspace,
             self.keyspace_name.clone(),
             self.rpc_interceptor.clone(),
+            self.resource_group_name.clone(),
+            self.resource_control.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -992,6 +1022,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
         let rpc_interceptor = self.rpc_interceptor.clone();
+        let resource_group_name = self.resource_group_name.clone();
+        let resource_control = self.resource_control.clone();
         let priority = self.options.priority;
         let replica_read_config = self.replica_read_config.clone();
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
@@ -1015,6 +1047,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                         keyspace,
                         keyspace_name.as_deref(),
                         rpc_interceptor,
+                        resource_group_name.as_deref(),
+                        resource_control,
                         replica_read_config.clone(),
                         request,
                     )
@@ -1209,6 +1243,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
         let rpc_interceptor = self.rpc_interceptor.clone();
+        let resource_group_name = self.resource_group_name.clone();
+        let resource_control = self.resource_control.clone();
         debug!(
             "starting auto-heartbeat, start_ts: {}, interval: {:?}",
             self.timestamp.version(),
@@ -1239,6 +1275,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                     keyspace,
                     keyspace_name.as_deref(),
                     rpc_interceptor.clone(),
+                    resource_group_name.as_deref(),
+                    resource_control.clone(),
                     ReplicaReadConfig::default(),
                     request,
                 )
@@ -1298,12 +1336,16 @@ fn plan_with_keyspace_name<PdC: PdClient, Req: KvRequest>(
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
     rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<&str>,
+    resource_control: Option<ResourceGroupControllerHandle>,
     replica_read_config: ReplicaReadConfig,
     request: Req,
 ) -> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     PlanBuilder::new(rpc, keyspace, request)
         .keyspace_name_option(keyspace_name)
         .rpc_interceptor_option(rpc_interceptor)
+        .resource_group_option(resource_group_name)
+        .resource_control_option(resource_control)
         .replica_read(replica_read_config)
 }
 
@@ -1572,6 +1614,8 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     keyspace: Keyspace,
     keyspace_name: Option<String>,
     rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<String>,
+    resource_control: Option<ResourceGroupControllerHandle>,
     #[new(default)]
     undetermined: bool,
     write_size: u64,
@@ -1661,6 +1705,8 @@ impl<PdC: PdClient> Committer<PdC> {
             self.keyspace,
             self.keyspace_name.as_deref(),
             self.rpc_interceptor.clone(),
+            self.resource_group_name.as_deref(),
+            self.resource_control.clone(),
             ReplicaReadConfig::default(),
             request,
         )
@@ -1716,6 +1762,8 @@ impl<PdC: PdClient> Committer<PdC> {
             self.keyspace,
             self.keyspace_name.as_deref(),
             self.rpc_interceptor.clone(),
+            self.resource_group_name.as_deref(),
+            self.resource_control.clone(),
             ReplicaReadConfig::default(),
             req,
         )
@@ -1845,6 +1893,8 @@ impl<PdC: PdClient> Committer<PdC> {
             self.keyspace,
             self.keyspace_name.as_deref(),
             self.rpc_interceptor,
+            self.resource_group_name.as_deref(),
+            self.resource_control,
             ReplicaReadConfig::default(),
             req,
         )
@@ -1898,6 +1948,8 @@ impl<PdC: PdClient> Committer<PdC> {
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name;
         let rpc_interceptor = self.rpc_interceptor;
+        let resource_group_name = self.resource_group_name;
+        let resource_control = self.resource_control;
         let priority = self.options.priority;
         match self.options.kind {
             TransactionKind::Pessimistic(for_update_ts) if !prewritten => {
@@ -1908,6 +1960,8 @@ impl<PdC: PdClient> Committer<PdC> {
                     keyspace,
                     keyspace_name.as_deref(),
                     rpc_interceptor,
+                    resource_group_name.as_deref(),
+                    resource_control,
                     ReplicaReadConfig::default(),
                     req,
                 )
@@ -1927,6 +1981,8 @@ impl<PdC: PdClient> Committer<PdC> {
                     keyspace,
                     keyspace_name.as_deref(),
                     rpc_interceptor,
+                    resource_group_name.as_deref(),
+                    resource_control,
                     ReplicaReadConfig::default(),
                     req,
                 )
@@ -1988,6 +2044,7 @@ impl From<u8> for TransactionStatus {
 
 #[cfg(test)]
 mod tests {
+    use super::TransactionStatus;
     use std::any::Any;
     use std::io;
     use std::sync::atomic::AtomicUsize;
@@ -2004,12 +2061,53 @@ mod tests {
     use crate::new_rpc_interceptor;
     use crate::proto::kvrpcpb;
     use crate::proto::pdpb::Timestamp;
+    use crate::proto::resource_manager;
     use crate::request::Keyspace;
     use crate::transaction::HeartbeatOption;
+    use crate::Error;
     use crate::KvPair;
     use crate::Priority;
     use crate::ReplicaReadAdjustment;
     use crate::ReplicaReadConfig;
+    use crate::RequestWaitResult;
+    use crate::ResourceControlRequestInfo;
+    use crate::ResourceGroupController;
+    use crate::ResponseWaitResult;
+
+    struct RecordingResourceController {
+        events: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ResourceGroupController for RecordingResourceController {
+        async fn on_request_wait(
+            &self,
+            resource_group_name: &str,
+            _: ResourceControlRequestInfo,
+        ) -> crate::Result<RequestWaitResult> {
+            assert_eq!(resource_group_name, "test-rg");
+            self.events.lock().unwrap().push("request");
+            Ok(RequestWaitResult {
+                penalty: Some(resource_manager::Consumption {
+                    r_r_u: 1.0,
+                    ..Default::default()
+                }),
+                priority: 7,
+                ..Default::default()
+            })
+        }
+
+        fn on_response_wait(
+            &self,
+            resource_group_name: &str,
+            _: ResourceControlRequestInfo,
+            _: crate::ResourceControlResponseInfo,
+        ) -> crate::Result<ResponseWaitResult> {
+            assert_eq!(resource_group_name, "test-rg");
+            self.events.lock().unwrap().push("response");
+            Ok(ResponseWaitResult::default())
+        }
+    }
     use crate::ReplicaReadSelectorOption;
     use crate::ReplicaReadType;
     use crate::TimestampExt;
@@ -2200,6 +2298,72 @@ mod tests {
             *intercepted.lock().unwrap(),
             [(String::new(), "kv_prewrite"), (String::new(), "kv_commit")]
         );
+    }
+
+    #[tokio::test]
+    async fn transaction_resource_control_charges_and_settles_each_physical_rpc() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let controller = Arc::new(RecordingResourceController {
+            events: Arc::clone(&events),
+        });
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                let context = if let Some(req) = req.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    req.context.as_ref().unwrap()
+                } else if let Some(req) = req.downcast_ref::<kvrpcpb::CommitRequest>() {
+                    req.context.as_ref().unwrap()
+                } else {
+                    panic!("unexpected request while testing resource control")
+                };
+                let resource_control = context.resource_control_context.as_ref().unwrap();
+                assert_eq!(resource_control.resource_group_name, "test-rg");
+                assert_eq!(resource_control.override_priority, 7);
+                assert_eq!(resource_control.penalty.as_ref().unwrap().r_r_u, 1.0);
+                if req.is::<kvrpcpb::PrewriteRequest>() {
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                } else {
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                }
+            },
+        )));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        );
+        txn.set_resource_group("test-rg");
+        txn.set_resource_control(controller);
+        txn.put("key".to_owned(), "value").await.unwrap();
+        txn.commit().await.unwrap();
+
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["request", "response", "request", "response"]
+        );
+    }
+
+    #[tokio::test]
+    async fn transaction_resource_control_does_not_settle_transport_failures() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let controller = Arc::new(RecordingResourceController {
+            events: Arc::clone(&events),
+        });
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(|_| {
+            Err(Error::StringError("simulated transport failure".to_owned()))
+        })));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        );
+        txn.set_resource_group("test-rg");
+        txn.set_resource_control(controller);
+
+        assert!(txn.get("key".to_owned()).await.is_err());
+        assert_eq!(*events.lock().unwrap(), ["request"]);
+        txn.set_status(TransactionStatus::Rolledback);
     }
 
     #[tokio::test]

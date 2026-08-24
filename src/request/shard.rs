@@ -275,6 +275,7 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             store_health: self.store_health.clone(),
             record_client_side_slow_score: self.record_client_side_slow_score,
             interceptor: self.interceptor.clone(),
+            resource_control: self.resource_control.clone(),
             response_codec: self.response_codec,
             v1_response_codec: self.v1_response_codec,
         }
@@ -686,6 +687,7 @@ mod test {
             store_health: None,
             record_client_side_slow_score: false,
             interceptor: None,
+            resource_control: None,
             response_codec: None,
             v1_response_codec: None,
         };
@@ -730,6 +732,7 @@ mod test {
             store_health: None,
             record_client_side_slow_score: false,
             interceptor: None,
+            resource_control: None,
             response_codec: None,
             v1_response_codec: None,
         };

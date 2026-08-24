@@ -25,6 +25,7 @@ use crate::request::ResolveLock;
 use crate::request::RetryableMultiRegion;
 use crate::request::Shardable;
 use crate::request::{DefaultProcessor, StoreRequest};
+use crate::resource_control::ResourceGroupControllerHandle;
 use crate::retry::RetryBackoffer;
 use crate::store::HasKeyErrors;
 use crate::store::HasRegionError;
@@ -76,6 +77,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 store_health: None,
                 record_client_side_slow_score: false,
                 interceptor: None,
+                resource_control: None,
                 response_codec,
                 v1_response_codec,
             },
@@ -133,9 +135,45 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self
     }
 
+    /// Assign this request and all of its physical shard/retry clones to a
+    /// resource group. Admission only becomes active when a controller is
+    /// attached with [`Self::resource_control`].
+    pub fn resource_group(mut self, resource_group_name: impl AsRef<str>) -> Self {
+        self.plan
+            .request
+            .set_resource_group_name(resource_group_name.as_ref());
+        self
+    }
+
+    /// Attach a PD resource-group controller to every physical TiKV RPC.
+    ///
+    /// The controller runs before normal RPC interceptors, fills TiKV's
+    /// penalty and fallback priority, and settles only non-error responses.
+    pub fn resource_control(mut self, controller: ResourceGroupControllerHandle) -> Self {
+        self.plan.resource_control = Some(controller);
+        self
+    }
+
     pub(crate) fn rpc_interceptor_option(self, interceptor: Option<RpcInterceptorChain>) -> Self {
         match interceptor {
             Some(interceptor) => self.rpc_interceptor(interceptor),
+            None => self,
+        }
+    }
+
+    pub(crate) fn resource_group_option(self, resource_group_name: Option<&str>) -> Self {
+        match resource_group_name {
+            Some(resource_group_name) => self.resource_group(resource_group_name),
+            None => self,
+        }
+    }
+
+    pub(crate) fn resource_control_option(
+        self,
+        controller: Option<ResourceGroupControllerHandle>,
+    ) -> Self {
+        match controller {
+            Some(controller) => self.resource_control(controller),
             None => self,
         }
     }

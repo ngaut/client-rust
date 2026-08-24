@@ -31,6 +31,7 @@ use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
 use crate::request::{KvRequest, StoreRequest};
+use crate::resource_control::ResourceGroupControllerHandle;
 use crate::retry::{
     RetryBackoffer, RetryConfig, BO_IS_WITNESS, BO_MAX_REGION_NOT_INITIALIZED,
     BO_MAX_TS_NOT_SYNCED, BO_REGION_MISS, BO_REGION_RECOVERY_IN_PROGRESS, BO_REGION_SCHEDULING,
@@ -83,6 +84,9 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) record_client_side_slow_score: bool,
     /// Optional transaction-level decorator for this physical RPC.
     pub interceptor: Option<RpcInterceptorChain>,
+    /// Optional client-go-compatible resource-group controller applied before
+    /// the user interceptor and settled after a successful response.
+    pub resource_control: Option<ResourceGroupControllerHandle>,
     pub response_codec: Option<super::keyspace::ApiV2Codec>,
     pub v1_response_codec: Option<super::keyspace::ApiV1Codec>,
 }
@@ -92,6 +96,19 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
+        let mut request = self.request.clone();
+        let selected_resource_control = self
+            .resource_control
+            .as_ref()
+            .and_then(|controller| crate::resource_control::select(controller, &request));
+        if let Some(selected) = &selected_resource_control {
+            let result = selected
+                .controller
+                .on_request_wait(&selected.resource_group_name, selected.request)
+                .await?;
+            request.set_resource_control_penalty(result.penalty);
+            request.set_resource_control_priority_if_unset(result.priority);
+        }
         let stats = tikv_stats(self.request.label());
         let client = self
             .kv_client
@@ -101,18 +118,31 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         let next = Box::new(|| {
             Box::pin(async {
                 client
-                    .dispatch_with_forwarded_host(&self.request, &self.forwarded_host)
+                    .dispatch_with_forwarded_host(&request, &self.forwarded_host)
                     .await
             }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         });
         let started_at = Instant::now();
         let result = match &self.interceptor {
-            Some(interceptor) => {
-                interceptor
-                    .dispatch(&self.target, &self.request, next)
-                    .await
-            }
+            Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
             None => next().await,
+        };
+        let result = match result {
+            Ok(response) => {
+                if let Some(selected) = selected_resource_control {
+                    let response_info =
+                        crate::resource_control::ResponseInfo::from_dispatch_response(
+                            response.as_ref(),
+                        );
+                    selected.controller.on_response_wait(
+                        &selected.resource_group_name,
+                        selected.request,
+                        response_info,
+                    )?;
+                }
+                Ok(response)
+            }
+            Err(error) => Err(error),
         };
         if self.record_client_side_slow_score {
             if let Some(health_status) = &self.store_health {

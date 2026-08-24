@@ -1,17 +1,21 @@
 //! Native deterministic accounting from client-go's `internal/resourcecontrol`.
 
+use std::any::Any;
+use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use prost::Message;
 
 use crate::kv::AccessLocationType;
-use crate::proto::{coprocessor, kvrpcpb};
+use crate::proto::{coprocessor, kvrpcpb, resource_manager};
 use crate::store::Request;
+use crate::Result;
 
 /// Source RU pre-charge inputs independent of the unfinished dynamic request
 /// wrapper. A write byte count of `None` denotes a read request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RequestInfo {
+pub struct RequestInfo {
     pub write_bytes: Option<u64>,
     pub store_id: u64,
     pub replica_number: i64,
@@ -166,7 +170,7 @@ fn should_bypass(request: &dyn Request) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ResponseInfo {
+pub struct ResponseInfo {
     pub read_bytes: u64,
     pub kv_cpu: Duration,
     pub response_size: u64,
@@ -223,6 +227,23 @@ impl ResponseInfo {
         }
     }
 
+    /// Extracts source response accounting from an erased physical RPC response.
+    /// Unsupported commands deliberately settle with zero values, matching
+    /// client-go's `MakeResponseInfo` default case.
+    pub(crate) fn from_dispatch_response(response: &dyn Any) -> Self {
+        if let Some(response) = response.downcast_ref::<coprocessor::Response>() {
+            Self::from_response(Response::Cop(response))
+        } else if let Some(response) = response.downcast_ref::<kvrpcpb::GetResponse>() {
+            Self::from_response(Response::Get(response))
+        } else if let Some(response) = response.downcast_ref::<kvrpcpb::BatchGetResponse>() {
+            Self::from_response(Response::BatchGet(response))
+        } else if let Some(response) = response.downcast_ref::<kvrpcpb::ScanResponse>() {
+            Self::from_response(Response::Scan(response))
+        } else {
+            Self::default()
+        }
+    }
+
     fn from_details(details: Option<&kvrpcpb::ExecDetailsV2>, size: usize) -> Self {
         Self {
             read_bytes: details
@@ -233,6 +254,77 @@ impl ResponseInfo {
             response_size: size as u64,
         }
     }
+}
+
+/// Result of source PD admission before a physical TiKV RPC.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RequestWaitResult {
+    pub consumption: resource_manager::Consumption,
+    pub penalty: Option<resource_manager::Consumption>,
+    pub wait_duration: Duration,
+    pub priority: u64,
+}
+
+/// Result of source PD settlement after a physical TiKV RPC response.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ResponseWaitResult {
+    pub consumption: resource_manager::Consumption,
+    pub wait_duration: Duration,
+}
+
+/// PD-backed resource-group admission and settlement controller.
+///
+/// This is the native counterpart of client-go's
+/// `ResourceGroupKVInterceptor`. Implementations may wait for tokens and
+/// return an error before dispatch; a successful TiKV response is always
+/// settled through [`ResourceGroupController::on_response_wait`].
+#[async_trait]
+pub trait ResourceGroupController: Send + Sync {
+    async fn on_request_wait(
+        &self,
+        resource_group_name: &str,
+        request: RequestInfo,
+    ) -> Result<RequestWaitResult>;
+
+    fn on_response_wait(
+        &self,
+        resource_group_name: &str,
+        request: RequestInfo,
+        response: ResponseInfo,
+    ) -> Result<ResponseWaitResult>;
+
+    /// Background work is charged and reported by TiKV itself, so client-go
+    /// bypasses controller-side admission and settlement for it.
+    fn is_background_request(&self, _resource_group_name: &str, _request_source: &str) -> bool {
+        false
+    }
+}
+
+pub type ResourceGroupControllerHandle = Arc<dyn ResourceGroupController>;
+
+pub(crate) struct SelectedResourceControl {
+    pub resource_group_name: String,
+    pub controller: ResourceGroupControllerHandle,
+    pub request: RequestInfo,
+}
+
+pub(crate) fn select(
+    controller: &ResourceGroupControllerHandle,
+    request: &dyn Request,
+) -> Option<SelectedResourceControl> {
+    let resource_group_name = request.resource_group_name()?;
+    let request_source = request
+        .tikv_context()
+        .map_or("", |context| context.request_source.as_str());
+    if controller.is_background_request(resource_group_name, request_source) {
+        return None;
+    }
+    let request_info = RequestInfo::from_store_request(request);
+    (!request_info.bypass).then_some(SelectedResourceControl {
+        resource_group_name: resource_group_name.to_owned(),
+        controller: controller.clone(),
+        request: request_info,
+    })
 }
 
 fn scan_read_bytes(detail: &kvrpcpb::ScanDetailV2) -> u64 {
