@@ -80,6 +80,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 record_client_side_slow_score: false,
                 resource_control_replica_number: 1,
                 resource_control_access_location: crate::kv::AccessLocationType::Unknown,
+                predicted_read_bytes: 0,
                 store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
                 store_token_store_id: 0,
                 interceptor: None,
@@ -161,6 +162,13 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     pub fn resource_control(mut self, controller: ResourceGroupControllerHandle) -> Self {
         self.plan.resource_control = Some(controller.clone());
         self.resource_control = Some(controller);
+        self
+    }
+
+    /// Attach the optional source `tikvrpc.Request.PredictedReadBytes` hint.
+    /// PD's resource controller uses it only for eligible coprocessor reads.
+    pub fn predicted_read_bytes(mut self, predicted_read_bytes: u64) -> Self {
+        self.plan.predicted_read_bytes = predicted_read_bytes;
         self
     }
 

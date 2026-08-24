@@ -85,6 +85,7 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) record_client_side_slow_score: bool,
     pub(crate) resource_control_replica_number: i64,
     pub(crate) resource_control_access_location: AccessLocationType,
+    pub(crate) predicted_read_bytes: u64,
     pub(crate) store_token_count: Arc<AtomicI64>,
     pub(crate) store_token_store_id: StoreId,
     /// Optional transaction-level decorator for this physical RPC.
@@ -128,6 +129,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 &request,
                 self.resource_control_replica_number,
                 self.resource_control_access_location,
+                self.predicted_read_bytes,
             )
         });
         if let Some(selected) = &selected_resource_control {

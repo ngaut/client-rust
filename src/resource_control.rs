@@ -354,6 +354,7 @@ pub(crate) fn select(
     request: &dyn Request,
     replica_number: i64,
     access_location: AccessLocationType,
+    predicted_read_bytes: u64,
 ) -> Option<SelectedResourceControl> {
     let resource_group_name = request.resource_group_name()?;
     let request_source = request
@@ -365,6 +366,9 @@ pub(crate) fn select(
     let mut request_info = RequestInfo::from_store_request(request);
     request_info.replica_number = replica_number;
     request_info.access_location = access_location;
+    if !request_info.is_write() {
+        request_info.predicted_read_bytes = predicted_read_bytes;
+    }
     (!request_info.bypass).then_some(SelectedResourceControl {
         resource_group_name: resource_group_name.to_owned(),
         controller: controller.clone(),
@@ -567,12 +571,40 @@ mod test {
             ..Default::default()
         };
         let controller: ResourceGroupControllerHandle = Arc::new(NoopController);
-        let selected = select(&controller, &request, 3, AccessLocationType::CrossZone).unwrap();
+        let selected = select(
+            &controller,
+            &request,
+            3,
+            AccessLocationType::CrossZone,
+            256 * 1024,
+        )
+        .unwrap();
         assert_eq!(selected.request.replica_number, 3);
         assert_eq!(
             selected.request.access_location,
             AccessLocationType::CrossZone
         );
+        assert_eq!(selected.request.predicted_read_bytes, 256 * 1024);
+
+        let write = kvrpcpb::PrewriteRequest {
+            context: Some(kvrpcpb::Context {
+                resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                    resource_group_name: "rg".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let selected = select(
+            &controller,
+            &write,
+            3,
+            AccessLocationType::CrossZone,
+            256 * 1024,
+        )
+        .unwrap();
+        assert_eq!(selected.request.predicted_read_bytes, 0);
     }
 
     #[test]
