@@ -964,26 +964,14 @@ impl TransactionStatus {
         }
     }
 
-    // is_cacheable checks whether the transaction status is certain.
-    // If transaction is already committed, the result could be cached.
-    // Otherwise:
-    //   If l.LockType is pessimistic lock type:
-    //       - if its primary lock is pessimistic too, the check txn status result should not be cached.
-    //       - if its primary lock is prewrite lock type, the check txn status could be cached.
-    //   If l.lockType is prewrite lock type:
-    //       - always cache the check txn status result.
-    // For prewrite locks, their primary keys should ALWAYS be the correct one and will NOT change.
+    /// Whether this is a source-determined transaction status suitable for
+    /// lock-resolver caching. A locked response remains mutable even if its
+    /// TTL looks expired locally, so client-go never retains it.
     pub fn is_cacheable(&self) -> bool {
-        match &self.kind {
-            TransactionStatusKind::RolledBack | TransactionStatusKind::Committed(..) => true,
-            TransactionStatusKind::Locked(..) if self.is_expired => matches!(
-                self.action,
-                kvrpcpb::Action::NoAction
-                    | kvrpcpb::Action::LockNotExistRollback
-                    | kvrpcpb::Action::TtlExpireRollback
-            ),
-            _ => false,
-        }
+        matches!(
+            &self.kind,
+            TransactionStatusKind::RolledBack | TransactionStatusKind::Committed(..)
+        )
     }
 }
 
@@ -1667,6 +1655,7 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
 
 #[cfg(test)]
 mod tests {
+    use super::{TransactionStatus, TransactionStatusKind};
     use crate::common::Error::PessimisticLockError;
     use crate::common::Error::ResolveLockError;
     use crate::proto::errorpb;
@@ -1678,6 +1667,36 @@ mod tests {
     use crate::request::{ApiV1Codec, ApiV2Codec, KeyMode, KvRequest};
     use crate::store::Request;
     use crate::KvPair;
+    use crate::Timestamp;
+    use crate::TimestampExt;
+
+    #[test]
+    fn source_lock_resolver_caches_only_determined_statuses() {
+        let locked = TransactionStatus {
+            kind: TransactionStatusKind::Locked(
+                1,
+                kvrpcpb::LockInfo {
+                    lock_version: 1 << 18,
+                    ..Default::default()
+                },
+            ),
+            action: kvrpcpb::Action::TtlExpireRollback,
+            is_expired: true,
+        };
+        assert!(!locked.is_cacheable());
+
+        for kind in [
+            TransactionStatusKind::RolledBack,
+            TransactionStatusKind::Committed(Timestamp::from_version(42)),
+        ] {
+            assert!(TransactionStatus {
+                kind,
+                action: kvrpcpb::Action::NoAction,
+                is_expired: false,
+            }
+            .is_cacheable());
+        }
+    }
 
     #[test]
     fn source_delete_range_server_error_is_terminal() {
