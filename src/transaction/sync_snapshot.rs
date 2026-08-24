@@ -87,6 +87,11 @@ impl SyncSnapshot {
         self.inner.set_stale_read(stale_read);
     }
 
+    /// Mark this snapshot as a staleness read.
+    pub fn set_is_staleness_read_only(&mut self, stale_read: bool) {
+        self.inner.set_is_staleness_read_only(stale_read);
+    }
+
     /// Replace store-label constraints used by subsequent replica selection.
     pub fn set_match_store_labels(
         &mut self,

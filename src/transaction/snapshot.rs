@@ -58,6 +58,12 @@ impl Snapshot {
         self.transaction.set_stale_read(stale_read);
     }
 
+    /// Mark this snapshot as a staleness read, matching client-go
+    /// `KVSnapshot.SetIsStalenessReadOnly`.
+    pub fn set_is_staleness_read_only(&mut self, stale_read: bool) {
+        self.set_stale_read(stale_read);
+    }
+
     /// Replace the store-label constraints used by subsequent replica
     /// selection. This is the Rust counterpart of client-go
     /// `KVSnapshot.SetMatchStoreLabels`.
