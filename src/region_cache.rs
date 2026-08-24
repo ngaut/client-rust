@@ -802,8 +802,95 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         count: usize,
         backoffer: &mut RetryBackoffer,
     ) -> Result<Vec<RegionWithLeader>> {
-        self.scan_regions(start_key, Key::default(), count, backoffer)
+        self.batch_load_regions_with_key_range(start_key, Key::default(), count, backoffer)
             .await
+    }
+
+    /// Source `BatchLoadRegionsWithKeyRange`: refresh at most `count`
+    /// consecutive leader-bearing regions from PD and install accepted
+    /// metadata in the cache.
+    pub async fn batch_load_regions_with_key_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        count: usize,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        let regions = self
+            .scan_regions(start_key.clone(), end_key.clone(), count, backoffer)
+            .await?;
+        if regions.is_empty() {
+            return Err(Error::StringError(format!(
+                "PD returned no region, start_key: {start_key:?}, end_key: {end_key:?}"
+            )));
+        }
+        Ok(regions)
+    }
+
+    /// Source `LoadRegionsInKeyRange`: repeatedly issue bounded PD scans until
+    /// the complete half-open range has been refreshed.
+    pub async fn load_regions_in_key_range(
+        &self,
+        mut start_key: Key,
+        end_key: Key,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        let mut regions = Vec::new();
+        loop {
+            let loaded = self
+                .batch_load_regions_with_key_range(
+                    start_key.clone(),
+                    end_key.clone(),
+                    DEFAULT_REGIONS_PER_BATCH,
+                    backoffer,
+                )
+                .await?;
+            let last = loaded
+                .last()
+                .expect("batch_load_regions_with_key_range rejects empty results");
+            let complete = contains_by_end(last, end_key.as_ref());
+            let next_key = last.end_key();
+            regions.extend(loaded);
+            if complete {
+                return Ok(regions);
+            }
+            if next_key.is_empty() || next_key <= start_key {
+                return Err(Error::StringError(
+                    "PD returned a region that does not advance LoadRegionsInKeyRange".to_owned(),
+                ));
+            }
+            start_key = next_key;
+        }
+    }
+
+    /// Source `ListRegionIDsInKeyRange` uses an inclusive upper key, unlike
+    /// the half-open range-loading APIs.
+    pub async fn list_region_ids_in_key_range(
+        &self,
+        mut start_key: Key,
+        end_key: Key,
+    ) -> Result<Vec<RegionId>> {
+        let mut region_ids = Vec::new();
+        loop {
+            let region = self.get_region_by_key(&start_key).await?;
+            region_ids.push(region.id());
+            if region.contains(&end_key) {
+                return Ok(region_ids);
+            }
+            let next_key = region.end_key();
+            if next_key.is_empty() || next_key <= start_key {
+                return Err(Error::StringError(
+                    "region does not advance ListRegionIDsInKeyRange".to_owned(),
+                ));
+            }
+            start_key = next_key;
+        }
+    }
+
+    /// Source `LocateRegionByIDFromPD`: bypass the cache for diagnostics and
+    /// deliberately leave the returned metadata uncached.
+    pub async fn load_region_by_id_from_pd(&self, id: RegionId) -> Result<RegionWithLeader> {
+        self.inner_client.clone().get_region_by_id(id).await
     }
 
     async fn scan_regions(
@@ -1020,23 +1107,80 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             return Vec::new();
         }
         let mut cache = self.region_cache.write().await;
-        let versions = cache
+        let entries = cache
             .key_to_ver_id
             .range(start_key.clone()..)
             .take_while(|(key, _)| end_key.is_empty() || *key < end_key)
             .take(limit)
-            .map(|(_, version)| version.clone())
+            .map(|(key, version)| (key.clone(), version.clone()))
             .collect::<Vec<_>>();
-        let mut regions = Vec::with_capacity(versions.len());
-        for version in versions {
+        let mut regions = Vec::with_capacity(entries.len());
+        let mut last_start_key = start_key.clone();
+        let now = now_epoch_secs();
+        for (_, version) in entries {
             let Some(region) = cache.ver_id_to_region.get_mut(&version) else {
-                continue;
+                break;
             };
+            if !region.check_ttl(now) || !region.region.contains(&last_start_key) {
+                break;
+            }
+            last_start_key = region.region.end_key();
             if !region.has_sync_flags(NEED_RELOAD_ON_ACCESS | NEED_DELAYED_RELOAD_READY) {
                 regions.push(region.region.clone());
             }
         }
         regions
+    }
+
+    /// Source `LocateKeyRange`: combine cache hits with bounded multi-range PD
+    /// loading and require every returned region to have a leader peer.
+    pub async fn locate_key_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.batch_locate_key_ranges(
+            vec![pdpb::KeyRange {
+                start_key: start_key.into(),
+                end_key: end_key.into(),
+            }],
+            false,
+            true,
+            backoffer,
+        )
+        .await
+    }
+
+    /// Source `BatchLoadRegionsWithKeyRanges`: refresh a bounded ordered set
+    /// of ranges and optionally require leader and bucket metadata.
+    pub async fn batch_load_regions_with_key_ranges(
+        &self,
+        ranges: Vec<pdpb::KeyRange>,
+        count: usize,
+        need_buckets: bool,
+        need_region_has_leader: bool,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        if ranges.is_empty() {
+            return Ok(Vec::new());
+        }
+        let regions = self
+            .batch_scan_regions(
+                &ranges,
+                count,
+                need_buckets,
+                need_region_has_leader,
+                backoffer,
+            )
+            .await?;
+        if regions.is_empty() {
+            return Err(Error::StringError(format!(
+                "PD returned no region, range num: {}, count: {count}",
+                ranges.len()
+            )));
+        }
+        Ok(regions)
     }
 
     /// Source `BatchLocateKeyRanges`: reuse a gap-free cached prefix, load the
@@ -1112,8 +1256,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             let range_count = uncached_ranges.len().min(MAX_RANGES_PER_BATCH);
             let to_send = &uncached_ranges[..range_count];
             let regions = self
-                .batch_scan_regions(
-                    to_send,
+                .batch_load_regions_with_key_ranges(
+                    to_send.to_vec(),
                     DEFAULT_REGIONS_PER_BATCH,
                     need_buckets,
                     need_region_has_leader,
@@ -3231,6 +3375,106 @@ mod test {
             .await?;
         assert_eq!(region_ids(&located), vec![2, 3, 4, 6, 7]);
         assert_eq!(client.batch_scan_count.load(SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_cached_range_scan_stops_at_expiration_and_holes() {
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        for region in [
+            region_with_leader(2, b"a", b"b"),
+            region_with_leader(3, b"b", b"c"),
+            region_with_leader(5, b"d", b"e"),
+        ] {
+            cache.add_region(region).await;
+        }
+
+        assert_eq!(
+            region_ids(
+                &cache
+                    .scan_regions_from_cache(&b"a".to_vec().into(), &b"e".to_vec().into(), 128)
+                    .await
+            ),
+            vec![2, 3]
+        );
+
+        let version = region_with_leader(3, b"b", b"c").ver_id();
+        cache
+            .region_cache
+            .write()
+            .await
+            .ver_id_to_region
+            .get_mut(&version)
+            .unwrap()
+            .ttl = now_epoch_secs() - 1;
+        assert_eq!(
+            region_ids(
+                &cache
+                    .scan_regions_from_cache(&b"a".to_vec().into(), &b"e".to_vec().into(), 128)
+                    .await
+            ),
+            vec![2]
+        );
+    }
+
+    #[tokio::test]
+    async fn source_region_range_helpers_preserve_half_open_and_inclusive_bounds() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        for (id, start, end) in [
+            (1, b"".as_slice(), b"a".as_slice()),
+            (2, b"a".as_slice(), b"b".as_slice()),
+            (3, b"b".as_slice(), b"c".as_slice()),
+            (4, b"c".as_slice(), b"d".as_slice()),
+            (5, b"d".as_slice(), b"".as_slice()),
+        ] {
+            client
+                .regions
+                .lock()
+                .await
+                .insert(id, region_with_leader(id, start, end));
+        }
+        let cache = RegionCache::new(client.clone());
+
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        let loaded = cache
+            .batch_load_regions_with_key_range(
+                b"a".to_vec().into(),
+                b"c".to_vec().into(),
+                2,
+                &mut backoffer,
+            )
+            .await?;
+        assert_eq!(region_ids(&loaded), vec![2, 3]);
+
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        let loaded = cache
+            .load_regions_in_key_range(b"a".to_vec().into(), b"d".to_vec().into(), &mut backoffer)
+            .await?;
+        assert_eq!(region_ids(&loaded), vec![2, 3, 4]);
+
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        let located = cache
+            .locate_key_range(b"a".to_vec().into(), b"d".to_vec().into(), &mut backoffer)
+            .await?;
+        assert_eq!(region_ids(&located), vec![2, 3, 4]);
+
+        assert_eq!(
+            cache
+                .list_region_ids_in_key_range(b"a".to_vec().into(), b"c".to_vec().into())
+                .await?,
+            vec![2, 3, 4]
+        );
+
+        let uncached = RegionCache::new(client);
+        assert_eq!(uncached.load_region_by_id_from_pd(3).await?.id(), 3);
+        assert!(uncached
+            .region_cache
+            .read()
+            .await
+            .ver_id_to_region
+            .is_empty());
+        assert_eq!(uncached.get_region_by_id(3).await?.id(), 3);
+        assert_eq!(uncached.region_cache.read().await.ver_id_to_region.len(), 1);
         Ok(())
     }
 
