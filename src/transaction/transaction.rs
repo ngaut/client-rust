@@ -922,6 +922,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.resource_group_name.clone(),
             self.resource_control.clone(),
             self.ru_details.clone(),
+            self.lock_resolver_context.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -1000,6 +1001,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.resource_group_name.clone(),
             self.resource_control.clone(),
             self.ru_details.clone(),
+            self.lock_resolver_context.clone(),
             self.buffer.get_write_size() as u64,
             self.start_instant,
         )
@@ -1044,10 +1046,11 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let plan = self
             .plan(request)
-            .resolve_lock(
+            .resolve_lock_with_context(
                 self.timestamp.clone(),
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
+                self.lock_resolver_context.clone(),
             )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
@@ -1178,10 +1181,11 @@ impl<PdC: PdClient> Transaction<PdC> {
         let plan = self
             .plan(request)
             .priority(self.options.priority)
-            .resolve_lock(
+            .resolve_lock_with_context(
                 self.timestamp.clone(),
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
+                self.lock_resolver_context.clone(),
             )
             .preserve_shard()
             .retry_multi_region_preserve_results(self.options.retry_options.region_backoff.clone())
@@ -1248,10 +1252,11 @@ impl<PdC: PdClient> Transaction<PdC> {
         let plan = self
             .plan(req)
             .priority(self.options.priority)
-            .resolve_lock(
+            .resolve_lock_with_context(
                 start_version,
                 self.options.retry_options.lock_backoff.clone(),
                 self.keyspace,
+                self.lock_resolver_context.clone(),
             )
             .retry_multi_region(self.options.retry_options.region_backoff.clone())
             .extract_error()
@@ -1680,6 +1685,7 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     resource_group_name: Option<String>,
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
+    lock_resolver_context: ResolveLocksContext,
     #[new(default)]
     undetermined: bool,
     write_size: u64,
@@ -1776,10 +1782,11 @@ impl<PdC: PdClient> Committer<PdC> {
             request,
         )
         .priority(self.options.priority)
-        .resolve_lock(
+        .resolve_lock_with_context(
             self.start_version.clone(),
             self.options.retry_options.lock_backoff.clone(),
             self.keyspace,
+            self.lock_resolver_context.clone(),
         )
         .retry_multi_region(self.options.retry_options.region_backoff.clone())
         .merge(CollectError)
@@ -1834,10 +1841,11 @@ impl<PdC: PdClient> Committer<PdC> {
             req,
         )
         .priority(self.options.priority)
-        .resolve_lock(
+        .resolve_lock_with_context(
             self.start_version.clone(),
             self.options.retry_options.lock_backoff.clone(),
             self.keyspace,
+            self.lock_resolver_context.clone(),
         )
         .retry_multi_region(self.options.retry_options.region_backoff.clone())
         .extract_error()
@@ -1954,6 +1962,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 .filter(|key| &primary_key != key);
             new_commit_request(keys, start_version.clone(), commit_version)
         };
+        let lock_resolver_context = self.lock_resolver_context;
         let plan = plan_with_keyspace_name(
             self.rpc,
             self.keyspace,
@@ -1966,10 +1975,11 @@ impl<PdC: PdClient> Committer<PdC> {
             req,
         )
         .priority(self.options.priority)
-        .resolve_lock(
+        .resolve_lock_with_context(
             start_version,
             self.options.retry_options.lock_backoff,
             self.keyspace,
+            lock_resolver_context,
         )
         .retry_multi_region(self.options.retry_options.region_backoff)
         .extract_error()
@@ -2018,6 +2028,7 @@ impl<PdC: PdClient> Committer<PdC> {
         let resource_group_name = self.resource_group_name;
         let resource_control = self.resource_control;
         let ru_details = self.ru_details;
+        let lock_resolver_context = self.lock_resolver_context;
         let priority = self.options.priority;
         match self.options.kind {
             TransactionKind::Pessimistic(for_update_ts) if !prewritten => {
@@ -2035,7 +2046,12 @@ impl<PdC: PdClient> Committer<PdC> {
                     req,
                 )
                 .priority(priority)
-                .resolve_lock(start_version, lock_backoff, keyspace)
+                .resolve_lock_with_context(
+                    start_version,
+                    lock_backoff,
+                    keyspace,
+                    lock_resolver_context,
+                )
                 .retry_multi_region(region_backoff)
                 .extract_error()
                 .plan();
@@ -2057,7 +2073,12 @@ impl<PdC: PdClient> Committer<PdC> {
                     req,
                 )
                 .priority(priority)
-                .resolve_lock(start_version, lock_backoff, keyspace)
+                .resolve_lock_with_context(
+                    start_version,
+                    lock_backoff,
+                    keyspace,
+                    lock_resolver_context,
+                )
                 .retry_multi_region(region_backoff)
                 .extract_error()
                 .plan();
@@ -2114,6 +2135,7 @@ impl From<u8> for TransactionStatus {
 
 #[cfg(test)]
 mod tests {
+    use super::CheckLevel;
     use super::TransactionStatus;
     use crate::transaction::ResolveLocksContext;
     use std::any::Any;
@@ -2459,6 +2481,63 @@ mod tests {
             txn.get("second".to_owned()).await.unwrap(),
             Some(Vec::new())
         );
+        assert_eq!(status_checks.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn transactional_write_retries_share_the_client_lock_resolver_status_cache() {
+        let heartbeat_attempts = Arc::new(AtomicUsize::new(0));
+        let heartbeat_attempts_by_hook = Arc::clone(&heartbeat_attempts);
+        let status_checks = Arc::new(AtomicUsize::new(0));
+        let status_checks_by_hook = Arc::clone(&status_checks);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req.is::<kvrpcpb::TxnHeartBeatRequest>() {
+                    let attempt = heartbeat_attempts_by_hook.fetch_add(1, Ordering::SeqCst);
+                    if attempt % 2 == 0 {
+                        return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: b"write".to_vec(),
+                                    primary_lock: b"write".to_vec(),
+                                    lock_version: 1,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    return Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    status_checks_by_hook.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request while testing write resolver status sharing");
+            },
+        )));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(3),
+            pd_client,
+            TransactionOptions::new_optimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        txn.set_lock_resolver_context(ResolveLocksContext::default());
+        txn.put("write".to_owned(), "value".to_owned())
+            .await
+            .unwrap();
+
+        txn.send_heart_beat().await.unwrap();
+        txn.send_heart_beat().await.unwrap();
+
+        assert_eq!(heartbeat_attempts.load(Ordering::SeqCst), 4);
         assert_eq!(status_checks.load(Ordering::SeqCst), 1);
     }
 

@@ -831,21 +831,6 @@ impl Default for ResolveLocksOptions {
 }
 
 impl ResolveLocksContext {
-    pub(crate) fn with_request_options(
-        rpc_interceptor: Option<RpcInterceptorChain>,
-        resource_group_name: Option<String>,
-        resource_control: Option<ResourceGroupControllerHandle>,
-        ru_details: Option<Arc<crate::RuDetails>>,
-    ) -> Self {
-        Self {
-            rpc_interceptor,
-            resource_group_name,
-            resource_control,
-            ru_details,
-            ..Default::default()
-        }
-    }
-
     pub async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
         self.resolved.lock().await.statuses.get(&txn_id).cloned()
     }

@@ -236,6 +236,22 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
+        self.resolve_lock_with_context(timestamp, backoff, keyspace, ResolveLocksContext::default())
+    }
+
+    /// If there is a lock error, resolve the lock and retry the request with
+    /// caller-owned resolver state.
+    pub(crate) fn resolve_lock_with_context(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+        keyspace: Keyspace,
+        mut resolve_locks_context: ResolveLocksContext,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    where
+        P: Shardable,
+        P::Result: HasLocks,
+    {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
@@ -249,12 +265,13 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 resource_group_name: self.resource_group_name.clone(),
                 resource_control: self.resource_control.clone(),
                 ru_details: self.ru_details.clone(),
-                resolve_locks_context: ResolveLocksContext::with_request_options(
-                    self.rpc_interceptor.clone(),
-                    self.resource_group_name.clone(),
-                    self.resource_control.clone(),
-                    self.ru_details.clone(),
-                ),
+                resolve_locks_context: {
+                    resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
+                    resolve_locks_context.resource_group_name = self.resource_group_name.clone();
+                    resolve_locks_context.resource_control = self.resource_control.clone();
+                    resolve_locks_context.ru_details = self.ru_details.clone();
+                    resolve_locks_context
+                },
                 read_lock_context: None,
             },
             keyspace_name: self.keyspace_name,

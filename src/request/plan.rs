@@ -46,7 +46,7 @@ use crate::store::KvClient;
 use crate::store::RegionStore;
 use crate::store::{HasKeyErrors, Store};
 use crate::transaction::resolve_locks_for_read_with_context;
-use crate::transaction::resolve_locks_with_ru_details;
+use crate::transaction::resolve_locks_with_context;
 use crate::transaction::HasLocks;
 use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
@@ -1476,16 +1476,13 @@ where
                     .await?
                 }
                 None => {
-                    resolve_locks_with_ru_details(
+                    resolve_locks_with_context(
                         locks,
                         self.timestamp.clone(),
                         pd_client.clone(),
                         self.keyspace,
                         self.keyspace_name.as_deref(),
-                        self.rpc_interceptor.clone(),
-                        self.resource_group_name.as_deref(),
-                        self.resource_control.clone(),
-                        self.ru_details.clone(),
+                        self.resolve_locks_context.clone(),
                     )
                     .await?
                 }
