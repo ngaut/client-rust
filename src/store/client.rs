@@ -135,6 +135,10 @@ lazy_static::lazy_static! {
     static ref RESOLVE_LOCK_COLLAPSER: ResolveLockCollapser = ResolveLockCollapser::default();
 }
 
+/// Client-go's fixed `internal/client.dialTimeout`. This transport-lifecycle
+/// deadline is intentionally independent of the caller's RPC timeout.
+pub(crate) const TIKV_DIAL_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// A trait for connecting to TiKV stores.
 #[async_trait]
 pub trait KvConnect: Sized + Send + Sync + 'static {
@@ -147,6 +151,7 @@ pub trait KvConnect: Sized + Send + Sync + 'static {
 pub struct TikvConnect {
     security_mgr: Arc<SecurityManager>,
     timeout: Duration,
+    dial_timeout: Duration,
     grpc_max_decoding_message_size: usize,
     send_gzip_requests: bool,
     grpc_keepalive_time: Duration,
@@ -195,6 +200,7 @@ impl TikvConnect {
         Self {
             security_mgr,
             timeout,
+            dial_timeout: TIKV_DIAL_TIMEOUT,
             grpc_max_decoding_message_size,
             send_gzip_requests: grpc_compression_type == "gzip",
             grpc_keepalive_time,
@@ -233,12 +239,13 @@ impl KvConnect for TikvConnect {
         for _ in 0..self.grpc_connection_count {
             let (client, debug_client) = self
                 .security_mgr
-                .connect_with_http2_settings(
+                .connect_with_http2_settings_and_timeout(
                     address,
                     self.grpc_keepalive_time,
                     self.grpc_keepalive_timeout,
                     self.grpc_initial_stream_window_size,
                     self.grpc_initial_connection_window_size,
+                    Some(self.dial_timeout),
                     |channel| {
                         let debug_client = DebugClient::new(channel.clone());
                         let client = TikvClient::new(channel)
@@ -301,6 +308,7 @@ mod tests {
         assert!(gzip.send_gzip_requests);
         assert_eq!(none.grpc_keepalive_time, Duration::from_secs(10));
         assert_eq!(none.grpc_keepalive_timeout, Duration::from_secs(3));
+        assert_eq!(none.dial_timeout, Duration::from_secs(5));
         assert_eq!(gzip.grpc_keepalive_time, Duration::from_secs(17));
         assert_eq!(gzip.grpc_keepalive_timeout, Duration::from_millis(1250));
         assert_eq!(gzip.grpc_initial_stream_window_size, Some(1 << 26));
@@ -535,9 +543,17 @@ mod tests {
             1.0
         );
 
-        let error = KvClient::dispatch(&rpc, &crate::proto::kvrpcpb::PrewriteRequest::default())
-            .await
-            .unwrap_err();
+        let request = crate::proto::kvrpcpb::PrewriteRequest {
+            context: Some(kvrpcpb::Context {
+                peer: Some(crate::proto::metapb::Peer {
+                    store_id: 42,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let error = KvClient::dispatch(&rpc, &request).await.unwrap_err();
         assert!(matches!(
             error,
             crate::Error::Connection {
@@ -549,6 +565,12 @@ mod tests {
         assert_eq!(
             crate::stats::grpc_connection_state("store-a-0", "store-a", "TRANSIENT_FAILURE"),
             1.0
+        );
+        let transient_failures = crate::stats::grpc_connection_transient_failures("store-a", 42);
+        let _ = KvClient::dispatch(&rpc, &request).await.unwrap_err();
+        assert_eq!(
+            crate::stats::grpc_connection_transient_failures("store-a", 42),
+            transient_failures + 1
         );
         rpc.close();
         assert_eq!(
@@ -1284,6 +1306,7 @@ impl KvRpcClient {
             .downcast_ref::<crate::proto::debugpb::GetRegionPropertiesRequest>()
         {
             let index = self.next_client_index();
+            self.observe_transient_failure_before_send(index, request);
             let Some(debug_clients) = self.debug_clients.as_ref() else {
                 let result = crate::trace::with_grpc_open_tracing(
                     self.open_tracing_enable,
@@ -1363,6 +1386,7 @@ impl KvRpcClient {
         }
         let index = self.next_client_index();
         let timeout = timeout.unwrap_or(self.timeout);
+        self.observe_transient_failure_before_send(index, request);
         self.set_connection_state(index, GrpcConnectionState::Connecting);
         let mut result = crate::trace::with_grpc_open_tracing(
             self.open_tracing_enable,
@@ -1407,6 +1431,22 @@ impl KvRpcClient {
 
     pub(crate) fn mark_connection_transient_failure(&self, index: usize) {
         self.set_connection_state(index, GrpcConnectionState::TransientFailure);
+    }
+
+    fn observe_transient_failure_before_send(&self, index: usize, request: &dyn Request) {
+        if self.connection_states[index].load(Ordering::Acquire)
+            != GrpcConnectionState::TransientFailure as u8
+        {
+            return;
+        }
+        let Some(connection) = self.connection.read().unwrap().clone() else {
+            return;
+        };
+        let store_id = request
+            .tikv_context()
+            .and_then(|context| context.peer.as_ref())
+            .map_or(0, |peer| peer.store_id);
+        crate::stats::increment_grpc_connection_transient_failure(&connection.address, store_id);
     }
 
     fn wrap_connection_error(&self, error: crate::Error) -> crate::Error {
