@@ -456,6 +456,68 @@ impl RegionRetryState for SnapshotRegionBackoff {
     }
 }
 
+/// Snapshot lock waits use a source-shaped cumulative backoffer. client-go
+/// caps each `txnLockFast` sleep at the remaining lock TTL. Mutations retain
+/// their legacy [`Backoff`] handling in [`ResolveLock`].
+#[derive(Clone)]
+pub(crate) struct SnapshotLockBackoff {
+    backoff: RetryBackoffer,
+    stats: Option<Arc<SnapshotRuntimeStats>>,
+}
+
+impl SnapshotLockBackoff {
+    pub(crate) fn new(stats: Option<Arc<SnapshotRuntimeStats>>) -> Self {
+        Self {
+            backoff: RetryBackoffer::new(Cancellation::default(), SNAPSHOT_MAX_BACKOFF_MS),
+            stats,
+        }
+    }
+
+    async fn backoff_with_max_sleep_txn_lock_fast(
+        &mut self,
+        max_sleep_ms: u64,
+        reason: String,
+    ) -> Result<()> {
+        let before_count = self
+            .backoff
+            .times_by_type()
+            .get("txnLockFast")
+            .copied()
+            .unwrap_or_default();
+        let before_sleep = self
+            .backoff
+            .sleep_by_type()
+            .get("txnLockFast")
+            .copied()
+            .unwrap_or_default();
+        let result = self
+            .backoff
+            .backoff_with_max_sleep_txn_lock_fast(max_sleep_ms, reason)
+            .await;
+        let after_count = self
+            .backoff
+            .times_by_type()
+            .get("txnLockFast")
+            .copied()
+            .unwrap_or_default();
+        let after_sleep = self
+            .backoff
+            .sleep_by_type()
+            .get("txnLockFast")
+            .copied()
+            .unwrap_or_default();
+        if after_count > before_count {
+            if let Some(stats) = &self.stats {
+                stats.record_backoff(
+                    "txnLockFast",
+                    Duration::from_millis(after_sleep.saturating_sub(before_sleep)),
+                );
+            }
+        }
+        result.map_err(|error| Error::StringError(error.to_string()))
+    }
+}
+
 #[async_trait]
 impl RegionRetryState for RetryBackoffer {
     async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool> {
@@ -1537,6 +1599,8 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub(crate) read_lock_context: Option<ReadLockContext>,
     /// Present only for snapshot reads that enabled runtime statistics.
     pub(crate) snapshot_runtime_stats: Option<Arc<SnapshotRuntimeStats>>,
+    /// Snapshot reads own client-go's cumulative `txnLockFast` state.
+    pub(crate) snapshot_lock_backoff: Option<SnapshotLockBackoff>,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1555,6 +1619,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             resolve_locks_context: self.resolve_locks_context.clone(),
             read_lock_context: self.read_lock_context.clone(),
             snapshot_runtime_stats: self.snapshot_runtime_stats.clone(),
+            snapshot_lock_backoff: self.snapshot_lock_backoff.clone(),
         }
     }
 }
@@ -1629,6 +1694,19 @@ where
             let lock_result = lock_result?;
             let live_locks = lock_result.live_locks;
             if live_locks.is_empty() {
+                result = clone.execute_inner().await?;
+            } else if let Some(snapshot_lock_backoff) = clone.snapshot_lock_backoff.as_mut() {
+                // client-go only waits when the resolver reports a positive
+                // remaining TTL. A zero TTL is retried immediately.
+                if lock_result.ms_before_expired > 0 {
+                    crate::stats::increment_lock_resolver_action("wait_expired");
+                    snapshot_lock_backoff
+                        .backoff_with_max_sleep_txn_lock_fast(
+                            lock_result.ms_before_expired as u64,
+                            "key is locked during snapshot read".to_owned(),
+                        )
+                        .await?;
+                }
                 result = clone.execute_inner().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
@@ -2811,6 +2889,7 @@ mod test {
                 resolve_locks_context: ResolveLocksContext::default(),
                 read_lock_context: None,
                 snapshot_runtime_stats: None,
+                snapshot_lock_backoff: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),

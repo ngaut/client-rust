@@ -4222,6 +4222,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transactional_read_caps_txn_lock_fast_backoff_at_lock_ttl() {
+        let lock_version = Timestamp {
+            physical: 10,
+            logical: 0,
+            ..Default::default()
+        }
+        .version();
+        let get_attempts = Arc::new(AtomicUsize::new(0));
+        let get_attempts_by_hook = Arc::clone(&get_attempts);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req.is::<kvrpcpb::GetRequest>() {
+                    if get_attempts_by_hook.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: b"read".to_vec(),
+                                    primary_lock: b"read".to_vec(),
+                                    lock_version,
+                                    lock_ttl: 1,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    return Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 1,
+                        lock_info: Some(kvrpcpb::LockInfo {
+                            key: b"read".to_vec(),
+                            primary_lock: b"read".to_vec(),
+                            lock_version,
+                            lock_ttl: 1,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request while waiting for a snapshot read lock");
+            },
+        )));
+        pd_client.set_timestamp(Timestamp {
+            physical: 10,
+            logical: 0,
+            ..Default::default()
+        });
+        let mut txn = Transaction::new(
+            Timestamp {
+                physical: 10,
+                logical: 1,
+                ..Default::default()
+            },
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        let stats = Arc::new(crate::SnapshotRuntimeStats::new());
+        txn.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
+
+        assert_eq!(txn.get("read".to_owned()).await.unwrap(), Some(Vec::new()));
+        assert_eq!(get_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(stats.backoff_count("txnLockFast"), 1);
+        assert_eq!(
+            stats.backoff_duration("txnLockFast"),
+            Duration::from_millis(1)
+        );
+    }
+
+    #[tokio::test]
     async fn transactional_reads_share_the_client_lock_resolver_status_cache() {
         let get_attempts = Arc::new(Mutex::new(HashMap::<Vec<u8>, usize>::new()));
         let get_attempts_by_hook = Arc::clone(&get_attempts);

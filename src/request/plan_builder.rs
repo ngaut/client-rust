@@ -10,8 +10,8 @@ use crate::backoff::Backoff;
 use crate::interceptor::RpcInterceptorChain;
 use crate::kv::ReplicaReadConfig;
 use crate::pd::PdClient;
-use crate::request::plan::SnapshotRegionBackoff;
 use crate::request::plan::{CleanupLocks, RegionRetryState, RetryableAllStores};
+use crate::request::plan::{SnapshotLockBackoff, SnapshotRegionBackoff};
 use crate::request::shard::HasNextBatch;
 use crate::request::Dispatch;
 use crate::request::ExtractError;
@@ -346,6 +346,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 },
                 read_lock_context: None,
                 snapshot_runtime_stats: None,
+                snapshot_lock_backoff: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -393,6 +394,9 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                     resolve_locks_context
                 },
                 read_lock_context: Some(read_lock_context),
+                snapshot_lock_backoff: Some(SnapshotLockBackoff::new(
+                    snapshot_runtime_stats.clone(),
+                )),
                 snapshot_runtime_stats,
             },
             keyspace_name: self.keyspace_name,
