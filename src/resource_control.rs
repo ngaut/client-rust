@@ -2,6 +2,8 @@
 
 use std::any::Any;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -301,6 +303,45 @@ pub trait ResourceGroupController: Send + Sync {
 }
 
 pub type ResourceGroupControllerHandle = Arc<dyn ResourceGroupController>;
+
+#[derive(Default)]
+struct GlobalResourceControl {
+    enabled: bool,
+    controller: Option<ResourceGroupControllerHandle>,
+}
+
+fn global_resource_control() -> &'static RwLock<GlobalResourceControl> {
+    static RESOURCE_CONTROL: OnceLock<RwLock<GlobalResourceControl>> = OnceLock::new();
+    RESOURCE_CONTROL.get_or_init(|| RwLock::new(GlobalResourceControl::default()))
+}
+
+/// Enables the process-wide source-compatible resource-control dispatch path.
+pub fn enable_resource_control() {
+    global_resource_control().write().unwrap().enabled = true;
+}
+
+/// Disables the process-wide source-compatible resource-control dispatch path.
+pub fn disable_resource_control() {
+    global_resource_control().write().unwrap().enabled = false;
+}
+
+/// Installs the controller used by enabled process-wide resource control.
+pub fn set_resource_control_interceptor(controller: ResourceGroupControllerHandle) {
+    global_resource_control().write().unwrap().controller = Some(controller);
+}
+
+/// Removes the controller used by process-wide resource control.
+pub fn unset_resource_control_interceptor() {
+    global_resource_control().write().unwrap().controller = None;
+}
+
+pub(crate) fn global_controller() -> Option<ResourceGroupControllerHandle> {
+    let resource_control = global_resource_control().read().unwrap();
+    resource_control
+        .enabled
+        .then(|| resource_control.controller.clone())
+        .flatten()
+}
 
 pub(crate) struct SelectedResourceControl {
     pub resource_group_name: String,

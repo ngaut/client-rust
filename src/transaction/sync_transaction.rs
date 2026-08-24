@@ -34,6 +34,16 @@ impl SyncTransaction {
         self.inner.add_rpc_interceptor(interceptor);
     }
 
+    /// Assign the source-compatible resource group to subsequent transaction RPCs.
+    pub fn set_resource_group_name(&mut self, resource_group_name: impl Into<String>) {
+        self.inner.set_resource_group_name(resource_group_name);
+    }
+
+    /// Attach a PD resource-group controller to subsequent transaction RPCs.
+    pub fn set_resource_control(&mut self, controller: crate::ResourceGroupControllerHandle) {
+        self.inner.set_resource_control(controller);
+    }
+
     /// Get the value associated with the given key.
     pub fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         safe_block_on(&self.runtime, self.inner.get(key))

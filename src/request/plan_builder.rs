@@ -44,6 +44,8 @@ pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
     plan: P,
     keyspace_name: Option<String>,
     rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<String>,
+    resource_control: Option<ResourceGroupControllerHandle>,
     phantom: PhantomData<Ph>,
 }
 
@@ -83,6 +85,8 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
             },
             keyspace_name: None,
             rpc_interceptor: None,
+            resource_group_name: None,
+            resource_control: None,
             phantom: PhantomData,
         }
     }
@@ -142,6 +146,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self.plan
             .request
             .set_resource_group_name(resource_group_name.as_ref());
+        self.resource_group_name = Some(resource_group_name.as_ref().to_owned());
         self
     }
 
@@ -150,7 +155,8 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     /// The controller runs before normal RPC interceptors, fills TiKV's
     /// penalty and fallback priority, and settles only non-error responses.
     pub fn resource_control(mut self, controller: ResourceGroupControllerHandle) -> Self {
-        self.plan.resource_control = Some(controller);
+        self.plan.resource_control = Some(controller.clone());
+        self.resource_control = Some(controller);
         self
     }
 
@@ -209,9 +215,13 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 keyspace,
                 keyspace_name: self.keyspace_name.clone(),
                 rpc_interceptor: self.rpc_interceptor.clone(),
+                resource_group_name: self.resource_group_name.clone(),
+                resource_control: self.resource_control.clone(),
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
             phantom: PhantomData,
         }
     }
@@ -239,9 +249,13 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 keyspace,
                 keyspace_name: self.keyspace_name.clone(),
                 rpc_interceptor: self.rpc_interceptor.clone(),
+                resource_group_name: self.resource_group_name.clone(),
+                resource_control: self.resource_control.clone(),
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
             phantom: PhantomData,
         }
     }
@@ -262,6 +276,8 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
             phantom: PhantomData,
         }
     }
@@ -282,6 +298,8 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
             phantom: PhantomData,
         }
     }
@@ -332,6 +350,8 @@ where
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
             phantom: PhantomData,
         }
     }
@@ -349,6 +369,8 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
             self.pd_client,
             self.keyspace_name,
             self.rpc_interceptor,
+            self.resource_group_name,
+            self.resource_control,
         )
     }
 }
@@ -370,6 +392,8 @@ where
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
             phantom: PhantomData,
         }
     }
@@ -388,6 +412,8 @@ where
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
             phantom: PhantomData,
         }
     }
@@ -403,6 +429,8 @@ where
             plan: ExtractError { inner: self.plan },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
             phantom: self.phantom,
         }
     }
@@ -414,6 +442,8 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     pd_client: Arc<PdC>,
     keyspace_name: Option<String>,
     rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<String>,
+    resource_control: Option<ResourceGroupControllerHandle>,
 ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
     plan.request.set_leader(&store.request_region())?;
     plan.kv_client = Some(store.client);
@@ -426,6 +456,8 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
         pd_client,
         keyspace_name,
         rpc_interceptor,
+        resource_group_name,
+        resource_control,
         phantom: PhantomData,
     })
 }

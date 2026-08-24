@@ -233,8 +233,13 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     /// Assign subsequent transaction requests to `resource_group_name`.
     /// The group is sent on every physical TiKV request, including retries.
-    pub fn set_resource_group(&mut self, resource_group_name: impl Into<String>) {
+    pub fn set_resource_group_name(&mut self, resource_group_name: impl Into<String>) {
         self.resource_group_name = Some(resource_group_name.into());
+    }
+
+    /// Native shorthand for [`Self::set_resource_group_name`].
+    pub fn set_resource_group(&mut self, resource_group_name: impl Into<String>) {
+        self.set_resource_group_name(resource_group_name);
     }
 
     /// Attach a PD resource-group controller to subsequent transaction RPCs.
@@ -2056,6 +2061,8 @@ mod tests {
 
     use fail::FailScenario;
 
+    use crate::disable_resource_control;
+    use crate::enable_resource_control;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::new_rpc_interceptor;
@@ -2063,7 +2070,9 @@ mod tests {
     use crate::proto::pdpb::Timestamp;
     use crate::proto::resource_manager;
     use crate::request::Keyspace;
+    use crate::set_resource_control_interceptor;
     use crate::transaction::HeartbeatOption;
+    use crate::unset_resource_control_interceptor;
     use crate::Error;
     use crate::KvPair;
     use crate::Priority;
@@ -2073,6 +2082,8 @@ mod tests {
     use crate::ResourceControlRequestInfo;
     use crate::ResourceGroupController;
     use crate::ResponseWaitResult;
+
+    static GLOBAL_RESOURCE_CONTROL_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     struct RecordingResourceController {
         events: Arc<Mutex<Vec<&'static str>>>,
@@ -2364,6 +2375,57 @@ mod tests {
         assert!(txn.get("key".to_owned()).await.is_err());
         assert_eq!(*events.lock().unwrap(), ["request"]);
         txn.set_status(TransactionStatus::Rolledback);
+    }
+
+    #[tokio::test]
+    async fn global_resource_control_requires_enable_and_uses_source_group_name() {
+        let _global_test_guard = GLOBAL_RESOURCE_CONTROL_TEST_LOCK.lock().unwrap();
+        disable_resource_control();
+        unset_resource_control_interceptor();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        set_resource_control_interceptor(Arc::new(RecordingResourceController {
+            events: Arc::clone(&events),
+        }));
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                let request = req.downcast_ref::<kvrpcpb::GetRequest>().unwrap();
+                assert_eq!(
+                    request
+                        .context
+                        .as_ref()
+                        .and_then(|context| context.resource_control_context.as_ref())
+                        .unwrap()
+                        .resource_group_name,
+                    "test-rg"
+                );
+                Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>)
+            },
+        )));
+        let mut disabled = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client.clone(),
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        );
+        disabled.set_resource_group_name("test-rg");
+        disabled.get("disabled".to_owned()).await.unwrap();
+        disabled.set_status(TransactionStatus::Rolledback);
+        assert!(events.lock().unwrap().is_empty());
+
+        enable_resource_control();
+        let mut enabled = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        );
+        enabled.set_resource_group_name("test-rg");
+        enabled.get("enabled".to_owned()).await.unwrap();
+        enabled.set_status(TransactionStatus::Rolledback);
+        disable_resource_control();
+        unset_resource_control_interceptor();
+
+        assert_eq!(*events.lock().unwrap(), ["request", "response"]);
     }
 
     #[tokio::test]

@@ -82,6 +82,17 @@ impl Snapshot {
         self.transaction.set_priority(priority);
     }
 
+    /// Set the source-compatible resource group on subsequent snapshot RPCs.
+    pub fn set_resource_group_name(&mut self, resource_group_name: impl Into<String>) {
+        self.transaction
+            .set_resource_group_name(resource_group_name);
+    }
+
+    /// Attach a PD resource-group controller to subsequent snapshot RPCs.
+    pub fn set_resource_control(&mut self, controller: crate::ResourceGroupControllerHandle) {
+        self.transaction.set_resource_control(controller);
+    }
+
     /// Replace the RPC interceptor used by subsequent snapshot requests.
     pub fn set_rpc_interceptor(&mut self, interceptor: RpcInterceptorHandle) {
         self.transaction.set_rpc_interceptor(interceptor);

@@ -97,8 +97,11 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
 
     async fn execute(&self) -> Result<Self::Result> {
         let mut request = self.request.clone();
-        let selected_resource_control = self
+        let resource_control = self
             .resource_control
+            .clone()
+            .or_else(crate::resource_control::global_controller);
+        let selected_resource_control = resource_control
             .as_ref()
             .and_then(|controller| crate::resource_control::select(controller, &request));
         if let Some(selected) = &selected_resource_control {
@@ -1359,6 +1362,8 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub keyspace: Keyspace,
     pub keyspace_name: Option<String>,
     pub rpc_interceptor: Option<RpcInterceptorChain>,
+    pub resource_group_name: Option<String>,
+    pub resource_control: Option<ResourceGroupControllerHandle>,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1371,6 +1376,8 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             keyspace: self.keyspace,
             keyspace_name: self.keyspace_name.clone(),
             rpc_interceptor: self.rpc_interceptor.clone(),
+            resource_group_name: self.resource_group_name.clone(),
+            resource_control: self.resource_control.clone(),
         }
     }
 }
@@ -1409,6 +1416,8 @@ where
                 self.keyspace,
                 self.keyspace_name.as_deref(),
                 self.rpc_interceptor.clone(),
+                self.resource_group_name.as_deref(),
+                self.resource_control.clone(),
             )
             .await?;
             if live_locks.is_empty() {
@@ -1478,6 +1487,8 @@ pub struct CleanupLocks<P: Plan, PdC: PdClient> {
     pub keyspace: Keyspace,
     pub keyspace_name: Option<String>,
     pub rpc_interceptor: Option<RpcInterceptorChain>,
+    pub resource_group_name: Option<String>,
+    pub resource_control: Option<ResourceGroupControllerHandle>,
     pub backoff: Backoff,
 }
 
@@ -1492,6 +1503,8 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
             keyspace: self.keyspace,
             keyspace_name: self.keyspace_name.clone(),
             rpc_interceptor: self.rpc_interceptor.clone(),
+            resource_group_name: self.resource_group_name.clone(),
+            resource_control: self.resource_control.clone(),
             backoff: self.backoff.clone(),
         }
     }
@@ -1509,6 +1522,8 @@ where
         let mut inner = self.inner.clone();
         let mut context = self.ctx.clone();
         context.rpc_interceptor = self.rpc_interceptor.clone();
+        context.resource_group_name = self.resource_group_name.clone();
+        context.resource_control = self.resource_control.clone();
         let mut lock_resolver = crate::transaction::LockResolver::new(context);
         let region = &self.store.as_ref().unwrap().region_with_leader;
         let mut has_more_batch = true;
@@ -2485,6 +2500,8 @@ mod test {
                 keyspace: Keyspace::Disable,
                 keyspace_name: None,
                 rpc_interceptor: None,
+                resource_group_name: None,
+                resource_control: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),

@@ -17,6 +17,7 @@ use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::interceptor::RpcInterceptorChain;
 use crate::kv::HexRepr;
 use crate::pd::PdClient;
+use crate::resource_control::ResourceGroupControllerHandle;
 
 use crate::proto::kvrpcpb;
 use crate::proto::kvrpcpb::TxnInfo;
@@ -86,6 +87,8 @@ pub async fn resolve_locks(
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
     rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<&str>,
+    resource_control: Option<ResourceGroupControllerHandle>,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
     reject_shared_locks(&locks)?;
@@ -96,6 +99,8 @@ pub async fn resolve_locks(
     let mut live_locks = Vec::new();
     let mut lock_resolver = LockResolver::new(ResolveLocksContext {
         rpc_interceptor,
+        resource_group_name: resource_group_name.map(ToOwned::to_owned),
+        resource_control,
         ..Default::default()
     });
 
@@ -170,6 +175,8 @@ pub async fn resolve_locks(
                 keyspace,
                 keyspace_name,
                 lock_resolver.ctx.rpc_interceptor.clone(),
+                lock_resolver.ctx.resource_group_name.as_deref(),
+                lock_resolver.ctx.resource_control.clone(),
                 OPTIMISTIC_BACKOFF,
             )
             .await?;
@@ -191,6 +198,8 @@ async fn resolve_lock_with_retry(
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
     rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<&str>,
+    resource_control: Option<ResourceGroupControllerHandle>,
     mut backoff: Backoff,
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
@@ -206,6 +215,8 @@ async fn resolve_lock_with_retry(
             match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
                 .keyspace_name_option(keyspace_name)
                 .rpc_interceptor_option(rpc_interceptor.clone())
+                .resource_group_option(resource_group_name)
+                .resource_control_option(resource_control.clone())
                 .single_region_with_store(store.clone())
                 .await
             {
@@ -285,6 +296,8 @@ pub struct ResolveLocksContext {
     pub(crate) resolved: Arc<RwLock<HashMap<u64, Arc<TransactionStatus>>>>,
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
     pub(crate) rpc_interceptor: Option<RpcInterceptorChain>,
+    pub(crate) resource_group_name: Option<String>,
+    pub(crate) resource_control: Option<ResourceGroupControllerHandle>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -525,6 +538,8 @@ impl LockResolver {
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
             .keyspace_name_option(keyspace_name)
             .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
+            .resource_group_option(self.ctx.resource_group_name.as_deref())
+            .resource_control_option(self.ctx.resource_control.clone())
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
             .extract_error()
@@ -567,6 +582,8 @@ impl LockResolver {
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
             .keyspace_name_option(keyspace_name)
             .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
+            .resource_group_option(self.ctx.resource_group_name.as_deref())
+            .resource_control_option(self.ctx.resource_control.clone())
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .merge(Collect)
@@ -587,6 +604,8 @@ impl LockResolver {
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
             .keyspace_name_option(keyspace_name)
             .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
+            .resource_group_option(self.ctx.resource_group_name.as_deref())
+            .resource_control_option(self.ctx.resource_control.clone())
             .single_region_with_store(store.clone())
             .await?
             .extract_error()
@@ -683,6 +702,7 @@ mod tests {
     use std::any::Any;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
+    use std::sync::Arc;
 
     use fail::FailScenario;
     use serial_test::serial;
@@ -691,6 +711,34 @@ mod tests {
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::proto::errorpb;
+    use crate::{RequestWaitResult, ResourceControlRequestInfo, ResourceGroupController};
+    use crate::{ResponseWaitResult, Result};
+
+    struct ResolverResourceController(Arc<AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl ResourceGroupController for ResolverResourceController {
+        async fn on_request_wait(
+            &self,
+            resource_group_name: &str,
+            _: ResourceControlRequestInfo,
+        ) -> Result<RequestWaitResult> {
+            assert_eq!(resource_group_name, "resolver-rg");
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(RequestWaitResult::default())
+        }
+
+        fn on_response_wait(
+            &self,
+            resource_group_name: &str,
+            _: ResourceControlRequestInfo,
+            _: crate::ResourceControlResponseInfo,
+        ) -> Result<ResponseWaitResult> {
+            assert_eq!(resource_group_name, "resolver-rg");
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ResponseWaitResult::default())
+        }
+    }
 
     #[test]
     fn shared_locks_are_refused_never_misresolved() {
@@ -769,6 +817,8 @@ mod tests {
             keyspace,
             None,
             None,
+            None,
+            None,
             backoff.clone(),
         )
         .await
@@ -782,9 +832,11 @@ mod tests {
         )
         .unwrap();
         let key = vec![100];
-        resolve_lock_with_retry(&key, 3, 4, false, client, keyspace, None, None, backoff)
-            .await
-            .expect_err("should return error");
+        resolve_lock_with_retry(
+            &key, 3, 4, false, client, keyspace, None, None, None, None, backoff,
+        )
+        .await
+        .expect_err("should return error");
     }
 
     #[tokio::test]
@@ -795,6 +847,9 @@ mod tests {
 
         let check_txn_status_count_captured = check_txn_status_count.clone();
         let resolve_lock_count_captured = resolve_lock_count.clone();
+        let resource_control_calls = Arc::new(AtomicUsize::new(0));
+        let resource_control: ResourceGroupControllerHandle =
+            Arc::new(ResolverResourceController(resource_control_calls.clone()));
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |req: &dyn Any| {
                 if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
@@ -802,6 +857,14 @@ mod tests {
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
                     assert_eq!(context.keyspace_id, 7);
                     assert_eq!(context.keyspace_name, "tenant");
+                    assert_eq!(
+                        context
+                            .resource_control_context
+                            .as_ref()
+                            .unwrap()
+                            .resource_group_name,
+                        "resolver-rg"
+                    );
                     check_txn_status_count_captured.fetch_add(1, Ordering::SeqCst);
                     let resp = kvrpcpb::CheckTxnStatusResponse {
                         commit_version: 2,
@@ -815,6 +878,14 @@ mod tests {
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
                     assert_eq!(context.keyspace_id, 7);
                     assert_eq!(context.keyspace_name, "tenant");
+                    assert_eq!(
+                        context
+                            .resource_control_context
+                            .as_ref()
+                            .unwrap()
+                            .resource_group_name,
+                        "resolver-rg"
+                    );
                     resolve_lock_count_captured.fetch_add(1, Ordering::SeqCst);
                     return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
                 }
@@ -835,6 +906,8 @@ mod tests {
             Keyspace::try_enable(7).unwrap(),
             Some("tenant"),
             None,
+            Some("resolver-rg"),
+            Some(resource_control),
         )
         .await
         .unwrap();
@@ -842,6 +915,7 @@ mod tests {
         assert!(live_locks.is_empty());
         assert_eq!(check_txn_status_count.load(Ordering::SeqCst), 1);
         assert_eq!(resolve_lock_count.load(Ordering::SeqCst), 1);
+        assert_eq!(resource_control_calls.load(Ordering::SeqCst), 4);
     }
 
     #[test]
