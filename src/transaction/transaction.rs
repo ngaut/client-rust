@@ -109,6 +109,9 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// Source `KVSnapshot.replicaReadAdjuster`, retained independently from
     /// the stable selection settings because it runs per get/batch-get.
     replica_read_adjuster: Option<ReplicaReadAdjuster>,
+    /// Number of keys TiKV skips after each scan result. Zero disables
+    /// sampling, matching client-go `KVSnapshot.sampleStep`.
+    sample_step: u32,
     /// client-go keeps resolved/committed transaction IDs on each snapshot;
     /// they must not leak across transactions with different read timestamps.
     read_lock_context: ReadLockContext,
@@ -173,6 +176,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             ru_details: None,
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
+            sample_step: 0,
             read_lock_context: ReadLockContext::default(),
             lock_resolver_context: ResolveLocksContext::default(),
             is_heartbeat_started: false,
@@ -229,6 +233,10 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub(crate) fn set_replica_read_adjuster(&mut self, adjuster: ReplicaReadAdjuster) {
         self.replica_read_adjuster = Some(adjuster);
+    }
+
+    pub(crate) fn set_sample_step(&mut self, sample_step: u32) {
+        self.sample_step = sample_step;
     }
 
     fn replica_read_config_for_items(&self, item_count: usize) -> ReplicaReadConfig {
@@ -1090,6 +1098,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
+        let sample_step = self.sample_step;
         let replica_read_config = self.replica_read_config.clone();
         let read_lock_context = self.read_lock_context.clone();
         let lock_resolver_context = self.lock_resolver_context.clone();
@@ -1108,6 +1117,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         new_limit,
                         key_only,
                         reverse,
+                        sample_step,
                     );
                     let plan = plan_with_keyspace_name(
                         rpc,
@@ -2268,6 +2278,34 @@ mod tests {
             Keyspace::Disable,
         );
         transaction.set_snapshot_timestamp(Timestamp::from_version(i64::MAX as u64));
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_sample_step_reaches_every_scan_request() {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::ScanRequest>()
+                    .expect("snapshot scan should dispatch ScanRequest");
+                assert_eq!(request.sample_step, 3);
+                Ok(Box::new(kvrpcpb::ScanResponse::default()) as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_sample_step(3);
+
+        let pairs: Vec<_> = transaction
+            .scan(b"a".to_vec()..b"b".to_vec(), 1)
+            .await
+            .unwrap()
+            .collect();
+
+        assert!(pairs.is_empty());
     }
 
     #[test]

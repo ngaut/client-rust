@@ -771,3 +771,5 @@ Plan revision note (2026-08-24): added the paired resolver regression: a transac
 Plan revision note (2026-08-24): added the source lite-primary regression: a small primary lock with a final CheckTxnStatus result dispatches no ResolveLock request. The focused regression and full 402-test pinned-nightly library suite pass.
 
 Plan revision note (2026-08-24): covered the strict lite threshold boundary: TxnSize equal to the configured threshold retains an empty-key, region-level ResolveLock request; only smaller transactions use key-scoped resolution. The focused regression and full 403-test pinned-nightly library suite pass.
+
+Plan revision note (2026-08-24): added client-go `KVSnapshot.SetSampleStep` to both async and sync Rust snapshot façades. The transaction retains the configured value and applies it to every generated ScanRequest, so retried scan shards cannot lose it. The focused dispatch regression observes `sample_step = 3`; request-context configuration, persistent key-only mode, scanner batch size, caching, and the atomic `txnkv/txnsnapshot` receipt remain open.

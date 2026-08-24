@@ -91,6 +91,12 @@ impl Snapshot {
         self.transaction.set_priority(priority);
     }
 
+    /// Skip `sample_step - 1` keys after each returned scan key. A step of
+    /// zero disables sampling, matching client-go `KVSnapshot.SetSampleStep`.
+    pub fn set_sample_step(&mut self, sample_step: u32) {
+        self.transaction.set_sample_step(sample_step);
+    }
+
     /// Set the source-compatible resource group on subsequent snapshot RPCs.
     pub fn set_resource_group_name(&mut self, resource_group_name: impl Into<String>) {
         self.transaction

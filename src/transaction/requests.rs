@@ -278,6 +278,7 @@ pub fn new_scan_request(
     limit: u32,
     key_only: bool,
     reverse: bool,
+    sample_step: u32,
 ) -> kvrpcpb::ScanRequest {
     let mut req = kvrpcpb::ScanRequest::default();
     if !reverse {
@@ -291,6 +292,7 @@ pub fn new_scan_request(
     req.key_only = key_only;
     req.version = timestamp;
     req.reverse = reverse;
+    req.sample_step = sample_step;
     req
 }
 

@@ -25,6 +25,11 @@ impl SyncSnapshot {
         self.inner.set_priority(priority);
     }
 
+    /// Set the TiKV scan sampling step for subsequent snapshot scans.
+    pub fn set_sample_step(&mut self, sample_step: u32) {
+        self.inner.set_sample_step(sample_step);
+    }
+
     /// Choose the TiKV replica-read type for subsequent snapshot reads.
     pub fn set_replica_read(&mut self, read_type: ReplicaReadType) {
         self.inner.set_replica_read(read_type);
