@@ -1,6 +1,7 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::any::Any;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -10,9 +11,11 @@ use tonic::transport::Channel;
 use tonic::IntoRequest;
 
 use crate::proto::coprocessor;
+use crate::proto::debugpb;
 use crate::proto::kvrpcpb;
 use crate::proto::mpp;
-use crate::proto::tikvpb::tikv_client::TikvClient;
+use crate::proto::tikvpb::{self, tikv_client::TikvClient};
+use crate::request::ApiV2Codec;
 use crate::store::RegionWithLeader;
 use crate::Error;
 use crate::Result;
@@ -28,6 +31,9 @@ macro_rules! streaming_response {
             pub first: Option<$item>,
             stream: Option<tonic::Streaming<$item>>,
             timeout: Duration,
+            ru_details: Option<Arc<crate::RuDetails>>,
+            count_read_rpc: bool,
+            bypass_ru_v2: bool,
         }
 
         #[allow(dead_code)]
@@ -36,14 +42,31 @@ macro_rules! streaming_response {
                 let Some(stream) = self.stream.as_mut() else {
                     return Ok(None);
                 };
-                tokio::time::timeout(self.timeout, stream.message())
+                let mut response = tokio::time::timeout(self.timeout, stream.message())
                     .await
                     .map_err(|_| {
                         Error::GrpcAPI(tonic::Status::deadline_exceeded(
                             "TiKV streaming response deadline exceeded",
                         ))
                     })?
-                    .map_err(Error::from)
+                    .map_err(Error::from)?;
+                if let Some(response) = response.as_mut() {
+                    self.update_ru_v2(response);
+                }
+                Ok(response)
+            }
+
+            fn update_ru_v2(&mut self, response: &mut dyn Any) {
+                if self.bypass_ru_v2 {
+                    return;
+                }
+                let read_rpc_count = i64::from(std::mem::take(&mut self.count_read_rpc));
+                crate::config::update_tikv_ru_v2_from_exec_details_v2(
+                    exec_details_v2_mut(response),
+                    read_rpc_count,
+                    0,
+                    self.ru_details.as_deref(),
+                );
             }
 
             /// Cancels the remaining stream. Dropping this value has the same
@@ -63,12 +86,81 @@ streaming_response!(MppStreamResponse, mpp::MppDataPacket);
 /// carries the same protobuf request.
 #[derive(Clone)]
 #[allow(dead_code)]
-pub struct CoprocessorStreamRequest(pub coprocessor::Request);
+pub struct CoprocessorStreamRequest {
+    request: coprocessor::Request,
+    api_v2_codec: Option<ApiV2Codec>,
+    ru_details: Option<Arc<crate::RuDetails>>,
+}
+
+#[allow(dead_code)]
+impl CoprocessorStreamRequest {
+    pub fn new(request: coprocessor::Request) -> Self {
+        Self {
+            request,
+            api_v2_codec: None,
+            ru_details: None,
+        }
+    }
+
+    pub fn with_api_v2_codec(mut self, codec: ApiV2Codec) -> Self {
+        self.api_v2_codec = Some(codec);
+        self
+    }
+
+    pub fn with_ru_details(mut self, ru_details: Arc<crate::RuDetails>) -> Self {
+        self.ru_details = Some(ru_details);
+        self
+    }
+
+    fn wire_request(&self) -> coprocessor::Request {
+        let Some(codec) = self.api_v2_codec.as_ref() else {
+            return self.request.clone();
+        };
+        let mut request = codec.encode_coprocessor_request(&self.request);
+        let context = request
+            .context
+            .get_or_insert_with(kvrpcpb::Context::default);
+        context.api_version = kvrpcpb::ApiVersion::V2 as i32;
+        context.keyspace_id = codec.keyspace_id();
+        request
+    }
+}
 
 /// Client-go's TiFlash `CmdBatchCop` server-streaming request.
 #[derive(Clone)]
 #[allow(dead_code)]
-pub struct BatchCoprocessorStreamRequest(pub coprocessor::BatchRequest);
+pub struct BatchCoprocessorStreamRequest {
+    request: coprocessor::BatchRequest,
+    api_v2_codec: Option<ApiV2Codec>,
+}
+
+#[allow(dead_code)]
+impl BatchCoprocessorStreamRequest {
+    pub fn new(request: coprocessor::BatchRequest) -> Self {
+        Self {
+            request,
+            api_v2_codec: None,
+        }
+    }
+
+    pub fn with_api_v2_codec(mut self, codec: ApiV2Codec) -> Self {
+        self.api_v2_codec = Some(codec);
+        self
+    }
+
+    fn wire_request(&self) -> coprocessor::BatchRequest {
+        let Some(codec) = self.api_v2_codec.as_ref() else {
+            return self.request.clone();
+        };
+        let mut request = codec.encode_batch_coprocessor_request(&self.request);
+        let context = request
+            .context
+            .get_or_insert_with(kvrpcpb::Context::default);
+        context.api_version = kvrpcpb::ApiVersion::V2 as i32;
+        context.keyspace_id = codec.keyspace_id();
+        request
+    }
+}
 
 /// Client-go's `CmdMPPConn` server-streaming request.
 #[derive(Clone)]
@@ -168,6 +260,14 @@ pub trait Request: Any + Sync + Send + 'static {
         0
     }
 
+    /// Apply the source transport-level codec after observability has consumed
+    /// the physical response. Most Rust requests decode in their typed plan;
+    /// stream wrappers use this hook because they cannot implement `KvRequest`
+    /// with a cloneable response.
+    fn decode_transport_response(&self, _response: &mut dyn Any) -> Result<()> {
+        Ok(())
+    }
+
     /// Source `IsTxnWriteRequest || IsRawWriteRequest` classification. The
     /// generic request wrapper owns this classification rather than callers
     /// guessing from an operation's high-level API.
@@ -204,6 +304,41 @@ pub trait Request: Any + Sync + Send + 'static {
     ) -> Result<Box<dyn Any>> {
         self.dispatch(client, timeout).await
     }
+}
+
+/// Returns the mutable execution details carried by a successful unary TiKV
+/// response. This is the native counterpart of client-go's protobuf
+/// `getExecDetailsV2` interface assertion.
+pub(crate) fn exec_details_v2_mut(response: &mut dyn Any) -> Option<&mut kvrpcpb::ExecDetailsV2> {
+    macro_rules! detail_response {
+        ($($response:ty),+ $(,)?) => {
+            $(
+                if response.is::<$response>() {
+                    return response
+                        .downcast_mut::<$response>()
+                        .and_then(|response| response.exec_details_v2.as_mut());
+                }
+            )+
+        };
+    }
+    detail_response!(
+        kvrpcpb::GetResponse,
+        kvrpcpb::PrewriteResponse,
+        kvrpcpb::PessimisticLockResponse,
+        kvrpcpb::PessimisticRollbackResponse,
+        kvrpcpb::TxnHeartBeatResponse,
+        kvrpcpb::CheckTxnStatusResponse,
+        kvrpcpb::CheckSecondaryLocksResponse,
+        kvrpcpb::CommitResponse,
+        kvrpcpb::BatchGetResponse,
+        kvrpcpb::BatchRollbackResponse,
+        kvrpcpb::ScanLockResponse,
+        kvrpcpb::ResolveLockResponse,
+        kvrpcpb::FlushResponse,
+        kvrpcpb::BufferBatchGetResponse,
+        coprocessor::Response,
+    );
+    None
 }
 
 fn with_forwarded_host<T>(
@@ -604,6 +739,58 @@ impl_store_request!(
 );
 
 #[async_trait]
+impl Request for debugpb::GetRegionPropertiesRequest {
+    async fn dispatch(
+        &self,
+        _client: &TikvClient<Channel>,
+        _timeout: Duration,
+    ) -> Result<Box<dyn Any>> {
+        Err(Error::StringError(
+            "GetRegionProperties requires KvRpcClient's debug service channel".to_owned(),
+        ))
+    }
+
+    fn label(&self) -> &'static str {
+        "debug_get_region_properties"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
+        Ok(())
+    }
+
+    fn set_api_version(&mut self, _api_version: kvrpcpb::ApiVersion) {}
+}
+
+#[async_trait]
+impl Request for tikvpb::BatchCommandsEmptyRequest {
+    async fn dispatch(
+        &self,
+        _client: &TikvClient<Channel>,
+        _timeout: Duration,
+    ) -> Result<Box<dyn Any>> {
+        Ok(Box::new(tikvpb::BatchCommandsEmptyResponse::default()))
+    }
+
+    fn label(&self) -> &'static str {
+        "empty"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
+        Ok(())
+    }
+
+    fn set_api_version(&mut self, _api_version: kvrpcpb::ApiVersion) {}
+}
+
+#[async_trait]
 impl Request for kvrpcpb::CompactRequest {
     async fn dispatch(
         &self,
@@ -830,7 +1017,7 @@ impl Request for CoprocessorStreamRequest {
         timeout: Duration,
         forwarded_host: &str,
     ) -> Result<Box<dyn Any>> {
-        let mut request = with_forwarded_host(self.0.clone().into_request(), forwarded_host)?;
+        let mut request = with_forwarded_host(self.wire_request().into_request(), forwarded_host)?;
         request.set_timeout(timeout);
         let mut stream = client
             .clone()
@@ -846,11 +1033,24 @@ impl Request for CoprocessorStreamRequest {
                 ))
             })?
             .map_err(Error::from)?;
-        Ok(Box::new(CoprocessorStreamResponse {
+        let mut response = CoprocessorStreamResponse {
             first,
             stream: Some(stream),
             timeout,
-        }))
+            ru_details: self.ru_details.clone(),
+            count_read_rpc: true,
+            bypass_ru_v2: crate::resource_control::RequestInfo::from_store_request(self).bypass,
+        };
+        if let Some(first) = response.first.as_mut() {
+            let read_rpc_count = i64::from(std::mem::take(&mut response.count_read_rpc));
+            crate::config::update_tikv_ru_v2_from_exec_details_v2(
+                exec_details_v2_mut(first),
+                read_rpc_count,
+                0,
+                response.ru_details.as_deref(),
+            );
+        }
+        Ok(Box::new(response))
     }
 
     fn label(&self) -> &'static str {
@@ -862,43 +1062,52 @@ impl Request for CoprocessorStreamRequest {
     }
 
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
-        self.0.set_leader(leader)
+        self.request.set_leader(leader)
     }
 
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
-        self.0.set_api_version(api_version);
+        self.request.set_api_version(api_version);
     }
 
     fn set_is_retry_request(&mut self) {
-        self.0.set_is_retry_request();
+        self.request.set_is_retry_request();
     }
 
     fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
-        self.0.set_keyspace_id(keyspace_id);
+        self.request.set_keyspace_id(keyspace_id);
     }
 
     fn set_keyspace_name(&mut self, keyspace_name: Option<&str>) {
-        self.0.set_keyspace_name(keyspace_name);
+        self.request.set_keyspace_name(keyspace_name);
     }
 
     fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
-        self.0.set_priority(priority);
+        self.request.set_priority(priority);
     }
 
     fn set_max_execution_duration_ms(&mut self, duration_ms: u64) {
-        self.0.set_max_execution_duration_ms(duration_ms);
+        self.request.set_max_execution_duration_ms(duration_ms);
     }
 
     fn max_execution_duration_ms(&self) -> u64 {
-        self.0.max_execution_duration_ms()
+        self.request.max_execution_duration_ms()
     }
 
     fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
-        self.0.tikv_context()
+        self.request.tikv_context()
     }
 
     fn encoded_request_size(&self) -> u64 {
-        self.0.encoded_len() as u64
+        self.wire_request().encoded_len() as u64
+    }
+
+    fn decode_transport_response(&self, _response: &mut dyn Any) -> Result<()> {
+        if self.api_v2_codec.is_some() {
+            return Err(Error::StringError(
+                "streaming coprocessor is not supported yet".to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -918,7 +1127,7 @@ impl Request for BatchCoprocessorStreamRequest {
         timeout: Duration,
         forwarded_host: &str,
     ) -> Result<Box<dyn Any>> {
-        let mut request = with_forwarded_host(self.0.clone().into_request(), forwarded_host)?;
+        let mut request = with_forwarded_host(self.wire_request().into_request(), forwarded_host)?;
         request.set_timeout(timeout);
         let mut stream = client
             .clone()
@@ -938,6 +1147,9 @@ impl Request for BatchCoprocessorStreamRequest {
             first,
             stream: Some(stream),
             timeout,
+            ru_details: None,
+            count_read_rpc: false,
+            bypass_ru_v2: true,
         }))
     }
 
@@ -954,7 +1166,7 @@ impl Request for BatchCoprocessorStreamRequest {
     }
 
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
-        self.0
+        self.request
             .context
             .get_or_insert(kvrpcpb::Context::default())
             .api_version = api_version.into();
@@ -962,7 +1174,7 @@ impl Request for BatchCoprocessorStreamRequest {
 
     fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
         if let Some(keyspace_id) = keyspace_id {
-            self.0
+            self.request
                 .context
                 .get_or_insert(kvrpcpb::Context::default())
                 .keyspace_id = keyspace_id;
@@ -971,7 +1183,7 @@ impl Request for BatchCoprocessorStreamRequest {
 
     fn set_keyspace_name(&mut self, keyspace_name: Option<&str>) {
         if let Some(keyspace_name) = keyspace_name {
-            self.0
+            self.request
                 .context
                 .get_or_insert(kvrpcpb::Context::default())
                 .keyspace_name = keyspace_name.to_owned();
@@ -979,18 +1191,18 @@ impl Request for BatchCoprocessorStreamRequest {
     }
 
     fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
-        self.0
+        self.request
             .context
             .get_or_insert(kvrpcpb::Context::default())
             .priority = priority.into();
     }
 
     fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
-        self.0.context.as_ref()
+        self.request.context.as_ref()
     }
 
     fn encoded_request_size(&self) -> u64 {
-        self.0.encoded_len() as u64
+        self.wire_request().encoded_len() as u64
     }
 }
 
@@ -1030,6 +1242,9 @@ impl Request for MppStreamRequest {
             first,
             stream: Some(stream),
             timeout,
+            ru_details: None,
+            count_read_rpc: false,
+            bypass_ru_v2: true,
         }))
     }
 
@@ -1229,5 +1444,98 @@ mod tests {
         assert_eq!(compact.api_version, kvrpcpb::ApiVersion::V2 as i32);
         assert_eq!(compact.keyspace_id, 42);
         assert_eq!(compact.label(), "compact");
+    }
+
+    #[test]
+    fn source_stream_wrappers_apply_the_v2_encode_and_decode_matrix() {
+        let codec = ApiV2Codec::new(crate::request::KeyMode::Txn, 7).unwrap();
+        let range = coprocessor::KeyRange {
+            start: b"a".to_vec(),
+            end: b"z".to_vec(),
+        };
+        let cop = CoprocessorStreamRequest::new(coprocessor::Request {
+            ranges: vec![range.clone()],
+            ..Default::default()
+        })
+        .with_api_v2_codec(codec);
+        let encoded = cop.wire_request();
+        assert_eq!(encoded.ranges[0].start, b"x\0\0\x07a");
+        assert_eq!(encoded.ranges[0].end, b"x\0\0\x07z");
+        let context = encoded.context.unwrap();
+        assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
+        assert_eq!(context.keyspace_id, 7);
+        assert!(matches!(
+            cop.decode_transport_response(&mut ()),
+            Err(Error::StringError(message)) if message == "streaming coprocessor is not supported yet"
+        ));
+
+        let batch = BatchCoprocessorStreamRequest::new(coprocessor::BatchRequest {
+            regions: vec![coprocessor::RegionInfo {
+                ranges: vec![range],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .with_api_v2_codec(codec);
+        let encoded = batch.wire_request();
+        assert_eq!(encoded.regions[0].ranges[0].start, b"x\0\0\x07a");
+        assert_eq!(encoded.regions[0].ranges[0].end, b"x\0\0\x07z");
+        let context = encoded.context.unwrap();
+        assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
+        assert_eq!(context.keyspace_id, 7);
+        assert!(batch.decode_transport_response(&mut ()).is_ok());
+    }
+
+    #[test]
+    fn source_cop_stream_ru_v2_counts_only_the_first_received_rpc() {
+        let details = Arc::new(crate::RuDetails::new());
+        let mut stream = CoprocessorStreamResponse {
+            first: None,
+            stream: None,
+            timeout: Duration::from_secs(1),
+            ru_details: Some(details.clone()),
+            count_read_rpc: true,
+            bypass_ru_v2: false,
+        };
+        let mut first = coprocessor::Response {
+            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                ru_v2: Some(kvrpcpb::Ruv2 {
+                    storage_processed_keys_get: 2,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut second = coprocessor::Response {
+            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                ru_v2: Some(kvrpcpb::Ruv2 {
+                    storage_processed_keys_get: 3,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        stream.update_ru_v2(&mut first);
+        stream.update_ru_v2(&mut second);
+
+        assert_eq!(
+            first.exec_details_v2.unwrap().ru_v2.unwrap().read_rpc_count,
+            1
+        );
+        assert_eq!(
+            second
+                .exec_details_v2
+                .unwrap()
+                .ru_v2
+                .unwrap()
+                .read_rpc_count,
+            0
+        );
+        let accumulated = details.drain_ru_v2().unwrap();
+        assert_eq!(accumulated.read_rpc_count, 1);
+        assert_eq!(accumulated.storage_processed_keys_get, 5);
     }
 }

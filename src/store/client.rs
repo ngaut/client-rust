@@ -12,15 +12,17 @@ use tokio::sync::Notify;
 use tonic::codec::CompressionEncoding;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
+use tonic::IntoRequest;
 use tonic::Request as TonicRequest;
 
 use super::batch::{BatchCommandsDispatcher, BatchCommandsWorker};
 use super::Request;
 use super::{BatchCommandRequest, BatchCommandResponse};
+use crate::proto::debugpb::debug_client::DebugClient;
 use crate::proto::kvrpcpb;
 use crate::proto::tikvpb::tikv_client::TikvClient;
-use crate::Result;
 use crate::SecurityManager;
+use crate::{Error, Result};
 
 const READ_TIMEOUT_SHORT: Duration = Duration::from_secs(30);
 
@@ -219,8 +221,9 @@ impl KvConnect for TikvConnect {
 
     async fn connect(&self, address: &str) -> Result<KvRpcClient> {
         let mut clients = Vec::with_capacity(self.grpc_connection_count);
+        let mut debug_clients = Vec::with_capacity(self.grpc_connection_count);
         for _ in 0..self.grpc_connection_count {
-            let client = self
+            let (client, debug_client) = self
                 .security_mgr
                 .connect_with_http2_settings(
                     address,
@@ -229,22 +232,28 @@ impl KvConnect for TikvConnect {
                     self.grpc_initial_stream_window_size,
                     self.grpc_initial_connection_window_size,
                     |channel| {
+                        let debug_client = DebugClient::new(channel.clone());
                         let client = TikvClient::new(channel)
                             .max_decoding_message_size(self.grpc_max_decoding_message_size)
                             .accept_compressed(CompressionEncoding::Gzip);
-                        if self.send_gzip_requests {
+                        let client = if self.send_gzip_requests {
                             client.send_compressed(CompressionEncoding::Gzip)
                         } else {
                             client
-                        }
+                        };
+                        (client, debug_client)
                     },
                 )
                 .await?;
             clients.push(client);
+            debug_clients.push(debug_client);
         }
         // The worker owns only batchable physical requests; unsupported
         // requests retain the unary path below.
-        Ok(KvRpcClient::new(clients, self.timeout).with_batch_worker(&self.batch_config))
+        Ok(
+            KvRpcClient::new_with_debug_clients(clients, debug_clients, self.timeout)
+                .with_batch_worker(&self.batch_config),
+        )
     }
 }
 
@@ -388,7 +397,7 @@ mod tests {
         );
         let response = client
             .dispatch_with_forwarded_host(
-                &crate::store::CoprocessorStreamRequest(
+                &crate::store::CoprocessorStreamRequest::new(
                     crate::proto::coprocessor::Request::default(),
                 ),
                 "store-2",
@@ -404,6 +413,27 @@ mod tests {
         );
         assert_eq!(response.message().await.unwrap(), None);
         response.close();
+        assert_eq!(
+            crate::stats::grpc_connection_state("store-stream-0", "store-stream", "READY"),
+            1.0
+        );
+
+        let error = client
+            .dispatch_with_forwarded_host(
+                &crate::store::CoprocessorStreamRequest::new(
+                    crate::proto::coprocessor::Request::default(),
+                )
+                .with_api_v2_codec(
+                    crate::request::ApiV2Codec::new(crate::request::KeyMode::Txn, 7).unwrap(),
+                ),
+                "store-2",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "streaming coprocessor is not supported yet"
+        );
         assert_eq!(
             crate::stats::grpc_connection_state("store-stream-0", "store-stream", "READY"),
             1.0
@@ -714,6 +744,49 @@ mod tests {
         server.stop().await.unwrap();
     }
 
+    #[tokio::test]
+    async fn source_debug_and_empty_commands_use_their_distinct_paths() {
+        let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
+            .await
+            .unwrap();
+        let address = server.addr().unwrap();
+        let channel = Channel::from_shared(format!("http://{address}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let client = KvRpcClient::new_with_debug_clients(
+            vec![TikvClient::new(channel.clone())],
+            vec![DebugClient::new(channel)],
+            Duration::from_secs(1),
+        );
+
+        // Debug requests use debugpb on the selected channel and deliberately
+        // ignore TiKV forwarding metadata. The source-shaped mock has no Debug
+        // service, so reaching that route produces gRPC Unimplemented rather
+        // than failing to encode the deliberately invalid forwarding value.
+        let error = client
+            .dispatch_with_forwarded_host(
+                &crate::proto::debugpb::GetRegionPropertiesRequest::default(),
+                "invalid\nmetadata",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::GrpcAPI(status) if status.code() == tonic::Code::Unimplemented)
+        );
+
+        let response = client
+            .dispatch(&crate::proto::tikvpb::BatchCommandsEmptyRequest::default())
+            .await
+            .unwrap();
+        response
+            .downcast::<crate::proto::tikvpb::BatchCommandsEmptyResponse>()
+            .unwrap();
+        client.close();
+        server.stop().await.unwrap();
+    }
+
     #[test]
     fn source_batch_stream_metadata_carries_forwarding_host_and_pool_index() {
         let forwarded =
@@ -814,6 +887,7 @@ pub trait ClientEventListener: Send + Sync {
 #[derive(Clone)]
 pub struct KvRpcClient {
     rpc_clients: Arc<[TikvClient<Channel>]>,
+    debug_clients: Option<Arc<[DebugClient<Channel>]>>,
     connection_states: Arc<[AtomicU8]>,
     next_client: Arc<AtomicUsize>,
     timeout: Duration,
@@ -854,6 +928,27 @@ fn resolve_lock_collapse_request(
 
 impl KvRpcClient {
     pub(crate) fn new(rpc_clients: Vec<TikvClient<Channel>>, timeout: Duration) -> Self {
+        Self::new_inner(rpc_clients, None, timeout)
+    }
+
+    fn new_with_debug_clients(
+        rpc_clients: Vec<TikvClient<Channel>>,
+        debug_clients: Vec<DebugClient<Channel>>,
+        timeout: Duration,
+    ) -> Self {
+        assert_eq!(
+            rpc_clients.len(),
+            debug_clients.len(),
+            "TiKV and debug service pools must share each channel slot"
+        );
+        Self::new_inner(rpc_clients, Some(debug_clients.into()), timeout)
+    }
+
+    fn new_inner(
+        rpc_clients: Vec<TikvClient<Channel>>,
+        debug_clients: Option<Arc<[DebugClient<Channel>]>>,
+        timeout: Duration,
+    ) -> Self {
         assert!(
             !rpc_clients.is_empty(),
             "TiKV connection pool must not be empty"
@@ -864,6 +959,7 @@ impl KvRpcClient {
             .into();
         Self {
             rpc_clients: rpc_clients.into(),
+            debug_clients,
             connection_states,
             next_client: Arc::new(AtomicUsize::new(0)),
             timeout,
@@ -1110,6 +1206,36 @@ impl KvRpcClient {
             }
         }
         let started_at = Instant::now();
+        if let Some(request) = request
+            .as_any()
+            .downcast_ref::<crate::proto::debugpb::GetRegionPropertiesRequest>()
+        {
+            let index = self.next_client_index();
+            let Some(debug_clients) = self.debug_clients.as_ref() else {
+                return request
+                    .dispatch(&self.rpc_clients[index], timeout.unwrap_or(self.timeout))
+                    .await;
+            };
+            self.set_connection_state(index, GrpcConnectionState::Connecting);
+            let mut request = request.clone().into_request();
+            request.set_timeout(timeout.unwrap_or(self.timeout));
+            let result = debug_clients[index]
+                .clone()
+                .get_region_properties(request)
+                .await
+                .map(|response| Box::new(response.into_inner()) as Box<dyn Any>)
+                .map_err(Error::from)
+                .map_err(|error| self.wrap_connection_error(error));
+            self.set_connection_state(
+                index,
+                if result.is_ok() {
+                    GrpcConnectionState::Ready
+                } else {
+                    GrpcConnectionState::TransientFailure
+                },
+            );
+            return result;
+        }
         if let (Some(worker), Some(batch_request)) = (
             self.batch_worker.as_ref(),
             BatchCommandRequest::from_store_request(request),
@@ -1131,23 +1257,28 @@ impl KvRpcClient {
                     )
                 })?
                 .map_err(|error| self.wrap_connection_error(error))?;
-            let response = BatchCommandResponse::into_any(response);
+            let mut response = BatchCommandResponse::into_any(response);
             crate::trace::trace_exec_details_response(started_at, response.as_ref());
+            request.decode_transport_response(response.as_mut())?;
             return Ok(response);
         }
         let index = self.next_client_index();
         let timeout = timeout.unwrap_or(self.timeout);
         self.set_connection_state(index, GrpcConnectionState::Connecting);
-        let result = request
+        let mut result = request
             .dispatch_with_forwarded_host(&self.rpc_clients[index], timeout, forwarded_host)
             .await
             .map_err(|error| self.wrap_connection_error(error));
-        if let Ok(response) = &result {
+        let transport_succeeded = result.is_ok();
+        if let Ok(response) = &mut result {
             crate::trace::trace_exec_details_response(started_at, response.as_ref());
+            if let Err(error) = request.decode_transport_response(response.as_mut()) {
+                result = Err(error);
+            }
         }
         self.set_connection_state(
             index,
-            if result.is_ok() {
+            if transport_succeeded {
                 GrpcConnectionState::Ready
             } else {
                 GrpcConnectionState::TransientFailure

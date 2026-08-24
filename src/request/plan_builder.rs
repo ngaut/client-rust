@@ -84,6 +84,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 replica_selector_state: crate::locate::ReplicaSelectorState::default(),
                 store_health: None,
                 record_client_side_slow_score: false,
+                physical_endpoint_type: crate::store::EndpointType::TiKv,
                 resource_control_replica_number: 1,
                 resource_control_access_location: crate::kv::AccessLocationType::Unknown,
                 predicted_read_bytes: 0,
@@ -737,6 +738,7 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     plan.forwarded_host = store.forwarded_host;
     plan.store_health = store.health_status;
     plan.record_client_side_slow_score = store.record_client_side_slow_score;
+    plan.physical_endpoint_type = store.physical_endpoint_type;
     Ok(PlanBuilder {
         plan,
         pd_client,

@@ -29,6 +29,7 @@ pub use self::endpoint::EndpointType;
 pub use self::errors::HasKeyErrors;
 pub use self::errors::HasRegionError;
 pub use self::errors::HasRegionErrors;
+pub(crate) use self::request::exec_details_v2_mut;
 pub use self::request::Request;
 #[allow(unused_imports)]
 pub use self::request::{

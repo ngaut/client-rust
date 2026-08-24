@@ -104,6 +104,9 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) replica_selector_state: ReplicaSelectorState,
     pub(crate) store_health: Option<Arc<crate::locate::StoreHealthStatus>>,
     pub(crate) record_client_side_slow_score: bool,
+    /// Physical endpoint classification used by transport-side accounting.
+    /// Client-go only charges completed RU-v2 RPC counts to ordinary TiKV.
+    pub(crate) physical_endpoint_type: crate::store::EndpointType,
     pub(crate) resource_control_replica_number: i64,
     pub(crate) resource_control_access_location: AccessLocationType,
     pub(crate) predicted_read_bytes: u64,
@@ -245,6 +248,23 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             let mut response = *r
                 .downcast()
                 .expect("Downcast failed: request and response type mismatch");
+            let request_info =
+                crate::resource_control::RequestInfo::from_store_request(&self.request);
+            if !request_info.bypass
+                && self.physical_endpoint_type == crate::store::EndpointType::TiKv
+            {
+                let (read_rpc_count, write_rpc_count) = if request_info.is_write() {
+                    (0, 1)
+                } else {
+                    (1, 0)
+                };
+                crate::config::update_tikv_ru_v2_from_exec_details_v2(
+                    crate::store::exec_details_v2_mut(&mut response),
+                    read_rpc_count,
+                    write_rpc_count,
+                    self.ru_details.as_deref(),
+                );
+            }
             self.request
                 .decode_response(&mut response, self.response_codec.as_ref())?;
             self.request
@@ -266,6 +286,7 @@ impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
         self.forwarded_host.clear();
         self.store_health = None;
         self.record_client_side_slow_score = false;
+        self.physical_endpoint_type = crate::store::EndpointType::TiKv;
         self.request.apply_store(store);
     }
 }
@@ -2067,6 +2088,163 @@ mod test {
 
     fn region_store() -> RegionStore {
         RegionStore::new(MockPdClient::region1(), Arc::new(MockKvClient::default()))
+    }
+
+    #[tokio::test]
+    async fn successful_physical_dispatch_updates_source_ru_v2_rpc_counts() {
+        let client = MockKvClient::with_dispatch_hook(|request| {
+            assert!(request.is::<kvrpcpb::GetRequest>());
+            Ok(Box::new(kvrpcpb::GetResponse {
+                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    ru_v2: Some(kvrpcpb::Ruv2 {
+                        storage_processed_keys_get: 3,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let details = Arc::new(crate::RuDetails::new());
+        let response = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .ru_details(details.clone())
+        .single_region_with_store(RegionStore::new(MockPdClient::region1(), Arc::new(client)))
+        .await
+        .unwrap()
+        .plan()
+        .execute()
+        .await
+        .unwrap();
+
+        let response_ru = response.exec_details_v2.unwrap().ru_v2.unwrap();
+        assert_eq!(response_ru.read_rpc_count, 1);
+        assert_eq!(response_ru.write_rpc_count, 0);
+        let accumulated = details.drain_ru_v2().unwrap();
+        assert_eq!(accumulated.read_rpc_count, 1);
+        assert_eq!(accumulated.storage_processed_keys_get, 3);
+
+        let client = MockKvClient::with_dispatch_hook(|request| {
+            assert!(request.is::<kvrpcpb::PrewriteRequest>());
+            Ok(Box::new(kvrpcpb::PrewriteResponse {
+                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    ru_v2: Some(kvrpcpb::Ruv2::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let details = Arc::new(crate::RuDetails::new());
+        let response = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::PrewriteRequest::default(),
+        )
+        .ru_details(details.clone())
+        .single_region_with_store(RegionStore::new(MockPdClient::region1(), Arc::new(client)))
+        .await
+        .unwrap()
+        .plan()
+        .execute()
+        .await
+        .unwrap();
+        let response_ru = response.exec_details_v2.unwrap().ru_v2.unwrap();
+        assert_eq!(response_ru.read_rpc_count, 0);
+        assert_eq!(response_ru.write_rpc_count, 1);
+        assert_eq!(details.drain_ru_v2().unwrap().write_rpc_count, 1);
+    }
+
+    #[tokio::test]
+    async fn source_ru_v2_skips_non_tikv_endpoints() {
+        let client = MockKvClient::with_dispatch_hook(|request| {
+            assert!(request.is::<kvrpcpb::GetRequest>());
+            Ok(Box::new(kvrpcpb::GetResponse {
+                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    ru_v2: Some(kvrpcpb::Ruv2::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let details = Arc::new(crate::RuDetails::new());
+        let store = RegionStore::new(MockPdClient::region1(), Arc::new(client))
+            .with_physical_store(41, crate::store::EndpointType::TiFlash);
+        let response = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .ru_details(details.clone())
+        .single_region_with_store(store)
+        .await
+        .unwrap()
+        .plan()
+        .execute()
+        .await
+        .unwrap();
+
+        assert_eq!(
+            response
+                .exec_details_v2
+                .unwrap()
+                .ru_v2
+                .unwrap()
+                .read_rpc_count,
+            0
+        );
+        assert!(details.drain_ru_v2().is_none());
+    }
+
+    #[tokio::test]
+    async fn source_ru_v2_skips_internal_bypass_requests() {
+        let client = MockKvClient::with_dispatch_hook(|request| {
+            assert!(request.is::<kvrpcpb::GetRequest>());
+            Ok(Box::new(kvrpcpb::GetResponse {
+                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    ru_v2: Some(kvrpcpb::Ruv2 {
+                        storage_processed_keys_get: 3,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let details = Arc::new(crate::RuDetails::new());
+        let request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                request_source: "internal_others".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let response = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            request,
+        )
+        .ru_details(details.clone())
+        .single_region_with_store(RegionStore::new(MockPdClient::region1(), Arc::new(client)))
+        .await
+        .unwrap()
+        .plan()
+        .execute()
+        .await
+        .unwrap();
+
+        assert_eq!(
+            response
+                .exec_details_v2
+                .unwrap()
+                .ru_v2
+                .unwrap()
+                .read_rpc_count,
+            0
+        );
+        assert!(details.drain_ru_v2().is_none());
     }
 
     #[tokio::test]
