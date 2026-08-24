@@ -294,6 +294,15 @@ impl StoreHealthStatus {
         self.update_slow_flag();
     }
 
+    pub(crate) fn needs_active_feedback(&self, now: Instant) -> bool {
+        let tikv = self.tikv_side_slow_score.lock().unwrap();
+        tikv.has_feedback
+            && tikv.score > 1
+            && tikv.last_update.is_some_and(|last| {
+                now.saturating_duration_since(last) >= TIKV_SLOW_SCORE_ACTIVE_UPDATE_INTERVAL
+            })
+    }
+
     /// Source `updateTiKVServerSideSlowScore`; `now` is supplied so callers
     /// and tests can preserve its timing gates deterministically.
     pub(crate) fn record_tikv_slow_score(&self, score: i64, now: Instant) {

@@ -33,6 +33,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-23) Completed `error`: implemented the full singleton/typed taxonomy, extraction precedence, failpoint/redaction, protobuf text and exact debug JSON, predicates, logging, and write-conflict metric side effect.
 - [x] (2026-08-23) Completed `config`: implemented every source section/default/validation path, global snapshot updates, URI parsing, TLS validation/reload, RU-v2 accounting, and both `nextgen` build selections while preserving native Rust builders.
 - [x] (2026-08-23) Completed `oracle/oracles`: added the adaptive PD oracle, concrete PD timestamp adapter/RPCs, validation singleflight/retry/cancellation, refresh-task shutdown coverage, source-derived local/PD tests, and oracle metric update sites.
+- [x] (2026-08-24) Advanced `internal/locate` to active package work with the complete `store_cache.go` lifecycle slice: stable store identities, all resolve states and tombstones, independent maintenance schedules, address-keyed liveness singleflight and health loops, active feedback, load/flow/metric accounting, TiFlash-compute discovery, and source-derived tests. The atomic package remains in progress until its other production and test artifacts close together.
 - [ ] Complete the remaining packages in dependency order recorded in `doc/client-go-parity-ledger.md`.
 - [ ] Run differential integration tests against one TiKV/PD cluster for raw, transactional, API-v1, API-v2, retry, lock, region, and error behavior.
 - [ ] Run final full test, clippy, rustfmt, generated-protobuf, examples, and documentation gates.
@@ -65,6 +66,9 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 
 - Observation: `oracle/oracles` owns a reusable cache/validation state machine, but its concrete PD transport and high-level construction cross the `internal/client`, `tikv`, and metrics package boundaries. Deterministic timestamp sources cover the package contract without needing unistore; real-cluster PD interoperability remains on those owning rows.
   Evidence: client-go `oracle/oracles/pd.go`, `tikv/kv.go`, and `metrics/metrics.go`; client-rust `src/oracle/oracles.rs`, `src/pd/{client,retry,cluster}.rs`, and `src/stats.rs`.
+
+- Observation: client-go runs store re-resolution, health ticks, replica-flow reporting, and full-store discovery on independent background schedules. Splitting Rust's combined loop exposed that `Cancellation::cancel` woke only one child waiter, so joining several independent schedules could wait for the longest timer.
+  Evidence: client-go `internal/locate/region_cache.go:bgRunner` schedules; client-rust `src/region_cache.rs:start_background_store_maintenance` and `src/async_util.rs:Cancellation`.
 
 ## Decision Log
 
@@ -123,6 +127,10 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - Decision: extend client-rust's existing non-exhaustive `Config` rather than introduce a parallel Go-shaped root configuration, and map the `nextgen` build tag to a Cargo feature.
   Rationale: one configuration object keeps current Rust constructors compatible while exposing every source default and validation contract. Rust ownership, non-negative durations, and kebab-case serde remain native boundaries; protocol-affecting values and source-hidden fields retain source behavior.
   Date/Author: 2026-08-23 / Codex
+
+- Decision: keep each cached store allocation stable across PD re-resolution and treat `NeedCheck` as an asynchronously refreshed state rather than cache eviction.
+  Rationale: client-go replica selectors and health loops retain pointers to the same `Store`; replacing or removing Rust entries would lose liveness, health, load, flow, and failure-epoch state and make restarted-store metadata invisible to active selectors.
+  Date/Author: 2026-08-24 / Codex
 
 ## Outcomes & Retrospective
 

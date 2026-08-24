@@ -2,18 +2,19 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::prelude::*;
 use futures::stream::BoxStream;
 use log::info;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{watch, Mutex, RwLock};
 use tonic::codegen::http::uri::PathAndQuery;
 
 use crate::compat::stream_fn;
 use crate::kv::{ReplicaReadConfig, ReplicaReadType};
+use crate::locate::ReplicaFlowsType;
 use crate::locate::{MixedReplicaSelection, ReplicaSelectorState};
 use crate::pd::codec::{CodecPdClient, PdRegionCodec};
 use crate::pd::retry::RetryClientTrait;
@@ -354,6 +355,70 @@ struct CachedKvClient<C> {
     version: u64,
 }
 
+struct StoreHealthFeedbackRequester<KvC: KvConnect + Clone + Send + Sync + 'static> {
+    kv_connect: KvC,
+    kv_client_cache: Arc<RwLock<HashMap<String, CachedKvClient<KvC::KvClient>>>>,
+    kv_client_versions: Arc<RwLock<HashMap<String, u64>>>,
+    kv_client_lifecycle: Arc<Mutex<()>>,
+    kv_client_closed: Arc<AtomicBool>,
+    event_listener: Arc<dyn crate::store::ClientEventListener>,
+}
+
+impl<KvC: KvConnect + Clone + Send + Sync + 'static> StoreHealthFeedbackRequester<KvC> {
+    async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
+        if self.kv_client_closed.load(Ordering::Acquire) {
+            return Err(crate::Error::StringError("rpc client is closed".to_owned()));
+        }
+        if let Some(cached) = self.kv_client_cache.read().await.get(address) {
+            return Ok(cached.client.clone());
+        }
+        let _lifecycle = self.kv_client_lifecycle.lock().await;
+        if self.kv_client_closed.load(Ordering::Acquire) {
+            return Err(crate::Error::StringError("rpc client is closed".to_owned()));
+        }
+        if let Some(cached) = self.kv_client_cache.read().await.get(address) {
+            return Ok(cached.client.clone());
+        }
+        let client = self.kv_connect.connect(address).await?;
+        let version = {
+            let mut versions = self.kv_client_versions.write().await;
+            let version = versions.get(address).copied().unwrap_or(0).wrapping_add(1);
+            versions.insert(address.to_owned(), version);
+            version
+        };
+        let client = client.with_connection_info(address.to_owned(), version);
+        self.kv_client_cache.write().await.insert(
+            address.to_owned(),
+            CachedKvClient {
+                client: client.clone(),
+                version,
+            },
+        );
+        Ok(client)
+    }
+
+    async fn request(&self, address: &str) -> Result<()> {
+        let client = self.kv_client(address).await?;
+        client.set_event_listener(self.event_listener.clone());
+        let response = client
+            .dispatch_with_timeout(
+                &kvrpcpb::GetHealthFeedbackRequest::default(),
+                Some(Duration::from_secs(2)),
+            )
+            .await?
+            .downcast::<kvrpcpb::GetHealthFeedbackResponse>()
+            .map_err(|_| {
+                crate::Error::StringError(
+                    "GetHealthFeedback returned an unexpected response type".to_owned(),
+                )
+            })?;
+        if let Some(region_error) = response.region_error {
+            return Err(crate::Error::RegionError(Box::new(region_error)));
+        }
+        Ok(())
+    }
+}
+
 /// This client converts requests for the logical TiKV cluster into requests
 /// for a single TiKV store using PD and internal logic.
 pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl = Cluster> {
@@ -388,12 +453,75 @@ const HEALTH_SERVING: i32 = 1;
 const HEALTH_UNKNOWN: i32 = 0;
 const HEALTH_SERVICE_UNKNOWN: i32 = 3;
 const STORE_RE_RESOLVE_INTERVAL: Duration = Duration::from_secs(30);
+static STORE_LIVENESS_FLIGHTS: LazyLock<
+    Mutex<HashMap<String, watch::Receiver<Option<StoreLiveness>>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn source_health_status_liveness(status: i32) -> StoreLiveness {
     match status {
         HEALTH_SERVING => StoreLiveness::Reachable,
         HEALTH_UNKNOWN | HEALTH_SERVICE_UNKNOWN => StoreLiveness::Unknown,
         _ => StoreLiveness::Unreachable,
+    }
+}
+
+async fn probe_store_liveness(
+    security_mgr: Arc<SecurityManager>,
+    target: String,
+    timeout: Duration,
+) -> StoreLiveness {
+    let request = async {
+        let channel = security_mgr.connect(&target, |channel| channel).await?;
+        let mut client = tonic::client::Grpc::new(channel);
+        client
+            .unary(
+                tonic::Request::new(HealthCheckRequest {
+                    service: String::new(),
+                }),
+                PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
+                tonic::codec::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
+            )
+            .await
+            .map_err(crate::Error::from)
+    };
+    match tokio::time::timeout(timeout, request).await {
+        Ok(Ok(response)) => source_health_status_liveness(response.into_inner().status),
+        Ok(Err(error)) => {
+            log::debug!("source store liveness check failed for {target}: {error}");
+            StoreLiveness::Unreachable
+        }
+        Err(_) => StoreLiveness::Unreachable,
+    }
+}
+
+async fn request_store_liveness_singleflight<F, Fut>(target: String, probe: F) -> StoreLiveness
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = StoreLiveness> + Send + 'static,
+{
+    let mut receiver = {
+        let mut flights = STORE_LIVENESS_FLIGHTS.lock().await;
+        if let Some(receiver) = flights.get(&target) {
+            receiver.clone()
+        } else {
+            let (sender, receiver) = watch::channel(None);
+            flights.insert(target.clone(), receiver.clone());
+            let flight_target = target.clone();
+            tokio::spawn(async move {
+                let liveness = probe().await;
+                let _ = sender.send(Some(liveness));
+                STORE_LIVENESS_FLIGHTS.lock().await.remove(&flight_target);
+            });
+            receiver
+        }
+    };
+    loop {
+        if let Some(liveness) = *receiver.borrow() {
+            return liveness;
+        }
+        if receiver.changed().await.is_err() {
+            return StoreLiveness::Unknown;
+        }
     }
 }
 
@@ -506,39 +634,25 @@ where
         {
             return StoreLiveness::Unknown;
         }
+        let Some(physical_store_id) = route.physical_store_id else {
+            return StoreLiveness::Unknown;
+        };
+        if self.region_cache.store_resolve_state(physical_store_id)
+            != Some(crate::region_cache::StoreResolveState::Resolved)
+        {
+            return StoreLiveness::Unknown;
+        }
         if self.store_liveness_timeout.is_zero() {
             return StoreLiveness::Unreachable;
         }
-
-        let request = async {
-            let channel = self
-                .security_mgr
-                .connect(&route.target, |channel| channel)
-                .await?;
-            let mut client = tonic::client::Grpc::new(channel);
-            client
-                .unary(
-                    tonic::Request::new(HealthCheckRequest {
-                        service: String::new(),
-                    }),
-                    PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
-                    tonic::codec::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
-                )
-                .await
-                .map_err(crate::Error::from)
-        };
-
-        match tokio::time::timeout(self.store_liveness_timeout, request).await {
-            Ok(Ok(response)) => source_health_status_liveness(response.into_inner().status),
-            Ok(Err(error)) => {
-                log::debug!(
-                    "source store liveness check failed for {}: {error}",
-                    route.target
-                );
-                StoreLiveness::Unreachable
-            }
-            Err(_) => StoreLiveness::Unreachable,
-        }
+        let target = route.target.clone();
+        let probe_target = target.clone();
+        let security_mgr = self.security_mgr.clone();
+        let timeout = self.store_liveness_timeout;
+        request_store_liveness_singleflight(target, move || {
+            probe_store_liveness(security_mgr, probe_target, timeout)
+        })
+        .await
     }
 
     fn start_store_health_check_loop(self: Arc<Self>, store_id: StoreId, route: RegionStore) {
@@ -558,10 +672,14 @@ where
                 if last_resolve.elapsed() >= STORE_RE_RESOLVE_INTERVAL {
                     last_resolve = std::time::Instant::now();
                     match client.region_cache.refresh_store_by_id(store_id).await {
-                        Ok(store) => {
+                        Ok(Some(store)) => {
                             let endpoint_type = crate::store::EndpointType::from_store(&store);
                             route.target = store.address;
                             route.physical_endpoint_type = endpoint_type;
+                        }
+                        Ok(None) => {
+                            client.region_cache.finish_store_health_check(store_id);
+                            return;
                         }
                         Err(error) => {
                             log::debug!(
@@ -820,6 +938,19 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                 .leader
                 .as_ref()
                 .is_some_and(|leader| selector_state.should_retry_stale_as_replica(leader.id));
+        if config.effective_prefer_leader() {
+            let destination = if region
+                .leader
+                .as_ref()
+                .is_some_and(|leader| leader.id == peer.id)
+            {
+                ReplicaFlowsType::ToLeader
+            } else {
+                ReplicaFlowsType::ToFollower
+            };
+            self.region_cache
+                .record_store_replica_flow(peer.store_id, destination);
+        }
         Ok(self
             .map_region_to_route(region, peer, None)
             .await?
@@ -970,6 +1101,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
     ) -> Result<PdRpcClient> {
         let enable_preload = config.enable_preload;
         let regions_refresh_interval = config.regions_refresh_interval;
+        let stores_refresh_interval = config.stores_refresh_interval;
         let client = PdRpcClient::new_with_codec_resolver(
             config.clone(),
             |security_mgr| {
@@ -1031,6 +1163,23 @@ impl PdRpcClient<TikvConnect, Cluster> {
         } else {
             client.region_cache.start_background_gc();
         }
+        let health_feedback_requester = Arc::new(StoreHealthFeedbackRequester {
+            kv_connect: client.kv_connect.clone(),
+            kv_client_cache: client.kv_client_cache.clone(),
+            kv_client_versions: client.kv_client_versions.clone(),
+            kv_client_lifecycle: client.kv_client_lifecycle.clone(),
+            kv_client_closed: client.kv_client_closed.clone(),
+            event_listener: client.region_cache.client_event_listener(),
+        });
+        client
+            .region_cache
+            .set_health_feedback_callback(Arc::new(move |address| {
+                let requester = health_feedback_requester.clone();
+                Box::pin(async move { requester.request(&address).await })
+            }));
+        client
+            .region_cache
+            .start_background_store_maintenance(Duration::from_secs(stores_refresh_interval));
         Ok(client)
     }
 }
@@ -1121,7 +1270,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         crate::kv::STORE_LIMIT.store(config.tikv_client.store_limit, Ordering::Relaxed);
         let codec_pd = Arc::new(CodecPdClient::new(pd.clone(), region_codec));
         let region_cache = Arc::new(RegionCache::new(codec_pd));
-        Ok(PdRpcClient {
+        let client = PdRpcClient {
             pd: pd.clone(),
             kv_client_cache,
             kv_client_versions,
@@ -1135,7 +1284,8 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             security_mgr,
             store_liveness_timeout,
             region_cache,
-        })
+        };
+        Ok(client)
     }
 
     pub(crate) fn keyspace_meta(&self) -> Option<&keyspacepb::KeyspaceMeta> {
@@ -1277,6 +1427,27 @@ pub mod test {
         );
         assert_eq!(parse_source_duration("0s"), Some(Duration::ZERO));
         assert_eq!(parse_source_duration("bad"), None);
+    }
+
+    #[tokio::test]
+    async fn source_store_liveness_requests_are_singleflight_by_address() {
+        let probes = Arc::new(AtomicUsize::new(0));
+        let first_probes = probes.clone();
+        let second_probes = probes.clone();
+        let target = "singleflight-store-address".to_owned();
+        let first = request_store_liveness_singleflight(target.clone(), move || async move {
+            first_probes.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            StoreLiveness::Reachable
+        });
+        let second = request_store_liveness_singleflight(target, move || async move {
+            second_probes.fetch_add(1, Ordering::SeqCst);
+            StoreLiveness::Unreachable
+        });
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first, StoreLiveness::Reachable);
+        assert_eq!(second, StoreLiveness::Reachable);
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
