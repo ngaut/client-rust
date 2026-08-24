@@ -419,14 +419,17 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         backoffer: &mut RetryBackoffer,
     ) -> Result<Vec<RegionWithLeader>> {
         loop {
+            let scan_started = Instant::now();
             let scanned = self
                 .inner_client
                 .clone()
                 .scan_regions(start_key.clone().into(), Vec::new(), count)
                 .await;
+            crate::stats::observe_region_cache_scan(scan_started.elapsed(), scanned.is_ok());
             let regions = match scanned {
                 Ok(regions) if regions_have_no_gap(&start_key, &regions) => regions,
                 Ok(_) => {
+                    crate::stats::increment_stale_region_from_pd();
                     backoffer
                         .backoff(
                             BO_PD_RPC,
@@ -449,6 +452,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 .filter(|region| region.leader.is_some())
                 .collect::<Vec<_>>();
             if valid_regions.is_empty() {
+                crate::stats::increment_stale_region_from_pd();
                 backoffer
                     .backoff(
                         BO_PD_RPC,
