@@ -46,6 +46,12 @@ impl SyncSnapshot {
         self.inner.set_runtime_stats(stats);
     }
 
+    /// Set retry variables for subsequent snapshot reads, matching client-go
+    /// `KVSnapshot.SetVars`.
+    pub fn set_variables(&mut self, variables: Arc<crate::Variables>) {
+        self.inner.set_variables(variables);
+    }
+
     /// Allow reads to proceed through locks flushed by this pipelined transaction.
     pub fn set_pipelined(&mut self, timestamp: u64) {
         self.inner.set_pipelined(timestamp);

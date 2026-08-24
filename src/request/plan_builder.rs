@@ -368,6 +368,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         read_lock_context: ReadLockContext,
         mut resolve_locks_context: ResolveLocksContext,
         snapshot_runtime_stats: Option<Arc<crate::SnapshotRuntimeStats>>,
+        snapshot_variables: Arc<crate::Variables>,
     ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
         P: Shardable,
@@ -396,6 +397,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 read_lock_context: Some(read_lock_context),
                 snapshot_lock_backoff: Some(SnapshotLockBackoff::new(
                     snapshot_runtime_stats.clone(),
+                    snapshot_variables,
                 )),
                 snapshot_runtime_stats,
             },
@@ -521,8 +523,9 @@ where
         self,
         backoff: Backoff,
         stats: Option<Arc<crate::SnapshotRuntimeStats>>,
+        variables: Arc<crate::Variables>,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
-        self.make_retry_multi_region(SnapshotRegionBackoff::new(backoff, stats), false)
+        self.make_retry_multi_region(SnapshotRegionBackoff::new(backoff, stats, variables), false)
     }
 
     /// Use client-go's cumulative retry accounting for a request path that

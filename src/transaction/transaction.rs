@@ -18,7 +18,10 @@ use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::interceptor::RpcInterceptorChain;
 use crate::interceptor::RpcInterceptorHandle;
-use crate::kv::{GetOption, GetOptions, ReplicaReadAdjuster, ReplicaReadConfig, ValueEntry};
+use crate::kv::{
+    GetOption, GetOptions, ReplicaReadAdjuster, ReplicaReadConfig, ValueEntry, Variables,
+    DEFAULT_VARIABLES,
+};
 use crate::oracle::ReadTimestampValidator;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
@@ -157,6 +160,8 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     snapshot_scan_batch_size: u32,
     /// Optional source-compatible collector for physical snapshot read RPCs.
     snapshot_runtime_stats: Option<Arc<SnapshotRuntimeStats>>,
+    /// Source `KVSnapshot.vars`, retained by snapshot retry owners.
+    snapshot_variables: Arc<Variables>,
     /// Enables client-go's pipelined BufferBatchGet tier for this snapshot.
     snapshot_pipelined: bool,
     /// Snapshot-only request-context settings retained through physical read
@@ -243,6 +248,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             snapshot_key_only: false,
             snapshot_scan_batch_size: DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE,
             snapshot_runtime_stats: None,
+            snapshot_variables: DEFAULT_VARIABLES.clone(),
             snapshot_pipelined: false,
             not_fill_cache: false,
             isolation_level: kvrpcpb::IsolationLevel::Si,
@@ -367,6 +373,10 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub(crate) fn set_snapshot_runtime_stats(&mut self, stats: Option<Arc<SnapshotRuntimeStats>>) {
         self.snapshot_runtime_stats = stats;
+    }
+
+    pub(crate) fn set_snapshot_variables(&mut self, variables: Arc<Variables>) {
+        self.snapshot_variables = variables;
     }
 
     /// Source pipelined snapshots must read through locks flushed by their
@@ -501,6 +511,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.snapshot_runtime_stats.clone(),
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
+        let snapshot_variables = self.snapshot_variables.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -555,10 +566,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                     read_lock_context,
                     lock_resolver_context,
                     snapshot_runtime_stats.clone(),
+                    snapshot_variables.clone(),
                 )
                 .retry_multi_region_with_snapshot_stats(
                     DEFAULT_REGION_BACKOFF,
                     snapshot_runtime_stats.clone(),
+                    snapshot_variables,
                 )
                 .merge(CollectSingle)
                 .post_process_default()
@@ -593,6 +606,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.snapshot_runtime_stats.clone(),
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
+        let snapshot_variables = self.snapshot_variables.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -652,10 +666,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                         read_lock_context,
                         lock_resolver_context,
                         snapshot_runtime_stats.clone(),
+                        snapshot_variables.clone(),
                     )
                     .retry_multi_region_with_snapshot_stats(
                         DEFAULT_REGION_BACKOFF,
                         snapshot_runtime_stats.clone(),
+                        snapshot_variables,
                     )
                     .merge(CollectSingle)
                     .plan();
@@ -792,6 +808,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.snapshot_runtime_stats.clone(),
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
+        let snapshot_variables = self.snapshot_variables.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -858,10 +875,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                     read_lock_context,
                     lock_resolver_context,
                     snapshot_runtime_stats.clone(),
+                    snapshot_variables.clone(),
                 )
                 .retry_multi_region_with_snapshot_stats(
                     retry_options.region_backoff,
                     snapshot_runtime_stats.clone(),
+                    snapshot_variables,
                 )
                 .merge(Collect)
                 .plan();
@@ -899,6 +918,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.snapshot_runtime_stats.clone(),
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
+        let snapshot_variables = self.snapshot_variables.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -970,10 +990,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                         read_lock_context,
                         lock_resolver_context,
                         snapshot_runtime_stats.clone(),
+                        snapshot_variables.clone(),
                     )
                     .retry_multi_region_with_snapshot_stats(
                         retry_options.region_backoff,
                         snapshot_runtime_stats.clone(),
+                        snapshot_variables,
                     )
                     .plan();
                     let responses = plan.execute().await?;
@@ -1027,6 +1049,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.snapshot_runtime_stats.clone(),
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
+        let snapshot_variables = self.snapshot_variables.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -1088,10 +1111,12 @@ impl<PdC: PdClient> Transaction<PdC> {
             read_lock_context,
             lock_resolver_context,
             snapshot_runtime_stats.clone(),
+            snapshot_variables.clone(),
         )
         .retry_multi_region_with_snapshot_stats(
             retry_options.region_backoff,
             snapshot_runtime_stats.clone(),
+            snapshot_variables,
         )
         .merge(Collect)
         .plan();
@@ -1674,6 +1699,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.snapshot_runtime_stats.clone(),
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
+        let snapshot_variables = self.snapshot_variables.clone();
         let resource_group_name = self.resource_group_name.clone();
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
@@ -1754,10 +1780,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                             read_lock_context.clone(),
                             lock_resolver_context.clone(),
                             snapshot_runtime_stats.clone(),
+                            snapshot_variables.clone(),
                         )
                         .retry_multi_region_with_snapshot_stats(
                             retry_options.region_backoff.clone(),
                             snapshot_runtime_stats.clone(),
+                            snapshot_variables.clone(),
                         )
                         .merge(Collect)
                         .plan();
@@ -4222,7 +4250,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transactional_read_caps_txn_lock_fast_backoff_at_lock_ttl() {
+    async fn transactional_read_uses_snapshot_retry_variables_for_txn_lock_fast() {
         let lock_version = Timestamp {
             physical: 10,
             logical: 0,
@@ -4241,7 +4269,7 @@ mod tests {
                                     key: b"read".to_vec(),
                                     primary_lock: b"read".to_vec(),
                                     lock_version,
-                                    lock_ttl: 1,
+                                    lock_ttl: 5,
                                     ..Default::default()
                                 }),
                                 ..Default::default()
@@ -4253,12 +4281,12 @@ mod tests {
                 }
                 if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
                     return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
-                        lock_ttl: 1,
+                        lock_ttl: 5,
                         lock_info: Some(kvrpcpb::LockInfo {
                             key: b"read".to_vec(),
                             primary_lock: b"read".to_vec(),
                             lock_version,
-                            lock_ttl: 1,
+                            lock_ttl: 5,
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -4282,6 +4310,10 @@ mod tests {
             TransactionOptions::new_optimistic().read_only(),
             Keyspace::Disable,
         );
+        let mut variables = crate::Variables::default();
+        variables.backoff_lock_fast = 2;
+        variables.backoff_weight = 1;
+        txn.set_snapshot_variables(Arc::new(variables));
         let stats = Arc::new(crate::SnapshotRuntimeStats::new());
         txn.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
 

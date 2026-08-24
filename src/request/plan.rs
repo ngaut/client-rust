@@ -19,6 +19,7 @@ use tokio::time::sleep;
 use crate::async_util::Cancellation;
 use crate::backoff::Backoff;
 use crate::interceptor::RpcInterceptorChain;
+use crate::kv::Variables;
 use crate::kv::{AccessLocationType, ReplicaReadConfig};
 use crate::locate::ReplicaSelectorState;
 use crate::oracle::{OracleOption, ReadTimestampValidator};
@@ -385,10 +386,18 @@ pub(crate) struct SnapshotRegionBackoff {
 }
 
 impl SnapshotRegionBackoff {
-    pub(crate) fn new(legacy_backoff: Backoff, stats: Option<Arc<SnapshotRuntimeStats>>) -> Self {
+    pub(crate) fn new(
+        legacy_backoff: Backoff,
+        stats: Option<Arc<SnapshotRuntimeStats>>,
+        variables: Arc<Variables>,
+    ) -> Self {
         let cancellation = Cancellation::default();
         Self {
-            backoff: RetryBackoffer::new(cancellation, SNAPSHOT_MAX_BACKOFF_MS),
+            backoff: RetryBackoffer::with_variables(
+                cancellation,
+                SNAPSHOT_MAX_BACKOFF_MS,
+                variables,
+            ),
             stats,
             disabled: legacy_backoff.is_none(),
         }
@@ -466,9 +475,13 @@ pub(crate) struct SnapshotLockBackoff {
 }
 
 impl SnapshotLockBackoff {
-    pub(crate) fn new(stats: Option<Arc<SnapshotRuntimeStats>>) -> Self {
+    pub(crate) fn new(stats: Option<Arc<SnapshotRuntimeStats>>, variables: Arc<Variables>) -> Self {
         Self {
-            backoff: RetryBackoffer::new(Cancellation::default(), SNAPSHOT_MAX_BACKOFF_MS),
+            backoff: RetryBackoffer::with_variables(
+                Cancellation::default(),
+                SNAPSHOT_MAX_BACKOFF_MS,
+                variables,
+            ),
             stats,
         }
     }
@@ -2817,6 +2830,23 @@ mod test {
             },
             &deadline_busy
         ));
+    }
+
+    #[test]
+    fn snapshot_retry_owners_use_the_supplied_variables() {
+        let mut variables = crate::Variables::default();
+        variables.backoff_weight = 1;
+        let variables = Arc::new(variables);
+
+        let region = SnapshotRegionBackoff::new(
+            Backoff::no_jitter_backoff(1, 1, 1),
+            None,
+            Arc::clone(&variables),
+        );
+        assert_eq!(region.backoff.max_sleep_ms(), SNAPSHOT_MAX_BACKOFF_MS);
+
+        let lock = SnapshotLockBackoff::new(None, variables);
+        assert_eq!(lock.backoff.max_sleep_ms(), SNAPSHOT_MAX_BACKOFF_MS);
     }
 
     #[test]
