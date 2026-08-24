@@ -693,11 +693,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             };
         }
         let region = self
-            .inner_client
-            .clone()
-            .get_prev_region(key.clone().into())
+            .load_region_by_end_key_with_stale_retry(key.clone())
             .await?;
-        self.add_region(region.clone()).await;
         Ok(region)
     }
 
@@ -788,7 +785,41 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
 
     /// Force read through (query from PD) and update cache
     pub async fn read_through_region_by_key(&self, key: Key) -> Result<RegionWithLeader> {
+        self.load_region_by_key_with_stale_retry(key).await
+    }
+
+    /// Source `findRegionByKey` retries one rejected cache-miss load. The
+    /// second request is the leader-only equivalent in client-go; Rust's PD
+    /// trait has no router/follower option, but preserves the acceptance and
+    /// retry boundary.
+    async fn load_region_by_key_with_stale_retry(&self, key: Key) -> Result<RegionWithLeader> {
+        let region = self
+            .inner_client
+            .clone()
+            .get_region(key.clone().into())
+            .await?;
+        if self.add_region(region.clone()).await {
+            return Ok(region);
+        }
         let region = self.inner_client.clone().get_region(key.into()).await?;
+        self.add_region(region.clone()).await;
+        Ok(region)
+    }
+
+    async fn load_region_by_end_key_with_stale_retry(&self, key: Key) -> Result<RegionWithLeader> {
+        let region = self
+            .inner_client
+            .clone()
+            .get_prev_region(key.clone().into())
+            .await?;
+        if self.add_region(region.clone()).await {
+            return Ok(region);
+        }
+        let region = self
+            .inner_client
+            .clone()
+            .get_prev_region(key.into())
+            .await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
@@ -2111,6 +2142,7 @@ mod test {
     use std::collections::BTreeMap;
     use std::collections::HashMap;
     use std::collections::HashSet;
+    use std::collections::VecDeque;
     use std::sync::atomic::Ordering::SeqCst;
     use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::{Arc, Mutex as StdMutex};
@@ -2146,6 +2178,8 @@ mod test {
         pub stores: Mutex<Vec<metapb::Store>>,
         pub get_region_count: AtomicU64,
         pub get_region_with_buckets_count: AtomicU64,
+        pub get_region_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
+        pub get_prev_region_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
         pub batch_scan_count: AtomicU64,
         pub batch_scan_unimplemented: AtomicBool,
         pub batch_scan_options: StdMutex<Vec<RegionScanOptions>>,
@@ -2158,6 +2192,9 @@ mod test {
             key: Vec<u8>,
         ) -> Result<crate::region::RegionWithLeader> {
             self.get_region_count.fetch_add(1, SeqCst);
+            if let Some(response) = self.get_region_responses.lock().await.pop_front() {
+                return response;
+            }
             self.regions
                 .lock()
                 .await
@@ -2191,6 +2228,9 @@ mod test {
             key: Vec<u8>,
         ) -> Result<crate::region::RegionWithLeader> {
             self.get_region_count.fetch_add(1, SeqCst);
+            if let Some(response) = self.get_prev_region_responses.lock().await.pop_front() {
+                return response;
+            }
             let key: Key = key.into();
             self.regions
                 .lock()
@@ -2568,6 +2608,58 @@ mod test {
         expected.clear();
         expected.insert(vec![15].into(), replacement);
         assert(&cache, &expected).await;
+    }
+
+    #[tokio::test]
+    async fn source_cache_miss_retries_pd_metadata_rejected_as_stale() -> Result<()> {
+        let setup = |id, start: &[u8], end: &[u8], version| {
+            let mut region = region_with_leader(id, start, end);
+            region.region.region_epoch.as_mut().unwrap().version = version;
+            region
+        };
+
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        assert!(cache.add_region(setup(10, b"b", b"d", 2)).await);
+        client
+            .get_region_responses
+            .lock()
+            .await
+            .extend([Ok(setup(11, b"", b"c", 1)), Ok(setup(12, b"", b"b", 3))]);
+        assert_eq!(
+            cache.get_region_by_key(&b"a".to_vec().into()).await?.id(),
+            12
+        );
+        assert_eq!(client.get_region_count.load(SeqCst), 2);
+        assert_eq!(
+            cache
+                .region_cache
+                .read()
+                .await
+                .key_to_ver_id
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![b"".to_vec().into(), b"b".to_vec().into()]
+        );
+
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        assert!(cache.add_region(setup(20, b"b", b"d", 2)).await);
+        client
+            .get_prev_region_responses
+            .lock()
+            .await
+            .extend([Ok(setup(21, b"", b"c", 1)), Ok(setup(22, b"", b"b", 3))]);
+        assert_eq!(
+            cache
+                .get_region_by_end_key(&b"b".to_vec().into())
+                .await?
+                .id(),
+            22
+        );
+        assert_eq!(client.get_region_count.load(SeqCst), 2);
+        Ok(())
     }
 
     #[tokio::test]
@@ -3256,73 +3348,238 @@ mod test {
 
     #[test]
     fn source_batch_scan_detects_gaps_across_ranges() {
-        let ranges = vec![key_range(b"a", b"d"), key_range(b"e", b"g")];
-        assert!(!regions_have_gap_in_ranges(&[], &[], None));
-        assert!(regions_have_gap_in_ranges(&ranges, &[], None));
-        assert!(regions_have_gap_in_ranges(
-            &ranges,
-            &[region(1, b"b".to_vec(), b"d".to_vec())],
-            None,
-        ));
-        assert!(regions_have_gap_in_ranges(
-            &ranges,
-            &[
-                region(1, b"a".to_vec(), b"b".to_vec()),
-                region(2, b"c".to_vec(), b"d".to_vec()),
-            ],
-            None,
-        ));
-        assert!(!regions_have_gap_in_ranges(
-            &ranges,
-            &[
-                region(1, b"a".to_vec(), b"b".to_vec()),
-                region(2, b"b".to_vec(), b"d".to_vec()),
-                region(3, b"e".to_vec(), b"g".to_vec()),
-            ],
-            None,
-        ));
-        assert!(!regions_have_gap_in_ranges(
-            &ranges,
-            &[region(1, b"a".to_vec(), b"b".to_vec())],
-            Some(1),
-        ));
+        let check = |ranges: &[&str], regions: &[&str], limit: isize, expected: bool| {
+            let ranges = ranges
+                .chunks_exact(2)
+                .map(|pair| key_range(pair[0].as_bytes(), pair[1].as_bytes()))
+                .collect::<Vec<_>>();
+            let regions = regions
+                .chunks_exact(2)
+                .enumerate()
+                .map(|(index, pair)| {
+                    region(
+                        index as u64 + 1,
+                        pair[0].as_bytes().to_vec(),
+                        pair[1].as_bytes().to_vec(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                regions_have_gap_in_ranges(
+                    &ranges,
+                    &regions,
+                    (limit >= 0).then_some(limit as usize),
+                ),
+                expected,
+                "ranges={ranges:?}, regions={regions:?}, limit={limit}"
+            );
+        };
+
+        for bounds in [
+            vec!["a", "c"],
+            vec!["a", "b", "b", "c"],
+            vec!["a", "a1", "a1", "b", "b", "b1", "b1", "c"],
+        ] {
+            for regions in [
+                vec!["a", "c"],
+                vec!["a", ""],
+                vec!["", "c"],
+                vec!["a", "b", "b", "c"],
+                vec!["", "b", "b", "c"],
+                vec!["a", "b", "b", ""],
+                vec!["", "b", "b", ""],
+            ] {
+                check(&bounds, &regions, -1, false);
+            }
+            for regions in [
+                vec!["a", "b"],
+                vec!["b", "c"],
+                vec!["b", ""],
+                vec!["", "b"],
+                vec!["a", "b", "b1", "c"],
+                vec!["", "b", "b1", "c"],
+                vec!["a", "b", "b1", ""],
+                vec!["", "b", "b1", ""],
+                vec![],
+            ] {
+                check(&bounds, &regions, -1, true);
+            }
+        }
+
+        for ranges in [
+            vec!["a", "b", "c", "d"],
+            vec!["a", "b1", "b1", "b", "c", "d"],
+            vec!["a", "b", "c", "c1", "c1", "d"],
+            vec!["a", "b1", "b1", "b", "c", "c1", "c1", "d"],
+        ] {
+            for regions in [vec!["a", "d"], vec!["", "d"], vec!["a", ""], vec!["", ""]] {
+                check(&ranges, &regions, -1, false);
+            }
+            for regions in [
+                vec!["a", "b"],
+                vec!["b", "c"],
+                vec!["c", "d"],
+                vec!["", "b"],
+                vec!["c", ""],
+            ] {
+                check(&ranges, &regions, -1, true);
+            }
+        }
+
+        for ranges in [
+            vec!["", ""],
+            vec!["", "b", "b", ""],
+            vec!["", "a1", "a1", "b", "b", "b1", "b1", ""],
+        ] {
+            for regions in [vec!["", ""], vec!["", "b", "b", ""]] {
+                check(&ranges, &regions, -1, false);
+            }
+            for regions in [
+                vec!["a", "c"],
+                vec!["a", ""],
+                vec!["", "c"],
+                vec!["", "b", "b1", ""],
+                vec!["a", "b", "b", ""],
+                vec!["", "b", "b", "c"],
+                vec![],
+            ] {
+                check(&ranges, &regions, -1, true);
+            }
+        }
+
+        check(&["", "b"], &["", "a"], -1, true);
+        check(&["", "b"], &["", "a"], 1, false);
+        check(&["", "b"], &["", "a"], 2, true);
+        check(&["a", ""], &["b", ""], -1, true);
+        check(&["a", ""], &["b", ""], 1, true);
+        check(&["a", ""], &["b", "c"], 1, true);
+        check(&["a", ""], &["a", ""], -1, false);
     }
 
     #[test]
     fn source_ranges_after_key_splits_and_discards_finished_ranges() {
-        let ranges = vec![key_range(b"a", b"b"), key_range(b"c", b"f")];
-        assert_eq!(
-            ranges_after_key(ranges.clone(), b"a1"),
-            vec![key_range(b"a1", b"b"), key_range(b"c", b"f")]
-        );
-        assert_eq!(
-            ranges_after_key(ranges.clone(), b"b"),
-            vec![key_range(b"c", b"f")]
-        );
-        assert_eq!(
-            ranges_after_key(ranges.clone(), b"d"),
-            vec![key_range(b"d", b"f")]
-        );
-        assert!(ranges_after_key(ranges, b"f").is_empty());
-        assert!(ranges_after_key(vec![key_range(b"a", b"")], b"").is_empty());
+        let check = |range_keys: &[&str], split_key: &str, expected: &[&str]| {
+            let ranges = range_keys
+                .chunks_exact(2)
+                .map(|pair| key_range(pair[0].as_bytes(), pair[1].as_bytes()))
+                .collect::<Vec<_>>();
+            let actual = ranges_after_key(ranges, split_key.as_bytes())
+                .into_iter()
+                .flat_map(|range| [range.start_key, range.end_key])
+                .map(|key| String::from_utf8(key).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+        };
+        for (ranges, split, expected) in [
+            (vec!["a", "c"], "a", vec!["a", "c"]),
+            (vec!["b", "c"], "a", vec!["b", "c"]),
+            (vec!["a", "c"], "b", vec!["b", "c"]),
+            (vec!["a", "c"], "c", vec![]),
+            (vec!["a", "c"], "", vec![]),
+            (vec!["a", ""], "b", vec!["b", ""]),
+            (vec!["a", ""], "", vec![]),
+            (vec!["a", "b", "c", "f"], "a1", vec!["a1", "b", "c", "f"]),
+            (vec!["a", "b", "c", "f"], "b", vec!["c", "f"]),
+            (vec!["a", "b", "c", "f"], "b1", vec!["c", "f"]),
+            (vec!["a", "b", "c", "f"], "c", vec!["c", "f"]),
+            (vec!["a", "b", "c", "f"], "d", vec!["d", "f"]),
+        ] {
+            check(&ranges, split, &expected);
+        }
     }
 
     #[test]
     fn source_batch_locate_merger_prefers_loaded_regions_over_stale_cache() {
-        let cached = vec![
-            region(1, b"a".to_vec(), b"b".to_vec()),
-            region(2, b"c".to_vec(), b"f".to_vec()),
-        ];
-        let loaded = [
-            region(3, b"b".to_vec(), b"d".to_vec()),
-            region(4, b"d".to_vec(), b"e".to_vec()),
-            region(5, b"f".to_vec(), b"h".to_vec()),
-        ];
-        let mut merger = BatchLocateRegionMerger::new(cached, 5);
-        for region in loaded {
-            merger.append_region(region);
+        let check = |loaded: &[&str], cached: &[&str], expected: &[&str]| {
+            let to_regions = |keys: &[&str]| {
+                keys.chunks_exact(2)
+                    .enumerate()
+                    .map(|(index, pair)| {
+                        region(
+                            index as u64 + 1,
+                            pair[0].as_bytes().to_vec(),
+                            pair[1].as_bytes().to_vec(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let mut merger = BatchLocateRegionMerger::new(to_regions(cached), 0);
+            for region in to_regions(loaded) {
+                merger.append_region(region);
+            }
+            let actual = merger
+                .build()
+                .into_iter()
+                .flat_map(|region| [region.region.start_key, region.region.end_key])
+                .map(|key| String::from_utf8(key).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+        };
+        for (loaded, cached, expected) in [
+            (
+                vec!["b", "c", "c", "d"],
+                vec!["a", "b"],
+                vec!["a", "b", "b", "c", "c", "d"],
+            ),
+            (
+                vec!["a", "b", "c", "d"],
+                vec!["b", "c"],
+                vec!["a", "b", "b", "c", "c", "d"],
+            ),
+            (
+                vec!["a", "b", "b", "c"],
+                vec!["c", "d"],
+                vec!["a", "b", "b", "c", "c", "d"],
+            ),
+            (vec!["", ""], vec!["a", "b", "b", "c"], vec!["", ""]),
+            (
+                vec!["", "b"],
+                vec!["a", "b", "b", "c"],
+                vec!["", "b", "b", "c"],
+            ),
+            (
+                vec!["b", ""],
+                vec!["a", "b", "b", "c"],
+                vec!["a", "b", "b", ""],
+            ),
+            (
+                vec!["b", ""],
+                vec!["a", "b", "c", "d"],
+                vec!["a", "b", "b", ""],
+            ),
+            (
+                vec!["b", "e"],
+                vec!["a", "b", "c", "d"],
+                vec!["a", "b", "b", "e"],
+            ),
+            (
+                vec!["b", "i"],
+                vec!["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+                vec!["a", "b", "b", "i", "i", "j"],
+            ),
+            (
+                vec!["b", "d"],
+                vec!["a", "b", "c", "e"],
+                vec!["a", "b", "b", "d", "c", "e"],
+            ),
+            (
+                vec!["b", "d", "d", "f"],
+                vec!["a", "b", "c", "e"],
+                vec!["a", "b", "b", "d", "d", "f"],
+            ),
+            (
+                vec!["b", "d", "d", "e", "e", "g"],
+                vec!["a", "b", "c", "f"],
+                vec!["a", "b", "b", "d", "d", "e", "e", "g"],
+            ),
+            (
+                vec!["b", "d", "d", "e", "f", "h"],
+                vec!["a", "b", "c", "g"],
+                vec!["a", "b", "b", "d", "d", "e", "c", "g", "f", "h"],
+            ),
+        ] {
+            check(&loaded, &cached, &expected);
         }
-        assert_eq!(region_ids(&merger.build()), vec![1, 3, 4, 2, 5]);
     }
 
     #[tokio::test]
