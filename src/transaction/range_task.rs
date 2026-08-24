@@ -4,14 +4,17 @@
 
 //! A task is a contiguous group of region intersections. The producer keeps
 //! discovery ordered, while up to `concurrency` handlers run at once. The
-//! first handler error cancels the shared token and drops pending futures,
-//! matching the source worker pool's stop-on-error contract.
+//! first handler error cancels the shared token and prevents queued work from
+//! starting, matching the source worker pool's stop-on-error contract.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use futures::StreamExt;
+use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
+use tokio::task::JoinSet;
 
 use crate::async_util::Cancellation;
 use crate::pd::PdClient;
@@ -45,8 +48,8 @@ pub(crate) struct Runner<PdC: PdClient, H: RangeTaskHandler> {
     handler: H,
     concurrency: usize,
     regions_per_task: usize,
-    completed_regions: AtomicUsize,
-    failed_regions: AtomicUsize,
+    completed_regions: Arc<AtomicUsize>,
+    failed_regions: Arc<AtomicUsize>,
 }
 
 impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
@@ -63,8 +66,8 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
             handler,
             concurrency,
             regions_per_task: DEFAULT_REGIONS_PER_TASK,
-            completed_regions: AtomicUsize::new(0),
-            failed_regions: AtomicUsize::new(0),
+            completed_regions: Arc::new(AtomicUsize::new(0)),
+            failed_regions: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -94,45 +97,113 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         }
 
         let cancellation = Cancellation::default();
-        let task_cancellation = cancellation.clone();
-        let handler = self.handler.clone();
+        // client-go has `concurrency` workers and a channel with the same
+        // capacity. A worker removes its task before running its handler, so
+        // discovery can run ahead of handlers by both active and queued work.
+        let (sender, receiver) = mpsc::channel(self.concurrency);
+        let receiver = Arc::new(AsyncMutex::new(receiver));
+        // Wakes every idle worker and the blocked producer after a handler
+        // error. The handler still receives `Cancellation`, which is its
+        // source-compatible control token.
+        let (stop, _) = watch::channel(false);
+        let mut workers = JoinSet::new();
+        for _ in 0..self.concurrency {
+            workers.spawn(Self::run_worker(
+                self.name,
+                self.handler.clone(),
+                receiver.clone(),
+                cancellation.clone(),
+                stop.clone(),
+                stop.subscribe(),
+                self.completed_regions.clone(),
+                self.failed_regions.clone(),
+            ));
+        }
+
         let tasks = region_stream_for_range((start_key, end_key), self.pd_client.clone())
             .map(|result| result.map(|(range, _)| range))
-            .chunks(self.regions_per_task)
-            .map(move |ranges| {
-                let handler = handler.clone();
-                let cancellation = task_cancellation.clone();
-                async move {
-                    let ranges = ranges.into_iter().collect::<Result<Vec<_>>>()?;
-                    let first = ranges.first().expect("region task chunk cannot be empty");
-                    let last = ranges.last().expect("region task chunk cannot be empty");
-                    Ok::<_, crate::Error>(
-                        handler
-                            .handle(cancellation, (first.0.clone(), last.1.clone()))
-                            .await,
-                    )
-                }
-            })
-            .buffer_unordered(self.concurrency);
+            .chunks(self.regions_per_task);
         futures::pin_mut!(tasks);
 
-        while let Some(outcome) = tasks.next().await {
-            let (stat, result) = outcome?;
-            self.completed_regions
-                .fetch_add(stat.completed_regions, Ordering::AcqRel);
-            self.failed_regions
-                .fetch_add(stat.failed_regions, Ordering::AcqRel);
-            crate::stats::add_range_task_stats(
-                self.name,
-                stat.completed_regions,
-                stat.failed_regions,
-            );
+        let mut stop_producer = stop.subscribe();
+        let producer_result = loop {
+            let Some(ranges) = tasks.next().await else {
+                break Ok(());
+            };
+            let ranges = match ranges.into_iter().collect::<Result<Vec<_>>>() {
+                Ok(ranges) => ranges,
+                Err(error) => break Err(error),
+            };
+            let first = ranges.first().expect("region task chunk cannot be empty");
+            let last = ranges.last().expect("region task chunk cannot be empty");
+            let task = (first.0.clone(), last.1.clone());
+            let push_started = Instant::now();
+            let sent = tokio::select! {
+                result = sender.send(task) => Some(result),
+                _ = stop_producer.changed() => None,
+            };
+            crate::stats::observe_range_task_push_duration(self.name, push_started.elapsed());
+            let Some(sent) = sent else {
+                break Ok(());
+            };
+            if sent.is_err() {
+                break Ok(());
+            }
+        };
+        drop(sender);
+
+        let mut worker_error = None;
+        while let Some(joined) = workers.join_next().await {
+            match joined {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) if worker_error.is_none() => worker_error = Some(error),
+                Err(error) if worker_error.is_none() => worker_error = Some(error.into()),
+                _ => {}
+            }
+        }
+        match producer_result {
+            Err(error) => Err(error),
+            Ok(()) => worker_error.map_or(Ok(()), Err),
+        }
+    }
+
+    async fn run_worker(
+        name: &'static str,
+        handler: H,
+        receiver: Arc<AsyncMutex<mpsc::Receiver<(Vec<u8>, Vec<u8>)>>>,
+        cancellation: Cancellation,
+        stop: watch::Sender<bool>,
+        mut stop_receiver: watch::Receiver<bool>,
+        completed_regions: Arc<AtomicUsize>,
+        failed_regions: Arc<AtomicUsize>,
+    ) -> Result<()> {
+        loop {
+            if *stop_receiver.borrow() {
+                return Ok(());
+            }
+            let task = {
+                let mut receiver = receiver.lock().await;
+                tokio::select! {
+                    task = receiver.recv() => task,
+                    _ = stop_receiver.changed() => return Ok(()),
+                }
+            };
+            let Some(task) = task else {
+                return Ok(());
+            };
+            if *stop_receiver.borrow() {
+                return Ok(());
+            }
+            let (stat, result) = handler.handle(cancellation.clone(), task).await;
+            completed_regions.fetch_add(stat.completed_regions, Ordering::AcqRel);
+            failed_regions.fetch_add(stat.failed_regions, Ordering::AcqRel);
+            crate::stats::add_range_task_stats(name, stat.completed_regions, stat.failed_regions);
             if let Err(error) = result {
                 cancellation.cancel();
+                stop.send_replace(true);
                 return Err(error);
             }
         }
-        Ok(())
     }
 }
 
@@ -240,6 +311,10 @@ mod tests {
         );
         assert_eq!(runner.completed_regions(), 2);
         assert_eq!(runner.failed_regions(), 0);
+        assert_eq!(
+            crate::stats::range_task_push_duration_samples("range-task-grouping"),
+            2
+        );
     }
 
     #[tokio::test]
