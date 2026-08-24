@@ -822,6 +822,10 @@ impl Request for RawCoprocessorRequest {
         self.inner.set_api_version(api_version);
     }
 
+    fn set_is_retry_request(&mut self) {
+        self.inner.set_is_retry_request();
+    }
+
     fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
         self.inner.set_keyspace_id(keyspace_id);
     }

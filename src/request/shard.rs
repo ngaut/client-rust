@@ -50,6 +50,10 @@ macro_rules! impl_inner_shardable {
             self.inner.record_replica_attempt(peer_id);
         }
 
+        fn mark_retry_request(&mut self) {
+            self.inner.mark_retry_request();
+        }
+
         fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
             self.inner.mark_replica_data_not_ready(peer_id);
         }
@@ -136,6 +140,10 @@ pub trait Shardable {
     }
 
     fn record_replica_attempt(&mut self, _peer_id: u64) {}
+
+    /// Source `RegionRequestSender` marks every resend in the wire context.
+    /// Plans without a TiKV request retain a no-op implementation.
+    fn mark_retry_request(&mut self) {}
 
     fn mark_replica_data_not_ready(&mut self, _peer_id: u64) {}
 
@@ -299,6 +307,10 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.replica_selector_state.record_attempt(peer_id);
     }
 
+    fn mark_retry_request(&mut self) {
+        self.request.set_is_retry_request();
+    }
+
     fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
         self.replica_selector_state.mark_data_is_not_ready(peer_id);
     }
@@ -407,6 +419,10 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
         self.inner.record_replica_attempt(peer_id);
     }
 
+    fn mark_retry_request(&mut self) {
+        self.inner.mark_retry_request();
+    }
+
     fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
         self.inner.mark_replica_data_not_ready(peer_id);
     }
@@ -472,6 +488,10 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.store = Some(store.clone());
         self.inner.apply_store(store)
+    }
+
+    fn mark_retry_request(&mut self) {
+        self.inner.mark_retry_request();
     }
 }
 

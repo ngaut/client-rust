@@ -448,6 +448,7 @@ where
                     "single_shard_handler: configurable read timeout, reselection without backoff: {:?}",
                     e
                 );
+                plan.mark_retry_request();
                 return Self::single_shard_handler(
                     pd_client,
                     plan,
@@ -494,6 +495,7 @@ where
                     "single_shard_handler: configurable server-busy deadline, reselection without backoff: {:?}",
                     e
                 );
+                plan.mark_retry_request();
                 return Self::single_shard_handler(
                     pd_client,
                     plan,
@@ -585,6 +587,7 @@ where
                         .await
                     {
                         Ok(true) => {
+                            plan.mark_retry_request();
                             return Self::single_plan_handler(
                                 pd_client,
                                 plan,
@@ -616,6 +619,7 @@ where
                     // Rust sharding layer here: split/merge outcomes are
                     // already terminal and are rebuilt by their owning
                     // caller path.
+                    plan.mark_retry_request();
                     return Self::single_shard_handler(
                         pd_client,
                         plan,
@@ -635,6 +639,7 @@ where
                             // Source performs its per-store pending backoff
                             // before the next `replicaSelector.next`, without
                             // rebuilding the original key-to-region shard.
+                            plan.mark_retry_request();
                             return Self::single_shard_handler(
                                 pd_client,
                                 plan,
@@ -688,7 +693,7 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn handle_other_error(
         pd_client: Arc<PdC>,
-        plan: P,
+        mut plan: P,
         region: RegionVerId,
         store: Option<StoreId>,
         route: Option<RegionStore>,
@@ -714,6 +719,7 @@ where
             .await
         {
             Ok(true) => {
+                plan.mark_retry_request();
                 if let Some(region) = retained_region {
                     // `replicaSelector.onSendFailure` retains source routing
                     // state and its KeyLocation; the following TiKV-RPC

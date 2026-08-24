@@ -140,6 +140,7 @@ mod test {
     use std::iter;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::time::Duration;
 
     use async_trait::async_trait;
@@ -210,6 +211,7 @@ mod test {
         #[derive(Clone)]
         struct MockKvRequest {
             test_invoking_count: Arc<AtomicUsize>,
+            is_retry_request: bool,
         }
 
         #[async_trait]
@@ -231,6 +233,10 @@ mod test {
             }
 
             fn set_api_version(&mut self, _: kvrpcpb::ApiVersion) {}
+
+            fn set_is_retry_request(&mut self) {
+                self.is_retry_request = true;
+            }
         }
 
         #[async_trait]
@@ -268,12 +274,20 @@ mod test {
 
         let request = MockKvRequest {
             test_invoking_count: invoking_count.clone(),
+            is_retry_request: false,
         };
 
         let rpc_invoking_count = Arc::new(AtomicUsize::new(0));
         let observed_rpc_invoking_count = rpc_invoking_count.clone();
+        let retry_flags = Arc::new(Mutex::new(Vec::new()));
+        let observed_retry_flags = retry_flags.clone();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            move |_: &dyn Any| {
+            move |request: &dyn Any| {
+                let request = request.downcast_ref::<MockKvRequest>().unwrap();
+                observed_retry_flags
+                    .lock()
+                    .unwrap()
+                    .push(request.is_retry_request);
                 Ok(Box::new(MockRpcResponse {
                     region_error: (observed_rpc_invoking_count.fetch_add(1, Ordering::SeqCst) == 0)
                         .then(crate::proto::errorpb::Error::default),
@@ -292,6 +306,7 @@ mod test {
         // re-shards nor consumes a region backoff budget.
         assert_eq!(invoking_count.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(rpc_invoking_count.load(Ordering::SeqCst), 2);
+        assert_eq!(*retry_flags.lock().unwrap(), vec![false, true]);
 
         let busy_shard_count = Arc::new(AtomicUsize::new(0));
         let busy_rpc_count = Arc::new(AtomicUsize::new(0));
@@ -312,6 +327,7 @@ mod test {
             Keyspace::Disable,
             MockKvRequest {
                 test_invoking_count: busy_shard_count.clone(),
+                is_retry_request: false,
             },
         )
         .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))

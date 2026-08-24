@@ -28,6 +28,10 @@ pub trait Request: Any + Sync + Send + 'static {
     fn as_any(&self) -> &dyn Any;
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()>;
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
+    /// Marks a resend of the same logical request. Context-bearing TiKV
+    /// requests expose this as `Context.is_retry_request`; store-only
+    /// requests intentionally retain the default no-op.
+    fn set_is_retry_request(&mut self) {}
     /// Set the numeric API V2 keyspace carried alongside the request API version.
     ///
     /// Requests without a `Context` deliberately retain the no-op default.
@@ -184,6 +188,12 @@ macro_rules! impl_request {
             fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
                 ctx.api_version = api_version.into();
+            }
+
+            fn set_is_retry_request(&mut self) {
+                self.context
+                    .get_or_insert(kvrpcpb::Context::default())
+                    .is_retry_request = true;
             }
 
             fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
@@ -589,6 +599,12 @@ impl Request for coprocessor::Request {
         self.context
             .get_or_insert(kvrpcpb::Context::default())
             .api_version = api_version.into();
+    }
+
+    fn set_is_retry_request(&mut self) {
+        self.context
+            .get_or_insert(kvrpcpb::Context::default())
+            .is_retry_request = true;
     }
 
     fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
