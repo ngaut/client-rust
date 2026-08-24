@@ -179,6 +179,7 @@ macro_rules! retry_core {
 
             match stats.done(res) {
                 Ok(r) => return Ok(r),
+                Err(Error::Unimplemented) => return Err(Error::Unimplemented),
                 Err(e) => last_err = Err(e),
             }
 

@@ -165,6 +165,17 @@ pub(crate) fn observe_region_cache_scan(duration: Duration, succeeded: bool) {
         .inc();
 }
 
+/// Source `LoadRegionCacheHistogramWithBatchScanRegions` and paired result
+/// counter for each PD BatchScanRegions attempt.
+pub(crate) fn observe_region_cache_batch_scan(duration: Duration, succeeded: bool) {
+    TIKV_LOAD_REGION_CACHE_DURATION
+        .with_label_values(&["batch_scan_regions"])
+        .observe(duration_to_sec(duration));
+    TIKV_REGION_CACHE_OPERATIONS
+        .with_label_values(&["batch_scan_regions", if succeeded { "ok" } else { "err" }])
+        .inc();
+}
+
 /// Source `TiKVStaleRegionFromPDCounter` for malformed, incomplete, or
 /// leaderless PD range-scan results that must be retried.
 pub(crate) fn increment_stale_region_from_pd() {
