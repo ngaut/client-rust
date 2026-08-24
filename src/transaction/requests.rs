@@ -370,8 +370,7 @@ pub fn new_prewrite_request(
     req.primary_lock = primary_lock;
     req.start_version = start_version;
     req.lock_ttl = lock_ttl;
-    // FIXME: Lite resolve lock is currently disabled
-    req.txn_size = u64::MAX;
+    req.txn_size = req.mutations.len() as u64;
 
     req
 }
@@ -436,6 +435,7 @@ impl Shardable for kvrpcpb::PrewriteRequest {
             self.try_one_pc = false;
         }
 
+        self.txn_size = shard.len() as u64;
         self.mutations = shard;
     }
 

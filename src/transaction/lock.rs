@@ -16,6 +16,7 @@ use tokio::time::sleep;
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
+use crate::config::get_global_config;
 use crate::interceptor::RpcInterceptorChain;
 use crate::kv::HexRepr;
 use crate::pd::PdClient;
@@ -262,6 +263,7 @@ pub(crate) async fn resolve_locks_with_context(
                                 lock.lock_version,
                                 commit_version,
                                 lock.is_txn_file,
+                                lock.txn_size,
                                 pd_client.clone(),
                                 keyspace,
                                 keyspace_name,
@@ -324,11 +326,17 @@ pub(crate) async fn resolve_locks_with_context(
         };
 
         if let Some(commit_version) = commit_version {
+            let resolve_lite =
+                lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
+            if resolve_lite && lock.key == lock.primary_lock {
+                continue;
+            }
             let cleaned_region = resolve_lock_with_retry(
                 &lock.key,
                 lock.lock_version,
                 commit_version,
                 lock.is_txn_file,
+                lock.txn_size,
                 pd_client.clone(),
                 keyspace,
                 keyspace_name,
@@ -353,6 +361,7 @@ async fn resolve_lock_with_retry(
     start_version: u64,
     commit_version: u64,
     is_txn_file: bool,
+    txn_size: u64,
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
@@ -369,8 +378,12 @@ async fn resolve_lock_with_retry(
         debug!("resolving locks: attempt {}", attempt);
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region_with_leader.ver_id();
-        let request =
+        let mut request =
             requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
+        let resolve_lite = txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
+        if resolve_lite {
+            request.keys = vec![key.clone()];
+        }
         let plan_builder =
             match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
                 .keyspace_name_option(keyspace_name)
@@ -1260,6 +1273,7 @@ mod tests {
             1,
             2,
             false,
+            u64::MAX,
             client.clone(),
             keyspace,
             None,
@@ -1281,7 +1295,19 @@ mod tests {
         .unwrap();
         let key = vec![100];
         resolve_lock_with_retry(
-            &key, 3, 4, false, client, keyspace, None, None, None, None, None, backoff,
+            &key,
+            3,
+            4,
+            false,
+            u64::MAX,
+            client,
+            keyspace,
+            None,
+            None,
+            None,
+            None,
+            None,
+            backoff,
         )
         .await
         .expect_err("should return error");
@@ -1348,6 +1374,7 @@ mod tests {
         lock.primary_lock = vec![1];
         lock.lock_version = 1;
         lock.lock_ttl = 100; // not expired under MockPdClient's Timestamp::default()
+        lock.txn_size = get_global_config().tikv_client.resolve_lock_lite_threshold;
 
         let ru_details = Arc::new(crate::RuDetails::new());
         let live_locks = resolve_locks_with_ru_details(
