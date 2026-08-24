@@ -352,6 +352,8 @@ pub(crate) struct SelectedResourceControl {
 pub(crate) fn select(
     controller: &ResourceGroupControllerHandle,
     request: &dyn Request,
+    replica_number: i64,
+    access_location: AccessLocationType,
 ) -> Option<SelectedResourceControl> {
     let resource_group_name = request.resource_group_name()?;
     let request_source = request
@@ -360,7 +362,9 @@ pub(crate) fn select(
     if controller.is_background_request(resource_group_name, request_source) {
         return None;
     }
-    let request_info = RequestInfo::from_store_request(request);
+    let mut request_info = RequestInfo::from_store_request(request);
+    request_info.replica_number = replica_number;
+    request_info.access_location = access_location;
     (!request_info.bypass).then_some(SelectedResourceControl {
         resource_group_name: resource_group_name.to_owned(),
         controller: controller.clone(),
@@ -396,6 +400,28 @@ fn kv_cpu(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    struct NoopController;
+
+    #[async_trait]
+    impl ResourceGroupController for NoopController {
+        async fn on_request_wait(
+            &self,
+            _: &str,
+            _: RequestInfo,
+        ) -> crate::Result<RequestWaitResult> {
+            Ok(RequestWaitResult::default())
+        }
+
+        fn on_response_wait(
+            &self,
+            _: &str,
+            _: RequestInfo,
+            _: ResponseInfo,
+        ) -> crate::Result<ResponseWaitResult> {
+            Ok(ResponseWaitResult::default())
+        }
+    }
 
     #[test]
     fn source_response_info_accounts_for_cop_tasks() {
@@ -526,6 +552,27 @@ mod test {
         assert!(RequestInfo::from_store_request(&raw_delete).is_write());
         let raw_batch_delete = kvrpcpb::RawBatchDeleteRequest::default();
         assert!(!RequestInfo::from_store_request(&raw_batch_delete).is_write());
+    }
+
+    #[test]
+    fn source_resource_control_selection_uses_routed_replica_and_zone() {
+        let request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                    resource_group_name: "rg".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let controller: ResourceGroupControllerHandle = Arc::new(NoopController);
+        let selected = select(&controller, &request, 3, AccessLocationType::CrossZone).unwrap();
+        assert_eq!(selected.request.replica_number, 3);
+        assert_eq!(
+            selected.request.access_location,
+            AccessLocationType::CrossZone
+        );
     }
 
     #[test]

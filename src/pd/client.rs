@@ -380,6 +380,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_client_closed: Arc<AtomicBool>,
     enable_codec: bool,
     enable_forwarding: bool,
+    zone_label: String,
     security_mgr: Arc<SecurityManager>,
     store_liveness_timeout: Duration,
     region_cache: Arc<RegionCache<RetryClient<Cl>>>,
@@ -474,7 +475,8 @@ where
         let mut route = RegionStore::new(region, Arc::new(kv_client))
             .with_target(physical_store.address)
             .with_physical_store(physical_store_id, physical_endpoint_type)
-            .with_target_peer(target_peer);
+            .with_target_peer(target_peer)
+            .with_resource_control_access_location(&self.zone_label, &target_store);
         if let Some(health_status) = health_status {
             route = route.with_health_status(health_status);
         }
@@ -1065,6 +1067,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             kv_connect: kv_connect(security_mgr.clone()),
             enable_codec,
             enable_forwarding: config.enable_forwarding,
+            zone_label: config.zone_label,
             security_mgr,
             store_liveness_timeout,
             region_cache: Arc::new(RegionCache::new(pd)),

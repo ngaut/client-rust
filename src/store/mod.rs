@@ -29,6 +29,7 @@ pub use self::errors::HasKeyErrors;
 pub use self::errors::HasRegionError;
 pub use self::errors::HasRegionErrors;
 pub use self::request::Request;
+use crate::kv::AccessLocationType;
 use crate::locate::StoreHealthStatus;
 use crate::pd::PdClient;
 use crate::proto::kvrpcpb;
@@ -74,6 +75,11 @@ pub struct RegionStore {
     /// when an RPC is physically sent through a forwarding proxy.
     pub(crate) health_status: Option<Arc<StoreHealthStatus>>,
     pub(crate) record_client_side_slow_score: bool,
+    /// Source resource-control replica count: voters and learners in the
+    /// selected region, or one when PD omitted peer metadata.
+    pub(crate) resource_control_replica_number: i64,
+    /// Source resource-control traffic zone for selector-owned TiKV routes.
+    pub(crate) resource_control_access_location: AccessLocationType,
 }
 
 impl RegionStore {
@@ -81,6 +87,7 @@ impl RegionStore {
         region_with_leader: RegionWithLeader,
         client: Arc<dyn KvClient + Send + Sync>,
     ) -> Self {
+        let resource_control_replica_number = source_replica_number(&region_with_leader);
         Self {
             target_peer: region_with_leader.leader.clone(),
             region_with_leader,
@@ -95,6 +102,8 @@ impl RegionStore {
             force_leader_read: false,
             health_status: None,
             record_client_side_slow_score: false,
+            resource_control_replica_number,
+            resource_control_access_location: AccessLocationType::Unknown,
         }
     }
 
@@ -157,6 +166,16 @@ impl RegionStore {
         self
     }
 
+    pub(crate) fn with_resource_control_access_location(
+        mut self,
+        self_zone_label: &str,
+        target_store: &metapb::Store,
+    ) -> Self {
+        self.resource_control_access_location =
+            source_access_location(self_zone_label, target_store);
+        self
+    }
+
     /// Returns the region metadata with the selected logical peer installed
     /// as its request-context leader. `Request::set_leader` historically uses
     /// this shape, so this preserves its API while permitting replica reads.
@@ -186,6 +205,42 @@ impl RegionStore {
         let target = self.target_peer.as_ref()?;
         let leader = self.region_with_leader.leader.as_ref()?;
         (self.force_leader_read && target.id != leader.id).then(|| target.clone())
+    }
+}
+
+fn source_replica_number(region: &RegionWithLeader) -> i64 {
+    if region.region.peers.is_empty() {
+        return 1;
+    }
+    region
+        .region
+        .peers
+        .iter()
+        .filter(|peer| {
+            matches!(
+                metapb::PeerRole::try_from(peer.role),
+                Ok(metapb::PeerRole::Voter | metapb::PeerRole::Learner)
+            )
+        })
+        .count() as i64
+}
+
+fn source_access_location(
+    self_zone_label: &str,
+    target_store: &metapb::Store,
+) -> AccessLocationType {
+    let target_zone_label = target_store
+        .labels
+        .iter()
+        .find(|label| label.key == "zone")
+        .map(|label| label.value.as_str())
+        .unwrap_or_default();
+    if self_zone_label.is_empty() || target_zone_label.is_empty() {
+        AccessLocationType::Unknown
+    } else if self_zone_label == target_zone_label {
+        AccessLocationType::LocalZone
+    } else {
+        AccessLocationType::CrossZone
     }
 }
 
@@ -330,5 +385,57 @@ mod tests {
 
         let threshold_route = stale_route.with_busy_threshold(123);
         assert_eq!(threshold_route.busy_threshold_ms, 123);
+    }
+
+    #[test]
+    fn source_resource_control_route_counts_voters_and_learners_and_classifies_zone() {
+        let region = RegionWithLeader::new(
+            metapb::Region {
+                peers: vec![
+                    metapb::Peer {
+                        role: metapb::PeerRole::Voter.into(),
+                        ..Default::default()
+                    },
+                    metapb::Peer {
+                        role: metapb::PeerRole::Learner.into(),
+                        ..Default::default()
+                    },
+                    metapb::Peer {
+                        role: metapb::PeerRole::IncomingVoter.into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            None,
+        );
+        let store = metapb::Store {
+            labels: vec![metapb::StoreLabel {
+                key: "zone".to_owned(),
+                value: "us-east-1a".to_owned(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let route = RegionStore::new(region, Arc::new(NoopClient))
+            .with_resource_control_access_location("us-east-1a", &store);
+        assert_eq!(route.resource_control_replica_number, 2);
+        assert_eq!(
+            route.resource_control_access_location,
+            AccessLocationType::LocalZone
+        );
+        assert_eq!(
+            route
+                .clone()
+                .with_resource_control_access_location("us-west-1a", &store)
+                .resource_control_access_location,
+            AccessLocationType::CrossZone
+        );
+        assert_eq!(
+            route
+                .with_resource_control_access_location("", &store)
+                .resource_control_access_location,
+            AccessLocationType::Unknown
+        );
     }
 }

@@ -78,6 +78,8 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 replica_selector_state: crate::locate::ReplicaSelectorState::default(),
                 store_health: None,
                 record_client_side_slow_score: false,
+                resource_control_replica_number: 1,
+                resource_control_access_location: crate::kv::AccessLocationType::Unknown,
                 interceptor: None,
                 resource_control: None,
                 response_codec,

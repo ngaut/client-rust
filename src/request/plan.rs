@@ -18,7 +18,7 @@ use tokio::time::sleep;
 use crate::async_util::Cancellation;
 use crate::backoff::Backoff;
 use crate::interceptor::RpcInterceptorChain;
-use crate::kv::ReplicaReadConfig;
+use crate::kv::{AccessLocationType, ReplicaReadConfig};
 use crate::locate::ReplicaSelectorState;
 use crate::pd::PdClient;
 use crate::proto::errorpb;
@@ -82,6 +82,8 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) replica_selector_state: ReplicaSelectorState,
     pub(crate) store_health: Option<Arc<crate::locate::StoreHealthStatus>>,
     pub(crate) record_client_side_slow_score: bool,
+    pub(crate) resource_control_replica_number: i64,
+    pub(crate) resource_control_access_location: AccessLocationType,
     /// Optional transaction-level decorator for this physical RPC.
     pub interceptor: Option<RpcInterceptorChain>,
     /// Optional client-go-compatible resource-group controller applied before
@@ -101,9 +103,14 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .resource_control
             .clone()
             .or_else(crate::resource_control::global_controller);
-        let selected_resource_control = resource_control
-            .as_ref()
-            .and_then(|controller| crate::resource_control::select(controller, &request));
+        let selected_resource_control = resource_control.as_ref().and_then(|controller| {
+            crate::resource_control::select(
+                controller,
+                &request,
+                self.resource_control_replica_number,
+                self.resource_control_access_location,
+            )
+        });
         if let Some(selected) = &selected_resource_control {
             let result = selected
                 .controller
