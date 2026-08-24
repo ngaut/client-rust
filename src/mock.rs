@@ -85,6 +85,8 @@ pub struct MockPdClient {
     #[new(default)]
     invalidated_regions: Arc<Mutex<Vec<RegionVerId>>>,
     #[new(default)]
+    closed_client_addresses: Arc<Mutex<Vec<String>>>,
+    #[new(default)]
     bucket_updates: Arc<Mutex<Vec<(RegionVerId, u64, Vec<Vec<u8>>)>>>,
 }
 
@@ -116,6 +118,7 @@ impl MockPdClient {
             client: MockKvClient::default(),
             epoch_not_match_regions: Arc::default(),
             invalidated_regions: Arc::default(),
+            closed_client_addresses: Arc::default(),
             bucket_updates: Arc::default(),
         }
     }
@@ -183,6 +186,10 @@ impl MockPdClient {
 
     pub(crate) fn invalidated_regions(&self) -> Vec<RegionVerId> {
         self.invalidated_regions.lock().unwrap().clone()
+    }
+
+    pub(crate) fn closed_client_addresses(&self) -> Vec<String> {
+        self.closed_client_addresses.lock().unwrap().clone()
     }
 
     pub(crate) fn bucket_updates(&self) -> Vec<(RegionVerId, u64, Vec<Vec<u8>>)> {
@@ -269,6 +276,13 @@ impl PdClient for MockPdClient {
     }
 
     async fn invalidate_store_cache(&self, _store_id: crate::region::StoreId) {}
+
+    async fn close_kv_client_addr_ver(&self, address: &str, _version: u64) {
+        self.closed_client_addresses
+            .lock()
+            .unwrap()
+            .push(address.to_owned());
+    }
 
     async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         unimplemented!()

@@ -943,6 +943,14 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         if let Ok(store_id) = store_id {
             pd_client.invalidate_store_cache(store_id).await;
         }
+        // `RegionRequestSender.onRegionError` closes the physical RPC address
+        // even when the store cache was already removed, so a stale DNS
+        // resolution cannot leave a reusable channel behind.
+        if !region_store.target.is_empty() {
+            pd_client
+                .close_kv_client_addr_ver(&region_store.target, u64::MAX)
+                .await;
+        }
         Err(Error::RegionError(Box::new(e)))
     } else if let Some(epoch_not_match) = e.epoch_not_match.clone() {
         match on_region_epoch_not_match(pd_client.clone(), region_store, epoch_not_match).await? {
@@ -1783,23 +1791,37 @@ mod test {
 
     #[tokio::test]
     async fn source_store_identity_errors_stop_the_current_send_loop() {
-        for error in [
+        let pd_client = Arc::new(MockPdClient::default());
+        let store = region_store().with_target("tikv-a");
+        let ver_id = store.region_with_leader.ver_id();
+        let result = handle_region_error(
+            pd_client.clone(),
             errorpb::Error {
                 store_not_match: Some(Default::default()),
                 ..Default::default()
             },
+            store,
+        )
+        .await;
+        assert!(matches!(result, Err(Error::RegionError(_))));
+        assert_eq!(pd_client.invalidated_regions(), vec![ver_id]);
+        assert_eq!(pd_client.closed_client_addresses(), vec!["tikv-a"]);
+
+        let pd_client = Arc::new(MockPdClient::default());
+        let store = region_store().with_target("tikv-a");
+        let ver_id = store.region_with_leader.ver_id();
+        let result = handle_region_error(
+            pd_client.clone(),
             errorpb::Error {
                 mismatch_peer_id: Some(Default::default()),
                 ..Default::default()
             },
-        ] {
-            let pd_client = Arc::new(MockPdClient::default());
-            let store = region_store();
-            let ver_id = store.region_with_leader.ver_id();
-            let result = handle_region_error(pd_client.clone(), error, store).await;
-            assert!(matches!(result, Err(Error::RegionError(_))));
-            assert_eq!(pd_client.invalidated_regions(), vec![ver_id]);
-        }
+            store,
+        )
+        .await;
+        assert!(matches!(result, Err(Error::RegionError(_))));
+        assert_eq!(pd_client.invalidated_regions(), vec![ver_id]);
+        assert!(pd_client.closed_client_addresses().is_empty());
     }
 
     #[tokio::test]
