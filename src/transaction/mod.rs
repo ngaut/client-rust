@@ -36,6 +36,8 @@ pub(crate) mod range_task;
 #[allow(dead_code)]
 mod rbt;
 mod requests;
+pub use lock::extract_lock_from_key_error;
+pub use lock::extract_locks_from_key_error;
 pub(crate) use lock::reject_shared_locks;
 pub(crate) use lock::resolve_locks_with_ru_details;
 pub use lock::LockResolver;

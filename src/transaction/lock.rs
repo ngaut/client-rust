@@ -45,6 +45,35 @@ pub(crate) fn format_key_for_log(key: &[u8]) -> String {
     format!("len={}, prefix={}", key.len(), HexRepr(&key[..prefix_len]))
 }
 
+/// Extract the lock carried by a TiKV key error.
+///
+/// This mirrors client-go's `ExtractLockFromKeyErr`: a shared-lock wrapper is
+/// returned as-is so callers that require exactly one lock retain the source
+/// behavior. Use [`extract_locks_from_key_error`] when the caller can resolve
+/// every shared holder.
+pub fn extract_lock_from_key_error(key_error: &kvrpcpb::KeyError) -> Result<kvrpcpb::LockInfo> {
+    key_error
+        .locked
+        .clone()
+        .ok_or_else(|| Error::KeyError(Box::new(key_error.clone())))
+}
+
+/// Extract every lock represented by a TiKV key error.
+///
+/// A shared-lock wrapper has unset transaction fields; client-go expands its
+/// `shared_lock_infos` instead of passing that wrapper to the resolver. An
+/// exclusive lock remains a single-element result.
+pub fn extract_locks_from_key_error(
+    key_error: &kvrpcpb::KeyError,
+) -> Result<Vec<kvrpcpb::LockInfo>> {
+    let lock = extract_lock_from_key_error(key_error)?;
+    if lock.shared_lock_infos.is_empty() {
+        Ok(vec![lock])
+    } else {
+        Ok(lock.shared_lock_infos)
+    }
+}
+
 /// Refuse to resolve SHARED locks — loudly, before any of them can be mis-handled.
 ///
 /// The contract (`kvrpcpb.LockInfo.shared_lock_infos`) is explicit: a shared lock's
@@ -817,6 +846,53 @@ mod tests {
             ..Default::default()
         };
         assert!(reject_shared_locks(&[by_op]).is_err());
+    }
+
+    #[test]
+    fn source_key_error_lock_extraction_expands_shared_holders() {
+        let first = kvrpcpb::LockInfo {
+            key: b"key-1".to_vec(),
+            lock_version: 7,
+            ..Default::default()
+        };
+        let second = kvrpcpb::LockInfo {
+            key: b"key-2".to_vec(),
+            lock_version: 8,
+            ..Default::default()
+        };
+        let shared_error = kvrpcpb::KeyError {
+            locked: Some(kvrpcpb::LockInfo {
+                lock_type: kvrpcpb::Op::SharedLock as i32,
+                shared_lock_infos: vec![first.clone(), second.clone()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            extract_lock_from_key_error(&shared_error)
+                .unwrap()
+                .shared_lock_infos,
+            [first.clone(), second.clone()]
+        );
+        assert_eq!(
+            extract_locks_from_key_error(&shared_error).unwrap(),
+            [first, second]
+        );
+
+        let exclusive = kvrpcpb::KeyError {
+            locked: Some(kvrpcpb::LockInfo {
+                key: b"key".to_vec(),
+                lock_version: 9,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(extract_locks_from_key_error(&exclusive).unwrap().len(), 1);
+        assert!(matches!(
+            extract_locks_from_key_error(&kvrpcpb::KeyError::default()),
+            Err(Error::KeyError(_))
+        ));
     }
 
     #[rstest::rstest]
