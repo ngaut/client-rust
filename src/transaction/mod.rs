@@ -15,6 +15,8 @@ pub use priority::Priority;
 pub use snapshot::Snapshot;
 pub use snapshot_stats::SnapshotRpcCommand;
 pub use snapshot_stats::SnapshotRuntimeStats;
+pub use snapshot_stats::SnapshotScanDetail;
+pub use snapshot_stats::SnapshotTimeDetail;
 pub use sync_client::SyncTransactionClient;
 pub use sync_snapshot::SyncSnapshot;
 pub use sync_transaction::SyncTransaction;

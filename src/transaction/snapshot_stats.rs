@@ -46,6 +46,112 @@ struct RpcRuntimeStat {
 #[derive(Clone, Default)]
 struct SnapshotRuntimeStatsInner {
     rpc: BTreeMap<SnapshotRpcCommand, RpcRuntimeStat>,
+    scan_detail: SnapshotScanDetail,
+    time_detail: SnapshotTimeDetail,
+}
+
+/// Aggregated TiKV MVCC/RocksDB scan details returned with snapshot reads.
+///
+/// Fields retain client-go's `util.ScanDetail` meaning and accumulate across
+/// every physical response attached to a snapshot collector.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SnapshotScanDetail {
+    pub total_keys: u64,
+    pub processed_keys: u64,
+    pub processed_keys_size: u64,
+    pub rocksdb_delete_skipped_count: u64,
+    pub rocksdb_key_skipped_count: u64,
+    pub rocksdb_block_cache_hit_count: u64,
+    pub rocksdb_block_read_count: u64,
+    pub rocksdb_block_read_byte: u64,
+    pub rocksdb_block_read_duration: Duration,
+    pub get_snapshot_duration: Duration,
+    pub ia_cache_hit_count: u64,
+    pub ia_remote_read_segment_count: u64,
+    pub ia_remote_read_segment_bytes: u64,
+    pub ia_remote_read_segment_duration: Duration,
+}
+
+impl SnapshotScanDetail {
+    fn merge_from_pb(&mut self, detail: &kvrpcpb::ScanDetailV2) {
+        self.total_keys += detail.total_versions;
+        self.processed_keys += detail.processed_versions;
+        self.processed_keys_size += detail.processed_versions_size;
+        self.rocksdb_delete_skipped_count += detail.rocksdb_delete_skipped_count;
+        self.rocksdb_key_skipped_count += detail.rocksdb_key_skipped_count;
+        self.rocksdb_block_cache_hit_count += detail.rocksdb_block_cache_hit_count;
+        self.rocksdb_block_read_count += detail.rocksdb_block_read_count;
+        self.rocksdb_block_read_byte += detail.rocksdb_block_read_byte;
+        self.rocksdb_block_read_duration += Duration::from_nanos(detail.rocksdb_block_read_nanos);
+        self.get_snapshot_duration += Duration::from_nanos(detail.get_snapshot_nanos);
+        self.ia_cache_hit_count += detail.ia_cache_hit_count;
+        self.ia_remote_read_segment_count += detail.ia_remote_read_segment_count;
+        self.ia_remote_read_segment_bytes += detail.ia_remote_read_segment_bytes;
+        self.ia_remote_read_segment_duration +=
+            Duration::from_nanos(detail.ia_remote_read_segment_nanos);
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.total_keys += other.total_keys;
+        self.processed_keys += other.processed_keys;
+        self.processed_keys_size += other.processed_keys_size;
+        self.rocksdb_delete_skipped_count += other.rocksdb_delete_skipped_count;
+        self.rocksdb_key_skipped_count += other.rocksdb_key_skipped_count;
+        self.rocksdb_block_cache_hit_count += other.rocksdb_block_cache_hit_count;
+        self.rocksdb_block_read_count += other.rocksdb_block_read_count;
+        self.rocksdb_block_read_byte += other.rocksdb_block_read_byte;
+        self.rocksdb_block_read_duration += other.rocksdb_block_read_duration;
+        self.get_snapshot_duration += other.get_snapshot_duration;
+        self.ia_cache_hit_count += other.ia_cache_hit_count;
+        self.ia_remote_read_segment_count += other.ia_remote_read_segment_count;
+        self.ia_remote_read_segment_bytes += other.ia_remote_read_segment_bytes;
+        self.ia_remote_read_segment_duration += other.ia_remote_read_segment_duration;
+    }
+}
+
+/// Aggregated TiKV execution-time details returned with snapshot reads.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SnapshotTimeDetail {
+    pub process_time: Duration,
+    pub suspend_time: Duration,
+    pub wait_time: Duration,
+    pub kv_read_wall_time: Duration,
+    pub kv_grpc_process_time: Duration,
+    pub kv_grpc_wait_time: Duration,
+    pub total_rpc_wall_time: Duration,
+}
+
+impl SnapshotTimeDetail {
+    fn merge_from_pb(
+        &mut self,
+        time_detail_v2: Option<&kvrpcpb::TimeDetailV2>,
+        time_detail: Option<&kvrpcpb::TimeDetail>,
+    ) {
+        if let Some(detail) = time_detail_v2 {
+            self.wait_time += Duration::from_nanos(detail.wait_wall_time_ns);
+            self.process_time += Duration::from_nanos(detail.process_wall_time_ns);
+            self.suspend_time += Duration::from_nanos(detail.process_suspend_wall_time_ns);
+            self.kv_read_wall_time += Duration::from_nanos(detail.kv_read_wall_time_ns);
+            self.kv_grpc_process_time += Duration::from_nanos(detail.kv_grpc_process_time_ns);
+            self.kv_grpc_wait_time += Duration::from_nanos(detail.kv_grpc_wait_time_ns);
+            self.total_rpc_wall_time += Duration::from_nanos(detail.total_rpc_wall_time_ns);
+        } else if let Some(detail) = time_detail {
+            self.wait_time += Duration::from_millis(detail.wait_wall_time_ms);
+            self.process_time += Duration::from_millis(detail.process_wall_time_ms);
+            self.kv_read_wall_time += Duration::from_millis(detail.kv_read_wall_time_ms);
+            self.total_rpc_wall_time += Duration::from_nanos(detail.total_rpc_wall_time_ns);
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.process_time += other.process_time;
+        self.suspend_time += other.suspend_time;
+        self.wait_time += other.wait_time;
+        self.kv_read_wall_time += other.kv_read_wall_time;
+        self.kv_grpc_process_time += other.kv_grpc_process_time;
+        self.kv_grpc_wait_time += other.kv_grpc_wait_time;
+        self.total_rpc_wall_time += other.total_rpc_wall_time;
+    }
 }
 
 /// Runtime statistics collected for a snapshot's physical TiKV read RPCs.
@@ -100,6 +206,24 @@ impl SnapshotRuntimeStats {
             .map_or(Duration::ZERO, |stat| stat.duration)
     }
 
+    /// Return a point-in-time copy of the accumulated TiKV scan detail.
+    pub fn scan_detail(&self) -> SnapshotScanDetail {
+        self.inner
+            .lock()
+            .expect("snapshot stats lock poisoned")
+            .scan_detail
+            .clone()
+    }
+
+    /// Return a point-in-time copy of the accumulated TiKV execution times.
+    pub fn time_detail(&self) -> SnapshotTimeDetail {
+        self.inner
+            .lock()
+            .expect("snapshot stats lock poisoned")
+            .time_detail
+            .clone()
+    }
+
     /// Merge another collector into this one, matching client-go's
     /// `SnapshotRuntimeStats.Merge` ownership model.
     pub fn merge(&self, other: &Self) {
@@ -114,6 +238,8 @@ impl SnapshotRuntimeStats {
             merged.count += stat.count;
             merged.duration += stat.duration;
         }
+        inner.scan_detail.merge(&other.scan_detail);
+        inner.time_detail.merge(&other.time_detail);
     }
 
     pub(crate) fn interceptor(self: &Arc<Self>) -> Arc<dyn RpcInterceptor> {
@@ -127,6 +253,16 @@ impl SnapshotRuntimeStats {
         let stat = inner.rpc.entry(command).or_default();
         stat.count += 1;
         stat.duration += duration;
+    }
+
+    fn record_exec_detail(&self, detail: &kvrpcpb::ExecDetailsV2) {
+        let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
+        if let Some(scan_detail) = &detail.scan_detail_v2 {
+            inner.scan_detail.merge_from_pb(scan_detail);
+        }
+        inner
+            .time_detail
+            .merge_from_pb(detail.time_detail_v2.as_ref(), detail.time_detail.as_ref());
     }
 }
 
@@ -174,8 +310,37 @@ impl RpcInterceptor for SnapshotRuntimeStatsInterceptor {
             if let Some(command) = command {
                 stats.record_rpc(command, started.elapsed());
             }
+            if let Ok(response) = &result {
+                if let Some(detail) = snapshot_exec_detail(response.as_ref()) {
+                    stats.record_exec_detail(detail);
+                }
+            }
             result
         })
+    }
+}
+
+fn snapshot_exec_detail(response: &dyn Any) -> Option<&kvrpcpb::ExecDetailsV2> {
+    if let Some(response) = response.downcast_ref::<kvrpcpb::GetResponse>() {
+        response
+            .region_error
+            .is_none()
+            .then_some(())
+            .and(response.exec_details_v2.as_ref())
+    } else if let Some(response) = response.downcast_ref::<kvrpcpb::BatchGetResponse>() {
+        response
+            .region_error
+            .is_none()
+            .then_some(())
+            .and(response.exec_details_v2.as_ref())
+    } else if let Some(response) = response.downcast_ref::<kvrpcpb::BufferBatchGetResponse>() {
+        response
+            .region_error
+            .is_none()
+            .then_some(())
+            .and(response.exec_details_v2.as_ref())
+    } else {
+        None
     }
 }
 
@@ -202,6 +367,17 @@ mod tests {
     fn clone_and_merge_preserve_independent_rpc_totals() {
         let stats = SnapshotRuntimeStats::new();
         stats.record_rpc(SnapshotRpcCommand::Get, Duration::from_millis(3));
+        stats.record_exec_detail(&kvrpcpb::ExecDetailsV2 {
+            time_detail: Some(kvrpcpb::TimeDetail {
+                process_wall_time_ms: 4,
+                ..Default::default()
+            }),
+            scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                processed_versions: 5,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
         let cloned = stats.clone();
         stats.record_rpc(SnapshotRpcCommand::Get, Duration::from_millis(2));
 
@@ -210,6 +386,8 @@ mod tests {
             cloned.rpc_duration(SnapshotRpcCommand::Get),
             Duration::from_millis(3)
         );
+        assert_eq!(cloned.time_detail().process_time, Duration::from_millis(4));
+        assert_eq!(cloned.scan_detail().processed_keys, 5);
 
         cloned.merge(&stats);
         assert_eq!(cloned.rpc_count(SnapshotRpcCommand::Get), 3);
@@ -217,5 +395,7 @@ mod tests {
             cloned.rpc_duration(SnapshotRpcCommand::Get),
             Duration::from_millis(8)
         );
+        assert_eq!(cloned.time_detail().process_time, Duration::from_millis(8));
+        assert_eq!(cloned.scan_detail().processed_keys, 10);
     }
 }

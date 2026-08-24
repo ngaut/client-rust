@@ -3433,6 +3433,26 @@ mod tests {
                 if request.is::<kvrpcpb::GetRequest>() {
                     Ok(Box::new(kvrpcpb::GetResponse {
                         value: b"get-value".to_vec(),
+                        exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                            time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                                wait_wall_time_ns: 1,
+                                process_wall_time_ns: 2,
+                                process_suspend_wall_time_ns: 3,
+                                kv_read_wall_time_ns: 4,
+                                total_rpc_wall_time_ns: 5,
+                                kv_grpc_process_time_ns: 6,
+                                kv_grpc_wait_time_ns: 7,
+                            }),
+                            scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                                total_versions: 8,
+                                processed_versions: 9,
+                                processed_versions_size: 10,
+                                rocksdb_block_read_nanos: 11,
+                                ia_remote_read_segment_nanos: 12,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }),
                         ..Default::default()
                     }) as Box<dyn Any>)
                 } else if request.is::<kvrpcpb::BatchGetRequest>() {
@@ -3471,6 +3491,28 @@ mod tests {
         assert_eq!(
             stats.rpc_count(crate::SnapshotRpcCommand::BufferBatchGet),
             0
+        );
+        assert_eq!(stats.time_detail().wait_time, Duration::from_nanos(1));
+        assert_eq!(stats.time_detail().process_time, Duration::from_nanos(2));
+        assert_eq!(stats.time_detail().suspend_time, Duration::from_nanos(3));
+        assert_eq!(
+            stats.time_detail().kv_grpc_process_time,
+            Duration::from_nanos(6)
+        );
+        assert_eq!(
+            stats.time_detail().kv_grpc_wait_time,
+            Duration::from_nanos(7)
+        );
+        assert_eq!(stats.scan_detail().total_keys, 8);
+        assert_eq!(stats.scan_detail().processed_keys, 9);
+        assert_eq!(stats.scan_detail().processed_keys_size, 10);
+        assert_eq!(
+            stats.scan_detail().rocksdb_block_read_duration,
+            Duration::from_nanos(11)
+        );
+        assert_eq!(
+            stats.scan_detail().ia_remote_read_segment_duration,
+            Duration::from_nanos(12)
         );
 
         transaction.set_snapshot_runtime_stats(None);

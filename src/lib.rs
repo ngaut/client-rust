@@ -243,6 +243,10 @@ pub use crate::transaction::SnapshotRpcCommand;
 #[doc(inline)]
 pub use crate::transaction::SnapshotRuntimeStats;
 #[doc(inline)]
+pub use crate::transaction::SnapshotScanDetail;
+#[doc(inline)]
+pub use crate::transaction::SnapshotTimeDetail;
+#[doc(inline)]
 pub use crate::transaction::SyncSnapshot;
 #[doc(inline)]
 pub use crate::transaction::SyncTransaction;
