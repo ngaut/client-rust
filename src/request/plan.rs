@@ -976,6 +976,10 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         // terminates this send loop so the caller can rebuild its request.
         pd_client.invalidate_region_cache(ver_id).await;
         Err(Error::RegionError(Box::new(e)))
+    } else if e.message.contains("invalid max_ts update") {
+        // Source `isInvalidMaxTsUpdate` is a direct terminal sender error,
+        // not an unknown-error replica retry.
+        Err(Error::StringError(format!("{e:?}")))
     } else {
         // TiKV sends every source request through `replicaSelector`; its
         // fallback returns true here so `next` can select another replica
@@ -1750,6 +1754,17 @@ mod test {
         )
         .await;
         assert!(matches!(raft_entry, Err(Error::StringError(_))));
+
+        let invalid_max_ts = handle_region_error(
+            Arc::new(MockPdClient::default()),
+            errorpb::Error {
+                message: "invalid max_ts update from peer".to_owned(),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await;
+        assert!(matches!(invalid_max_ts, Err(Error::StringError(_))));
     }
 
     #[tokio::test]
