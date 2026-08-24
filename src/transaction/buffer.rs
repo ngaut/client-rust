@@ -151,6 +151,59 @@ impl Buffer {
         }
     }
 
+    /// Fetch a snapshot entry while retaining its optional commit timestamp.
+    /// A cached non-empty entry without a commit timestamp cannot satisfy a
+    /// later `ReturnCommitTs` read and is fetched again, as in client-go.
+    pub async fn get_snapshot_entry_or_else<F, Fut>(
+        &mut self,
+        key: Key,
+        return_commit_ts: bool,
+        cache_result: bool,
+        f: F,
+    ) -> Result<Option<ValueEntry>>
+    where
+        F: FnOnce(Key) -> Fut,
+        Fut: Future<Output = Result<Option<ValueEntry>>>,
+    {
+        if let Some(BufferEntry::Cached(value)) = self.entry_map.get(&key) {
+            let eligible = value
+                .as_ref()
+                .is_none_or(|entry| !return_commit_ts || entry.commit_ts > 0);
+            if eligible {
+                self.snapshot_cache_hits += 1;
+                return Ok(value.as_ref().map(|entry| {
+                    let mut entry = entry.clone();
+                    if !return_commit_ts {
+                        entry.commit_ts = 0;
+                    }
+                    entry
+                }));
+            }
+
+            let value = f(key.clone()).await?;
+            if cache_result {
+                self.update_snapshot_cache_entry(key, value.clone());
+            }
+            return Ok(value);
+        }
+
+        match self.get_from_mutations(&key) {
+            MutationValue::Determined(value) => Ok(value.map(|value| ValueEntry::new(value, 0))),
+            MutationValue::Undetermined => {
+                let value = f(key.clone()).await?;
+                if cache_result {
+                    self.update_snapshot_cache_entry(key, value.clone());
+                }
+                Ok(value.map(|mut entry| {
+                    if !return_commit_ts {
+                        entry.commit_ts = 0;
+                    }
+                    entry
+                }))
+            }
+        }
+    }
+
     /// Get multiple values from the buffer. If any are not present, run `f` to
     /// get the missing values.
     ///
@@ -219,6 +272,71 @@ impl Buffer {
         }
 
         Ok(cached_results.into_iter().chain(fetched_results))
+    }
+
+    /// Batch variant of [`Self::get_snapshot_entry_or_else`]. The returned
+    /// map excludes missing keys, while the cache retains those misses.
+    pub async fn batch_get_snapshot_entries_or_else<F, Fut>(
+        &mut self,
+        keys: impl Iterator<Item = Key>,
+        return_commit_ts: bool,
+        cache_results: bool,
+        f: F,
+    ) -> Result<BTreeMap<Key, ValueEntry>>
+    where
+        F: FnOnce(Box<dyn Iterator<Item = Key> + Send>) -> Fut,
+        Fut: Future<Output = Result<BTreeMap<Key, ValueEntry>>>,
+    {
+        let mut cached_results = BTreeMap::new();
+        let mut undetermined_keys = Vec::new();
+        for key in keys {
+            match self.entry_map.get(&key) {
+                Some(BufferEntry::Cached(value)) => {
+                    let eligible = value
+                        .as_ref()
+                        .is_none_or(|entry| !return_commit_ts || entry.commit_ts > 0);
+                    if eligible {
+                        self.snapshot_cache_hits += 1;
+                        if let Some(value) = value {
+                            let mut value = value.clone();
+                            if !return_commit_ts {
+                                value.commit_ts = 0;
+                            }
+                            cached_results.insert(key, value);
+                        }
+                    } else {
+                        undetermined_keys.push(key);
+                    }
+                }
+                Some(entry) => match entry.get_value() {
+                    MutationValue::Determined(Some(value)) => {
+                        cached_results.insert(key, ValueEntry::new(value, 0));
+                    }
+                    MutationValue::Determined(None) => {}
+                    MutationValue::Undetermined => undetermined_keys.push(key),
+                },
+                None => undetermined_keys.push(key),
+            }
+        }
+
+        let fetched_results = if undetermined_keys.is_empty() {
+            BTreeMap::new()
+        } else {
+            f(Box::new(undetermined_keys.clone().into_iter())).await?
+        };
+        if cache_results {
+            for key in undetermined_keys {
+                self.update_snapshot_cache_entry(key.clone(), fetched_results.get(&key).cloned());
+            }
+        }
+
+        cached_results.extend(fetched_results.into_iter().map(|(key, mut value)| {
+            if !return_commit_ts {
+                value.commit_ts = 0;
+            }
+            (key, value)
+        }));
+        Ok(cached_results)
     }
 
     /// Run `f` to fetch entries in `range` from TiKV. Combine them with mutations in local buffer. Returns the results.
@@ -418,6 +536,15 @@ impl Buffer {
             Some(BufferEntry::CheckNotExist) => {
                 assert!(value.is_none());
             }
+        }
+    }
+
+    fn update_snapshot_cache_entry(&mut self, key: Key, value: Option<ValueEntry>) {
+        match self.entry_map.get(&key) {
+            None | Some(BufferEntry::Cached(_)) => {
+                self.entry_map.insert(key, BufferEntry::Cached(value));
+            }
+            Some(_) => {}
         }
     }
 

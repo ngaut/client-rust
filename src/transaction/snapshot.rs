@@ -7,6 +7,7 @@ use derive_new::new;
 use log::{debug, trace};
 
 use crate::BoundRange;
+use crate::GetOption;
 use crate::Key;
 use crate::KvPair;
 use crate::Priority;
@@ -246,6 +247,17 @@ impl Snapshot {
         self.transaction.get(key).await
     }
 
+    /// Get a value plus optional commit timestamp using source `GetOption`
+    /// semantics. A missing key returns `None` in the native Rust API.
+    pub async fn get_with_options(
+        &mut self,
+        key: impl Into<Key>,
+        options: &[GetOption],
+    ) -> Result<Option<ValueEntry>> {
+        trace!("invoking get request with options on snapshot");
+        self.transaction.get_with_options(key, options).await
+    }
+
     /// Check whether the key exists.
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
         debug!("invoking key_exists request on snapshot");
@@ -259,6 +271,16 @@ impl Snapshot {
     ) -> Result<impl Iterator<Item = KvPair>> {
         debug!("invoking batch_get request on snapshot");
         self.transaction.batch_get(keys).await
+    }
+
+    /// Batch-get values plus optional commit timestamps using source
+    /// `GetOption` semantics. Missing keys are absent from the returned map.
+    pub async fn batch_get_with_options(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        options: &[GetOption],
+    ) -> Result<BTreeMap<Key, ValueEntry>> {
+        self.transaction.batch_get_with_options(keys, options).await
     }
 
     /// Read values from the pipelined transaction buffer tier.

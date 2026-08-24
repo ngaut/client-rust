@@ -1,8 +1,9 @@
 use crate::transaction::sync_client::safe_block_on;
 use crate::{
-    BoundRange, Key, KvPair, Priority, ReplicaReadAdjuster, ReplicaReadConfig, ReplicaReadType,
-    Result, RpcInterceptorHandle, RuDetails, Snapshot, Value,
+    BoundRange, GetOption, Key, KvPair, Priority, ReplicaReadAdjuster, ReplicaReadConfig,
+    ReplicaReadType, Result, RpcInterceptorHandle, RuDetails, Snapshot, Value, ValueEntry,
 };
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -73,6 +74,35 @@ impl SyncSnapshot {
     /// Return the configured snapshot read deadline, if any.
     pub fn kv_read_timeout(&self) -> Option<Duration> {
         self.inner.kv_read_timeout()
+    }
+
+    /// Return the cumulative snapshot-cache hit count.
+    pub fn snap_cache_hit_count(&self) -> usize {
+        self.inner.snap_cache_hit_count()
+    }
+
+    /// Return the number of cached snapshot entries, including misses.
+    pub fn snap_cache_size(&self) -> usize {
+        self.inner.snap_cache_size()
+    }
+
+    /// Return a copy of the snapshot cache.
+    pub fn snap_cache(&self) -> BTreeMap<Key, ValueEntry> {
+        self.inner.snap_cache()
+    }
+
+    /// Seed snapshot-cache entries for the supplied keys.
+    pub fn update_snapshot_cache(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        values: BTreeMap<Key, ValueEntry>,
+    ) {
+        self.inner.update_snapshot_cache(keys, values);
+    }
+
+    /// Remove cached snapshot entries for the supplied keys.
+    pub fn clean_snapshot_cache(&mut self, keys: impl IntoIterator<Item = impl Into<Key>>) {
+        self.inner.clean_snapshot_cache(keys);
     }
 
     /// Control whether TiKV should bypass cache population for subsequent
@@ -161,6 +191,16 @@ impl SyncSnapshot {
         safe_block_on(&self.runtime, self.inner.get(key))
     }
 
+    /// Get a value plus optional commit timestamp using source `GetOption`
+    /// semantics.
+    pub fn get_with_options(
+        &mut self,
+        key: impl Into<Key>,
+        options: &[GetOption],
+    ) -> Result<Option<ValueEntry>> {
+        safe_block_on(&self.runtime, self.inner.get_with_options(key, options))
+    }
+
     /// Check whether the key exists.
     pub fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
         safe_block_on(&self.runtime, self.inner.key_exists(key))
@@ -172,6 +212,19 @@ impl SyncSnapshot {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         safe_block_on(&self.runtime, self.inner.batch_get(keys))
+    }
+
+    /// Batch-get values plus optional commit timestamps using source
+    /// `GetOption` semantics.
+    pub fn batch_get_with_options(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        options: &[GetOption],
+    ) -> Result<BTreeMap<Key, ValueEntry>> {
+        safe_block_on(
+            &self.runtime,
+            self.inner.batch_get_with_options(keys, options),
+        )
     }
 
     /// Read values from the pipelined transaction buffer tier.

@@ -17,7 +17,7 @@ use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::interceptor::RpcInterceptorChain;
 use crate::interceptor::RpcInterceptorHandle;
-use crate::kv::{ReplicaReadAdjuster, ReplicaReadConfig, ValueEntry};
+use crate::kv::{GetOption, GetOptions, ReplicaReadAdjuster, ReplicaReadConfig, ValueEntry};
 use crate::oracle::ReadTimestampValidator;
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
@@ -529,6 +529,99 @@ impl<PdC: PdClient> Transaction<PdC> {
             .await
     }
 
+    /// Read a snapshot entry with source `GetOption` behavior. In particular,
+    /// [`GetOption::ReturnCommitTs`] requests TiKV's commit timestamp and will
+    /// not reuse a cached non-empty entry whose timestamp is unknown.
+    pub async fn get_with_options(
+        &mut self,
+        key: impl Into<Key>,
+        options: &[GetOption],
+    ) -> Result<Option<ValueEntry>> {
+        trace!("invoking transactional get request with options");
+        self.check_allow_operation().await?;
+        let mut get_options = GetOptions::default();
+        get_options.apply(options);
+        let return_commit_ts = get_options.return_commit_ts();
+        let timestamp = self.timestamp.clone();
+        let cache_snapshot_read = !self.options.read_only || timestamp.version() != u64::MAX;
+        let rpc = self.rpc.clone();
+        let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+        let retry_options = self.options.retry_options.clone();
+        let keyspace = self.keyspace;
+        let keyspace_name = self.keyspace_name.clone();
+        let rpc_interceptor = self.rpc_interceptor.clone();
+        let resource_group_name = self.resource_group_name.clone();
+        let resource_control = self.resource_control.clone();
+        let ru_details = self.ru_details.clone();
+        let priority = self.options.priority;
+        let not_fill_cache = self.not_fill_cache;
+        let isolation_level = self.isolation_level;
+        let task_id = self.task_id;
+        let resource_group_tag = self.resource_group_tag.clone();
+        let resource_group_tagger = self.resource_group_tagger.clone();
+        let snapshot_read_timeout = self.snapshot_read_timeout;
+        let read_timestamp_validator = self.read_timestamp_validator.clone();
+        let read_replica_scope = self.read_replica_scope.clone();
+        let replica_read_config = self.replica_read_config_for_items(1);
+        let read_lock_context = self.read_lock_context.clone();
+        let lock_resolver_context = self.lock_resolver_context.clone();
+
+        self.buffer
+            .get_snapshot_entry_or_else(
+                key,
+                return_commit_ts,
+                cache_snapshot_read,
+                |key| async move {
+                    let mut request = new_get_request(key, timestamp.clone());
+                    request.need_commit_ts = return_commit_ts;
+                    let resource_group_tag = resource_group_tag.clone().or_else(|| {
+                        resource_group_tagger
+                            .as_ref()
+                            .map(|tagger| tagger(SnapshotRequestType::Get))
+                    });
+                    let plan = plan_with_keyspace_name(
+                        rpc,
+                        keyspace,
+                        keyspace_name.as_deref(),
+                        rpc_interceptor,
+                        resource_group_name.as_deref(),
+                        resource_control,
+                        ru_details,
+                        replica_read_config.clone(),
+                        request,
+                    )
+                    .priority(priority)
+                    .not_fill_cache(not_fill_cache)
+                    .isolation_level(isolation_level)
+                    .task_id(task_id)
+                    .resource_group_tag(resource_group_tag)
+                    .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_SHORT)
+                    .validate_read_timestamp(
+                        read_timestamp_validator,
+                        timestamp.version(),
+                        replica_read_config.stale_read,
+                        read_replica_scope,
+                    )
+                    .resolve_lock_for_read(
+                        timestamp,
+                        retry_options.lock_backoff,
+                        keyspace,
+                        read_lock_context,
+                        lock_resolver_context,
+                    )
+                    .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                    .merge(CollectSingle)
+                    .plan();
+                    let response = plan.execute().await?;
+                    let entry = (!response.not_found)
+                        .then(|| ValueEntry::new(response.value, response.commit_ts));
+                    ensure_snapshot_commit_ts(return_commit_ts, entry.as_ref())?;
+                    Ok(entry)
+                },
+            )
+            .await
+    }
+
     /// Create a `get for update` request.
     ///
     /// The request reads and "locks" a key. It is similar to `SELECT ... FOR
@@ -726,6 +819,125 @@ impl<PdC: PdClient> Transaction<PdC> {
             })
             .await
             .map(move |pairs| pairs.map(move |pair| pair.truncate_keyspace(keyspace)))
+    }
+
+    /// Batch-read snapshot entries with source `GetOption` behavior. Missing
+    /// keys are omitted and every returned [`ValueEntry`] retains its commit
+    /// timestamp only when [`GetOption::ReturnCommitTs`] is requested.
+    pub async fn batch_get_with_options(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        options: &[GetOption],
+    ) -> Result<BTreeMap<Key, ValueEntry>> {
+        debug!("invoking transactional batch_get request with options");
+        self.check_allow_operation().await?;
+        let mut get_options = GetOptions::default();
+        get_options.apply(options);
+        let return_commit_ts = get_options.return_commit_ts();
+        let timestamp = self.timestamp.clone();
+        let cache_snapshot_read = !self.options.read_only || timestamp.version() != u64::MAX;
+        let rpc = self.rpc.clone();
+        let keyspace = self.keyspace;
+        let keyspace_name = self.keyspace_name.clone();
+        let rpc_interceptor = self.rpc_interceptor.clone();
+        let resource_group_name = self.resource_group_name.clone();
+        let resource_control = self.resource_control.clone();
+        let ru_details = self.ru_details.clone();
+        let keys = keys
+            .into_iter()
+            .map(move |key| key.into().encode_keyspace(keyspace, KeyMode::Txn));
+        let retry_options = self.options.retry_options.clone();
+        let priority = self.options.priority;
+        let not_fill_cache = self.not_fill_cache;
+        let isolation_level = self.isolation_level;
+        let task_id = self.task_id;
+        let resource_group_tag = self.resource_group_tag.clone();
+        let resource_group_tagger = self.resource_group_tagger.clone();
+        let snapshot_read_timeout = self.snapshot_read_timeout;
+        let read_timestamp_validator = self.read_timestamp_validator.clone();
+        let read_replica_scope = self.read_replica_scope.clone();
+        let replica_read_config = self.replica_read_config.clone();
+        let replica_read_adjuster = self.replica_read_adjuster.clone();
+        let read_lock_context = self.read_lock_context.clone();
+        let lock_resolver_context = self.lock_resolver_context.clone();
+
+        self.buffer
+            .batch_get_snapshot_entries_or_else(
+                keys,
+                return_commit_ts,
+                cache_snapshot_read,
+                move |keys| async move {
+                    let keys = keys.collect::<Vec<_>>();
+                    let replica_read_config = adjusted_replica_read_config(
+                        &replica_read_config,
+                        replica_read_adjuster.as_ref(),
+                        keys.len(),
+                    );
+                    let stale_read = replica_read_config.stale_read;
+                    let mut request = new_batch_get_request(keys.into_iter(), timestamp.clone());
+                    request.need_commit_ts = return_commit_ts;
+                    let resource_group_tag = resource_group_tag.clone().or_else(|| {
+                        resource_group_tagger
+                            .as_ref()
+                            .map(|tagger| tagger(SnapshotRequestType::BatchGet))
+                    });
+                    let plan = plan_with_keyspace_name(
+                        rpc,
+                        keyspace,
+                        keyspace_name.as_deref(),
+                        rpc_interceptor,
+                        resource_group_name.as_deref(),
+                        resource_control,
+                        ru_details,
+                        replica_read_config,
+                        request,
+                    )
+                    .priority(priority)
+                    .not_fill_cache(not_fill_cache)
+                    .isolation_level(isolation_level)
+                    .task_id(task_id)
+                    .resource_group_tag(resource_group_tag)
+                    .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_MEDIUM)
+                    .validate_read_timestamp(
+                        read_timestamp_validator,
+                        timestamp.version(),
+                        stale_read,
+                        read_replica_scope,
+                    )
+                    .resolve_lock_for_read(
+                        timestamp,
+                        retry_options.lock_backoff,
+                        keyspace,
+                        read_lock_context,
+                        lock_resolver_context,
+                    )
+                    .retry_multi_region(retry_options.region_backoff)
+                    .plan();
+                    let responses = plan.execute().await?;
+                    let responses = responses.into_iter().collect::<Result<Vec<_>>>()?;
+                    let entries: BTreeMap<_, _> = responses
+                        .into_iter()
+                        .flat_map(|response| response.pairs)
+                        .map(|pair| {
+                            (
+                                Key::from(pair.key).encode_keyspace(keyspace, KeyMode::Txn),
+                                ValueEntry::new(pair.value, pair.commit_ts),
+                            )
+                        })
+                        .collect();
+                    for entry in entries.values() {
+                        ensure_snapshot_commit_ts(return_commit_ts, Some(entry))?;
+                    }
+                    Ok(entries)
+                },
+            )
+            .await
+            .map(move |entries| {
+                entries
+                    .into_iter()
+                    .map(|(key, entry)| (key.truncate_keyspace(keyspace), entry))
+                    .collect()
+            })
     }
 
     /// Read values from the pipelined transaction buffer tier.
@@ -1818,6 +2030,17 @@ pub enum TransactionKind {
     Pessimistic(Timestamp),
 }
 
+fn ensure_snapshot_commit_ts(return_commit_ts: bool, entry: Option<&ValueEntry>) -> Result<()> {
+    if return_commit_ts
+        && entry.is_some_and(|entry| !entry.is_value_empty() && entry.commit_ts == 0)
+    {
+        return Err(Error::StringError(
+            "commit timestamp is required but not returned".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// Options for configuring a transaction.
 ///
 /// `TransactionOptions` has a builder-style API.
@@ -2473,6 +2696,7 @@ impl From<u8> for TransactionStatus {
 
 #[cfg(test)]
 mod tests {
+    use super::ensure_snapshot_commit_ts;
     use super::CheckLevel;
     use super::TransactionStatus;
     use crate::transaction::ResolveLocksContext;
@@ -2502,6 +2726,7 @@ mod tests {
     use crate::transaction::HeartbeatOption;
     use crate::unset_resource_control_interceptor;
     use crate::Error;
+    use crate::GetOption;
     use crate::Key;
     use crate::KvPair;
     use crate::Priority;
@@ -2635,6 +2860,132 @@ mod tests {
         assert_eq!(
             snapshot.snapshot_cache(),
             BTreeMap::from([(key, ValueEntry::new(b"value".to_vec(), 7))])
+        );
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_return_commit_ts_refetches_unknown_cached_entries() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let captured_calls = Arc::clone(&calls);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    captured_calls
+                        .lock()
+                        .unwrap()
+                        .push(("get", request.need_commit_ts));
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        value: b"value".to_vec(),
+                        commit_ts: u64::from(request.need_commit_ts) * 42,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    captured_calls
+                        .lock()
+                        .unwrap()
+                        .push(("batch", request.need_commit_ts));
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                        pairs: vec![kvrpcpb::KvPair {
+                            key: b"batch".to_vec(),
+                            value: b"batch-value".to_vec(),
+                            commit_ts: u64::from(request.need_commit_ts) * 43,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request while testing commit-ts snapshot reads");
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        assert_eq!(
+            transaction.get("get".to_owned()).await.unwrap(),
+            Some(b"value".to_vec())
+        );
+        assert_eq!(
+            transaction
+                .get_with_options("get".to_owned(), &[GetOption::ReturnCommitTs])
+                .await
+                .unwrap(),
+            Some(ValueEntry::new(b"value".to_vec(), 42))
+        );
+        assert_eq!(
+            transaction
+                .get_with_options("get".to_owned(), &[])
+                .await
+                .unwrap(),
+            Some(ValueEntry::new(b"value".to_vec(), 0))
+        );
+        assert_eq!(
+            transaction
+                .get_with_options("get".to_owned(), &[GetOption::ReturnCommitTs])
+                .await
+                .unwrap(),
+            Some(ValueEntry::new(b"value".to_vec(), 42))
+        );
+
+        let _: Vec<_> = transaction
+            .batch_get(vec!["batch".to_owned()])
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(
+            transaction
+                .batch_get_with_options(vec!["batch".to_owned()], &[GetOption::ReturnCommitTs])
+                .await
+                .unwrap(),
+            BTreeMap::from([(
+                Key::from(b"batch".to_vec()),
+                ValueEntry::new(b"batch-value".to_vec(), 43),
+            )])
+        );
+        assert_eq!(
+            transaction
+                .batch_get_with_options(vec!["batch".to_owned()], &[GetOption::ReturnCommitTs])
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            transaction
+                .batch_get_with_options(vec!["batch".to_owned()], &[])
+                .await
+                .unwrap(),
+            BTreeMap::from([(
+                Key::from(b"batch".to_vec()),
+                ValueEntry::new(b"batch-value".to_vec(), 0),
+            )])
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [
+                ("get", false),
+                ("get", true),
+                ("batch", false),
+                ("batch", true)
+            ]
+        );
+    }
+
+    #[test]
+    fn source_snapshot_return_commit_ts_rejects_unknown_nonempty_entries() {
+        let error = ensure_snapshot_commit_ts(true, Some(&ValueEntry::new(b"value".to_vec(), 0)))
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "commit timestamp is required but not returned"
+        );
+        assert!(ensure_snapshot_commit_ts(true, Some(&ValueEntry::default())).is_ok());
+        assert!(
+            ensure_snapshot_commit_ts(false, Some(&ValueEntry::new(b"value".to_vec(), 0))).is_ok()
         );
     }
 
