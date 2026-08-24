@@ -20,6 +20,8 @@ pub use transaction::CheckLevel;
 #[doc(hidden)]
 pub use transaction::HeartbeatOption;
 pub use transaction::Mutation;
+pub use transaction::SnapshotRequestType;
+pub use transaction::SnapshotResourceGroupTagger;
 pub use transaction::Transaction;
 pub use transaction::TransactionOptions;
 

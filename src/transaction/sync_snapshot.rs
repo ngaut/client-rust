@@ -51,6 +51,14 @@ impl SyncSnapshot {
         self.inner.set_resource_group_tag(resource_group_tag);
     }
 
+    /// Set the resource-group tag callback for subsequent snapshot reads.
+    pub fn set_resource_group_tagger(
+        &mut self,
+        resource_group_tagger: Option<crate::SnapshotResourceGroupTagger>,
+    ) {
+        self.inner.set_resource_group_tagger(resource_group_tagger);
+    }
+
     /// Return the configured snapshot read deadline, if any.
     pub fn kv_read_timeout(&self) -> Option<Duration> {
         self.inner.kv_read_timeout()

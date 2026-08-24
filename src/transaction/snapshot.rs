@@ -127,6 +127,17 @@ impl Snapshot {
         self.transaction.set_resource_group_tag(resource_group_tag);
     }
 
+    /// Set the resource-group tag callback for subsequent snapshot reads.
+    /// A static tag set with [`Self::set_resource_group_tag`] takes precedence,
+    /// matching client-go `KVSnapshot.SetResourceGroupTagger`.
+    pub fn set_resource_group_tagger(
+        &mut self,
+        resource_group_tagger: Option<crate::SnapshotResourceGroupTagger>,
+    ) {
+        self.transaction
+            .set_resource_group_tagger(resource_group_tagger);
+    }
+
     /// Return the configured snapshot read deadline, or `None` when the
     /// client-wide transport timeout remains in effect.
     pub fn kv_read_timeout(&self) -> Option<Duration> {

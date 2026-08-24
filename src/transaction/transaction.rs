@@ -51,6 +51,21 @@ use crate::Priority;
 use crate::Result;
 use crate::Value;
 
+/// The snapshot read operation for which a resource-group tag is being built.
+///
+/// This is the Rust counterpart of the request type visible to client-go's
+/// `tikvrpc.ResourceGroupTagger`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SnapshotRequestType {
+    Get,
+    BatchGet,
+    Scan,
+}
+
+/// Builds a TiKV resource-group tag for a snapshot read when no static tag is
+/// configured. The operation kind identifies the source request being sent.
+pub type SnapshotResourceGroupTagger = Arc<dyn Fn(SnapshotRequestType) -> Vec<u8> + Send + Sync>;
+
 /// An undo-able set of actions on the dataset.
 ///
 /// Create a transaction using a [`TransactionClient`](crate::TransactionClient), then run actions
@@ -121,6 +136,7 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     isolation_level: kvrpcpb::IsolationLevel,
     task_id: u64,
     resource_group_tag: Option<Vec<u8>>,
+    resource_group_tagger: Option<SnapshotResourceGroupTagger>,
     snapshot_read_timeout: Option<Duration>,
     /// client-go keeps resolved/committed transaction IDs on each snapshot;
     /// they must not leak across transactions with different read timestamps.
@@ -192,6 +208,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             isolation_level: kvrpcpb::IsolationLevel::Si,
             task_id: 0,
             resource_group_tag: None,
+            resource_group_tagger: None,
             snapshot_read_timeout: None,
             read_lock_context: ReadLockContext::default(),
             lock_resolver_context: ResolveLocksContext::default(),
@@ -279,6 +296,13 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub(crate) fn set_resource_group_tag(&mut self, resource_group_tag: Option<Vec<u8>>) {
         self.resource_group_tag = resource_group_tag;
+    }
+
+    pub(crate) fn set_resource_group_tagger(
+        &mut self,
+        resource_group_tagger: Option<SnapshotResourceGroupTagger>,
+    ) {
+        self.resource_group_tagger = resource_group_tagger;
     }
 
     pub(crate) fn set_snapshot_read_timeout(&mut self, timeout: Duration) {
@@ -375,6 +399,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let isolation_level = self.isolation_level;
         let task_id = self.task_id;
         let resource_group_tag = self.resource_group_tag.clone();
+        let resource_group_tagger = self.resource_group_tagger.clone();
         let snapshot_read_timeout = self.snapshot_read_timeout;
         let replica_read_config = self.replica_read_config_for_items(1);
         let read_lock_context = self.read_lock_context.clone();
@@ -383,6 +408,11 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.buffer
             .get_or_else(key, |key| async move {
                 let request = new_get_request(key, timestamp.clone());
+                let resource_group_tag = resource_group_tag.clone().or_else(|| {
+                    resource_group_tagger
+                        .as_ref()
+                        .map(|tagger| tagger(SnapshotRequestType::Get))
+                });
                 let plan = plan_with_keyspace_name(
                     rpc,
                     keyspace,
@@ -546,6 +576,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let isolation_level = self.isolation_level;
         let task_id = self.task_id;
         let resource_group_tag = self.resource_group_tag.clone();
+        let resource_group_tagger = self.resource_group_tagger.clone();
         let snapshot_read_timeout = self.snapshot_read_timeout;
         let replica_read_config = self.replica_read_config.clone();
         let replica_read_adjuster = self.replica_read_adjuster.clone();
@@ -561,6 +592,11 @@ impl<PdC: PdClient> Transaction<PdC> {
                     keys.len(),
                 );
                 let request = new_batch_get_request(keys.into_iter(), timestamp.clone());
+                let resource_group_tag = resource_group_tag.clone().or_else(|| {
+                    resource_group_tagger
+                        .as_ref()
+                        .map(|tagger| tagger(SnapshotRequestType::BatchGet))
+                });
                 let plan = plan_with_keyspace_name(
                     rpc,
                     keyspace,
@@ -1174,6 +1210,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let isolation_level = self.isolation_level;
         let task_id = self.task_id;
         let resource_group_tag = self.resource_group_tag.clone();
+        let resource_group_tagger = self.resource_group_tagger.clone();
         let snapshot_read_timeout = self.snapshot_read_timeout;
         let replica_read_config = self.replica_read_config.clone();
         let read_lock_context = self.read_lock_context.clone();
@@ -1195,6 +1232,11 @@ impl<PdC: PdClient> Transaction<PdC> {
                         reverse,
                         sample_step,
                     );
+                    let resource_group_tag = resource_group_tag.clone().or_else(|| {
+                        resource_group_tagger
+                            .as_ref()
+                            .map(|tagger| tagger(SnapshotRequestType::Scan))
+                    });
                     let plan = plan_with_keyspace_name(
                         rpc,
                         keyspace,
@@ -2325,6 +2367,7 @@ mod tests {
     }
     use crate::ReplicaReadSelectorOption;
     use crate::ReplicaReadType;
+    use crate::SnapshotRequestType;
     use crate::TimestampExt;
     use crate::Transaction;
     use crate::TransactionOptions;
@@ -2492,6 +2535,102 @@ mod tests {
             .collect();
 
         assert_eq!(*calls.lock().unwrap(), vec!["get", "batch-get", "scan"]);
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_resource_group_tagger_tags_each_read_and_yields_to_static_tag() {
+        let tagged_requests = Arc::new(Mutex::new(Vec::new()));
+        let captured_requests = Arc::clone(&tagged_requests);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let (expected_tag, response): (&[u8], Box<dyn Any>) = if let Some(request) =
+                    request.downcast_ref::<kvrpcpb::GetRequest>()
+                {
+                    let tag = request
+                        .context
+                        .as_ref()
+                        .unwrap()
+                        .resource_group_tag
+                        .as_slice();
+                    let response: Box<dyn Any> = Box::new(kvrpcpb::GetResponse::default());
+                    (tag, response)
+                } else if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    let tag = request
+                        .context
+                        .as_ref()
+                        .unwrap()
+                        .resource_group_tag
+                        .as_slice();
+                    let response: Box<dyn Any> = Box::new(kvrpcpb::BatchGetResponse::default());
+                    (tag, response)
+                } else if let Some(request) = request.downcast_ref::<kvrpcpb::ScanRequest>() {
+                    let tag = request
+                        .context
+                        .as_ref()
+                        .unwrap()
+                        .resource_group_tag
+                        .as_slice();
+                    let response: Box<dyn Any> = Box::new(kvrpcpb::ScanResponse::default());
+                    (tag, response)
+                } else {
+                    panic!("unexpected request while testing snapshot resource-group tagger");
+                };
+                captured_requests
+                    .lock()
+                    .unwrap()
+                    .push(expected_tag.to_vec());
+                Ok(response)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        let tagged_kinds = Arc::new(Mutex::new(Vec::new()));
+        let captured_kinds = Arc::clone(&tagged_kinds);
+        transaction.set_resource_group_tagger(Some(Arc::new(move |request_type| {
+            captured_kinds.lock().unwrap().push(request_type);
+            match request_type {
+                SnapshotRequestType::Get => b"tag-get".to_vec(),
+                SnapshotRequestType::BatchGet => b"tag-batch-get".to_vec(),
+                SnapshotRequestType::Scan => b"tag-scan".to_vec(),
+            }
+        })));
+
+        transaction.get("get".to_owned()).await.unwrap();
+        let _: Vec<_> = transaction
+            .batch_get(vec!["batch".to_owned()])
+            .await
+            .unwrap()
+            .collect();
+        let _: Vec<_> = transaction
+            .scan(b"scan-a".to_vec()..b"scan-b".to_vec(), 1)
+            .await
+            .unwrap()
+            .collect();
+
+        transaction.set_resource_group_tag(Some(b"static".to_vec()));
+        transaction.get("static".to_owned()).await.unwrap();
+
+        assert_eq!(
+            *tagged_kinds.lock().unwrap(),
+            vec![
+                SnapshotRequestType::Get,
+                SnapshotRequestType::BatchGet,
+                SnapshotRequestType::Scan,
+            ]
+        );
+        assert_eq!(
+            *tagged_requests.lock().unwrap(),
+            vec![
+                b"tag-get".to_vec(),
+                b"tag-batch-get".to_vec(),
+                b"tag-scan".to_vec(),
+                b"static".to_vec(),
+            ]
+        );
     }
 
     #[test]
