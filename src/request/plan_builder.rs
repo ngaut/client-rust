@@ -81,6 +81,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 resource_control_replica_number: 1,
                 resource_control_access_location: crate::kv::AccessLocationType::Unknown,
                 predicted_read_bytes: 0,
+                ru_details: None,
                 store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
                 store_token_store_id: 0,
                 interceptor: None,
@@ -169,6 +170,13 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     /// PD's resource controller uses it only for eligible coprocessor reads.
     pub fn predicted_read_bytes(mut self, predicted_read_bytes: u64) -> Self {
         self.plan.predicted_read_bytes = predicted_read_bytes;
+        self
+    }
+
+    /// Attach source-compatible resource-unit accounting to every physical
+    /// dispatch produced by this plan.
+    pub fn ru_details(mut self, ru_details: Arc<crate::RuDetails>) -> Self {
+        self.plan.ru_details = Some(ru_details);
         self
     }
 
@@ -534,6 +542,22 @@ mod tests {
         let request = builder.plan.request;
         assert_eq!(request.context.as_ref().unwrap().keyspace_name, "tenant");
         assert_eq!(request.clone().context.unwrap().keyspace_name, "tenant");
+    }
+
+    #[test]
+    fn resource_unit_details_are_retained_by_dispatch() {
+        let details = Arc::new(crate::RuDetails::new());
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .ru_details(details.clone());
+
+        assert!(Arc::ptr_eq(
+            builder.plan.ru_details.as_ref().unwrap(),
+            &details
+        ));
     }
 
     #[test]

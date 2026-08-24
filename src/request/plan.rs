@@ -86,6 +86,7 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) resource_control_replica_number: i64,
     pub(crate) resource_control_access_location: AccessLocationType,
     pub(crate) predicted_read_bytes: u64,
+    pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
     pub(crate) store_token_count: Arc<AtomicI64>,
     pub(crate) store_token_store_id: StoreId,
     /// Optional transaction-level decorator for this physical RPC.
@@ -137,6 +138,9 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 .controller
                 .on_request_wait(&selected.resource_group_name, selected.request)
                 .await?;
+            if let Some(ru_details) = &self.ru_details {
+                ru_details.update(&result.consumption, result.wait_duration);
+            }
             request.set_resource_control_penalty(result.penalty);
             request.set_resource_control_priority_if_unset(result.priority);
         }
@@ -165,11 +169,14 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                         crate::resource_control::ResponseInfo::from_dispatch_response(
                             response.as_ref(),
                         );
-                    selected.controller.on_response_wait(
+                    let settlement = selected.controller.on_response_wait(
                         &selected.resource_group_name,
                         selected.request,
                         response_info,
                     )?;
+                    if let Some(ru_details) = &self.ru_details {
+                        ru_details.update(&settlement.consumption, settlement.wait_duration);
+                    }
                 }
                 Ok(response)
             }
