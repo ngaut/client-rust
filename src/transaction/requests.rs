@@ -47,6 +47,7 @@ use crate::timestamp::TimestampExt;
 use crate::transaction::requests::kvrpcpb::prewrite_request::PessimisticAction;
 use crate::transaction::HasLocks;
 use crate::util::iter::FlatMapOkIterExt;
+use crate::Error;
 use crate::KvPair;
 use crate::Result;
 use crate::Value;
@@ -1015,45 +1016,94 @@ impl_txn_v2_response!(
 
 shardable_keys!(kvrpcpb::CheckSecondaryLocksRequest);
 
-impl Merge<kvrpcpb::CheckSecondaryLocksResponse> for Collect {
+// CheckSecondaryLocks only returns locks that are still present. Keep each
+// request shard so the resolver can distinguish an all-present response from
+// a missing lock, which means TiKV has already determined the transaction.
+impl Merge<ResponseWithShard<kvrpcpb::CheckSecondaryLocksResponse, Vec<Vec<u8>>>>
+    for CollectWithShard
+{
     type Out = SecondaryLocksStatus;
 
-    fn merge(&self, input: Vec<Result<kvrpcpb::CheckSecondaryLocksResponse>>) -> Result<Self::Out> {
+    fn merge(
+        &self,
+        input: Vec<Result<ResponseWithShard<kvrpcpb::CheckSecondaryLocksResponse, Vec<Vec<u8>>>>>,
+    ) -> Result<Self::Out> {
         let mut out = SecondaryLocksStatus {
-            commit_ts: None,
-            min_commit_ts: 0,
+            locks: Vec::new(),
+            missing_lock: false,
+            missing_commit_ts: 0,
             fallback_2pc: false,
         };
-        for resp in input {
-            let resp = resp?;
-            for lock in resp.locks.into_iter() {
-                if !lock.use_async_commit {
-                    out.fallback_2pc = true;
-                    return Ok(out);
+        for response in input {
+            let ResponseWithShard(resp, keys) = response?;
+            if resp.locks.len() < keys.len() {
+                if out.missing_lock && out.missing_commit_ts != resp.commit_ts {
+                    return Err(Error::InternalError {
+                        message: format!(
+                            "commit TS mismatch in async commit recovery: {} and {}",
+                            out.missing_commit_ts, resp.commit_ts
+                        ),
+                    });
                 }
-                out.min_commit_ts = cmp::max(out.min_commit_ts, lock.min_commit_ts);
+                out.missing_lock = true;
+                out.missing_commit_ts = resp.commit_ts;
+                // client-go does not retain locks from a partial response:
+                // TiKV resolves the remaining locks once the outcome is known.
+                continue;
             }
-            out.commit_ts = match (
-                out.commit_ts.take(),
-                Timestamp::try_from_version(resp.commit_ts),
-            ) {
-                (Some(a), Some(b)) => {
-                    assert_eq!(a, b);
-                    Some(a)
-                }
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
-                (None, None) => None,
-            };
+            out.locks.extend(resp.locks);
         }
         Ok(out)
     }
 }
 
+#[derive(Debug)]
 pub struct SecondaryLocksStatus {
-    pub commit_ts: Option<Timestamp>,
-    pub min_commit_ts: u64,
+    locks: Vec<LockInfo>,
+    missing_lock: bool,
+    missing_commit_ts: u64,
     pub fallback_2pc: bool,
+}
+
+impl SecondaryLocksStatus {
+    /// Returns `None` when a returned secondary is not an async-commit lock,
+    /// in which case client-go retries CheckTxnStatus in forced 2PC mode.
+    pub fn determine_commit_ts(
+        &mut self,
+        txn_id: u64,
+        primary_min_commit_ts: u64,
+    ) -> Result<Option<u64>> {
+        let mut min_commit_ts = primary_min_commit_ts;
+        for lock in &self.locks {
+            if lock.lock_version != txn_id {
+                return Err(Error::InternalError {
+                    message: format!(
+                        "unexpected timestamp, expected: {txn_id}, found: {}",
+                        lock.lock_version
+                    ),
+                });
+            }
+            if !lock.use_async_commit {
+                self.fallback_2pc = true;
+                return Ok(None);
+            }
+            min_commit_ts = cmp::max(min_commit_ts, lock.min_commit_ts);
+        }
+
+        if self.missing_lock {
+            if self.missing_commit_ts != 0 && self.missing_commit_ts < min_commit_ts {
+                return Err(Error::InternalError {
+                    message: format!(
+                        "commit TS must be greater or equal to min commit TS: commit ts: {}, min commit ts: {}",
+                        self.missing_commit_ts, min_commit_ts
+                    ),
+                });
+            }
+            Ok(Some(self.missing_commit_ts))
+        } else {
+            Ok(Some(min_commit_ts))
+        }
+    }
 }
 
 pair_locks!(kvrpcpb::BatchGetResponse);
@@ -1655,7 +1705,7 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
 
 #[cfg(test)]
 mod tests {
-    use super::{TransactionStatus, TransactionStatusKind};
+    use super::{SecondaryLocksStatus, TransactionStatus, TransactionStatusKind};
     use crate::common::Error::PessimisticLockError;
     use crate::common::Error::ResolveLockError;
     use crate::proto::errorpb;
@@ -1696,6 +1746,96 @@ mod tests {
             }
             .is_cacheable());
         }
+    }
+
+    fn secondary_lock(txn_id: u64, min_commit_ts: u64) -> kvrpcpb::LockInfo {
+        kvrpcpb::LockInfo {
+            lock_version: txn_id,
+            min_commit_ts,
+            use_async_commit: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn source_async_commit_secondary_status_uses_missing_lock_commit_ts() {
+        let merger = CollectWithShard {};
+        let mut status: SecondaryLocksStatus = merger
+            .merge(vec![
+                Ok(ResponseWithShard(
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        // A non-zero response commit ts is ignored while all
+                        // locks in this shard remain present, as in client-go.
+                        commit_ts: 5,
+                        locks: vec![secondary_lock(7, 100)],
+                        ..Default::default()
+                    },
+                    vec![b"a".to_vec()],
+                )),
+                Ok(ResponseWithShard(
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        commit_ts: 120,
+                        locks: Vec::new(),
+                        ..Default::default()
+                    },
+                    vec![b"b".to_vec()],
+                )),
+            ])
+            .unwrap();
+
+        assert_eq!(status.determine_commit_ts(7, 80).unwrap(), Some(120));
+    }
+
+    #[test]
+    fn source_async_commit_secondary_status_uses_max_min_commit_ts_when_all_present() {
+        let merger = CollectWithShard {};
+        let mut status: SecondaryLocksStatus = merger
+            .merge(vec![
+                Ok(ResponseWithShard(
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        commit_ts: 5,
+                        locks: vec![secondary_lock(7, 100)],
+                        ..Default::default()
+                    },
+                    vec![b"a".to_vec()],
+                )),
+                Ok(ResponseWithShard(
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        commit_ts: 6,
+                        locks: vec![secondary_lock(7, 110)],
+                        ..Default::default()
+                    },
+                    vec![b"b".to_vec()],
+                )),
+            ])
+            .unwrap();
+
+        assert_eq!(status.determine_commit_ts(7, 80).unwrap(), Some(110));
+    }
+
+    #[test]
+    fn source_async_commit_secondary_status_rejects_inconsistent_missing_commit_ts() {
+        let merger = CollectWithShard {};
+        let error = merger
+            .merge(vec![
+                Ok(ResponseWithShard(
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        commit_ts: 120,
+                        ..Default::default()
+                    },
+                    vec![b"a".to_vec()],
+                )),
+                Ok(ResponseWithShard(
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        commit_ts: 121,
+                        ..Default::default()
+                    },
+                    vec![b"b".to_vec()],
+                )),
+            ])
+            .unwrap_err();
+
+        assert!(matches!(error, crate::Error::InternalError { .. }));
     }
 
     #[test]

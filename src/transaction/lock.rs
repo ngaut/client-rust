@@ -27,8 +27,8 @@ use crate::proto::pdpb::Timestamp;
 use crate::region::RegionVerId;
 use crate::request::plan::handle_region_error;
 use crate::request::plan::{invalidate_connection_for_error, is_grpc_error};
-use crate::request::Collect;
 use crate::request::CollectSingle;
+use crate::request::CollectWithShard;
 use crate::request::Keyspace;
 use crate::request::Plan;
 use crate::store::RegionStore;
@@ -495,28 +495,30 @@ impl LockResolver {
 
             // If the transaction uses async commit, check_txn_status will reject rolling back the primary lock.
             // Then we need to check the secondary locks to determine the final status of the transaction.
-            if let TransactionStatusKind::Locked(_, lock_info) = &status.kind {
-                let secondary_status = self
+            let async_primary = match &status.kind {
+                TransactionStatusKind::Locked(_, lock_info) if lock_info.use_async_commit => {
+                    Some((lock_info.secondaries.clone(), lock_info.min_commit_ts))
+                }
+                _ => None,
+            };
+            if let Some((secondary_keys, primary_min_commit_ts)) = async_primary {
+                let mut secondary_status = self
                     .check_all_secondaries(
                         pd_client.clone(),
                         keyspace,
                         keyspace_name,
-                        lock_info.secondaries.clone(),
+                        secondary_keys,
                         txn_id,
                     )
                     .await?;
+                let commit_ts =
+                    secondary_status.determine_commit_ts(txn_id, primary_min_commit_ts)?;
                 debug!(
-                    "secondary status, txn_id:{}, commit_ts:{:?}, min_commit_version:{}, fallback_2pc:{}",
-                    txn_id,
-                    secondary_status
-                        .commit_ts
-                        .as_ref()
-                        .map_or(0, |ts| ts.version()),
-                    secondary_status.min_commit_ts,
-                    secondary_status.fallback_2pc,
+                    "secondary status, txn_id:{}, commit_ts:{:?}, fallback_2pc:{}",
+                    txn_id, commit_ts, secondary_status.fallback_2pc,
                 );
 
-                if secondary_status.fallback_2pc {
+                if commit_ts.is_none() {
                     debug!("fallback to 2pc, txn_id:{}, check_txn_status again", txn_id);
                     status = self
                         .check_txn_status(
@@ -534,12 +536,7 @@ impl LockResolver {
                         )
                         .await?;
                 } else {
-                    let commit_ts = if let Some(commit_ts) = &secondary_status.commit_ts {
-                        commit_ts.version()
-                    } else {
-                        secondary_status.min_commit_ts
-                    };
-                    txn_infos.insert(txn_id, (commit_ts, l.is_txn_file));
+                    txn_infos.insert(txn_id, (commit_ts.unwrap(), l.is_txn_file));
                     continue;
                 }
             }
@@ -689,9 +686,10 @@ impl LockResolver {
             .resource_control_option(self.ctx.resource_control.clone())
             .ru_details_option(self.ctx.ru_details.clone())
             .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
+            .preserve_shard()
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .extract_error()
-            .merge(Collect)
+            .merge(CollectWithShard)
             .plan();
         plan.execute().await
     }
