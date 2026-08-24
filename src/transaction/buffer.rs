@@ -35,6 +35,12 @@ impl Buffer {
         self.primary_key.clone()
     }
 
+    /// Discard values cached by snapshot reads while retaining transaction mutations.
+    pub(crate) fn clear_cached_reads(&mut self) {
+        self.entry_map
+            .retain(|_, entry| !matches!(entry, BufferEntry::Cached(_)));
+    }
+
     /// Set the primary key if it is not set
     pub fn primary_key_or(&mut self, key: &Key) {
         self.primary_key.get_or_insert_with(|| key.clone());

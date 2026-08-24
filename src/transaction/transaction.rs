@@ -260,6 +260,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             "try to get snapshot with a large ts {version}"
         );
         self.timestamp = timestamp;
+        self.buffer.clear_cached_reads();
         self.read_lock_context = ReadLockContext::default();
     }
 
@@ -2463,6 +2464,43 @@ mod tests {
             transaction.read_lock_context.snapshot(),
             (Vec::new(), Vec::new())
         );
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_timestamp_reset_discards_cached_reads() {
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                assert!(request.is::<kvrpcpb::GetRequest>());
+                let value = if captured_dispatches.fetch_add(1, Ordering::SeqCst) == 0 {
+                    b"old".to_vec()
+                } else {
+                    b"new".to_vec()
+                };
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    value,
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        assert_eq!(
+            transaction.get("key".to_owned()).await.unwrap(),
+            Some(b"old".to_vec())
+        );
+        transaction.set_snapshot_timestamp(Timestamp::from_version(2));
+        assert_eq!(
+            transaction.get("key".to_owned()).await.unwrap(),
+            Some(b"new".to_vec())
+        );
+        assert_eq!(dispatches.load(Ordering::SeqCst), 2);
     }
 
     #[test]
