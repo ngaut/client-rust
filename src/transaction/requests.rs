@@ -1454,7 +1454,40 @@ impl_txn_v2_only_response!(
     }
 );
 
-shardable_keys!(kvrpcpb::BufferBatchGetRequest);
+impl Shardable for kvrpcpb::BufferBatchGetRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let mut keys = self.keys.clone();
+        keys.sort();
+        region_stream_for_keys(keys.into_iter(), pd_client.clone())
+            .flat_map(|result| match result {
+                Ok((keys, region)) => stream::iter(
+                    keys.chunks(SNAPSHOT_BATCH_GET_SIZE)
+                        .map(move |batch| Ok((batch.to_vec(), region.clone())))
+                        .collect::<Vec<_>>(),
+                )
+                .boxed(),
+                Err(error) => stream::iter(Err(error)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.keys = shard;
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        self.set_busy_threshold_ms(store.busy_threshold_ms);
+        Ok(())
+    }
+}
 pair_locks!(kvrpcpb::BufferBatchGetResponse);
 
 impl Merge<kvrpcpb::BufferBatchGetResponse> for Collect {

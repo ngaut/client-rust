@@ -63,6 +63,7 @@ const SNAPSHOT_READ_TIMEOUT_MEDIUM: Duration = Duration::from_secs(60);
 pub enum SnapshotRequestType {
     Get,
     BatchGet,
+    BufferBatchGet,
     Scan,
 }
 
@@ -134,6 +135,8 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// Forces TiKV scan requests to return keys without values, matching
     /// client-go `KVSnapshot.keyOnly`.
     snapshot_key_only: bool,
+    /// Enables client-go's pipelined BufferBatchGet tier for this snapshot.
+    snapshot_pipelined: bool,
     /// Snapshot-only request-context settings retained through physical read
     /// retries, matching client-go `KVSnapshot`.
     not_fill_cache: bool,
@@ -216,6 +219,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             replica_read_adjuster: None,
             sample_step: 0,
             snapshot_key_only: false,
+            snapshot_pipelined: false,
             not_fill_cache: false,
             isolation_level: kvrpcpb::IsolationLevel::Si,
             task_id: 0,
@@ -294,6 +298,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Source pipelined snapshots must read through locks flushed by their
     /// own transaction rather than trying to resolve them.
     pub(crate) fn set_snapshot_pipelined(&mut self, timestamp: u64) {
+        self.snapshot_pipelined = true;
         self.read_lock_context.add_resolved(timestamp);
     }
 
@@ -676,6 +681,100 @@ impl<PdC: PdClient> Transaction<PdC> {
             })
             .await
             .map(move |pairs| pairs.map(move |pair| pair.truncate_keyspace(keyspace)))
+    }
+
+    /// Read values from the pipelined transaction buffer tier.
+    ///
+    /// This is the native counterpart of client-go
+    /// `KVSnapshot.BatchGetWithTier(BatchGetBufferTier)`. The tier is only
+    /// available after [`Snapshot::set_pipelined`](super::Snapshot::set_pipelined).
+    pub(crate) async fn batch_get_from_buffer(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        if !self.snapshot_pipelined {
+            return Err(Error::StringError(
+                "only snapshot with pipelined dml can read from buffer".to_owned(),
+            ));
+        }
+        self.check_allow_operation().await?;
+        let timestamp = self.timestamp.clone();
+        let rpc = self.rpc.clone();
+        let keyspace = self.keyspace;
+        let keyspace_name = self.keyspace_name.clone();
+        let rpc_interceptor = self.rpc_interceptor.clone();
+        let resource_group_name = self.resource_group_name.clone();
+        let resource_control = self.resource_control.clone();
+        let ru_details = self.ru_details.clone();
+        let keys = keys
+            .into_iter()
+            .map(move |key| key.into().encode_keyspace(keyspace, KeyMode::Txn))
+            .collect::<Vec<_>>();
+        let retry_options = self.options.retry_options.clone();
+        let priority = self.options.priority;
+        let not_fill_cache = self.not_fill_cache;
+        let isolation_level = self.isolation_level;
+        let task_id = self.task_id;
+        let resource_group_tag = self.resource_group_tag.clone();
+        let resource_group_tagger = self.resource_group_tagger.clone();
+        let snapshot_read_timeout = self.snapshot_read_timeout;
+        let read_timestamp_validator = self.read_timestamp_validator.clone();
+        let read_replica_scope = self.read_replica_scope.clone();
+        let replica_read_config = adjusted_replica_read_config(
+            &self.replica_read_config,
+            self.replica_read_adjuster.as_ref(),
+            keys.len(),
+        );
+        let stale_read = replica_read_config.stale_read;
+        let read_lock_context = self.read_lock_context.clone();
+        let lock_resolver_context = self.lock_resolver_context.clone();
+        let request = new_buffer_batch_get_request(keys.into_iter(), timestamp.clone());
+        let resource_group_tag = resource_group_tag.or_else(|| {
+            resource_group_tagger
+                .as_ref()
+                .map(|tagger| tagger(SnapshotRequestType::BufferBatchGet))
+        });
+        let plan = plan_with_keyspace_name(
+            rpc,
+            keyspace,
+            keyspace_name.as_deref(),
+            rpc_interceptor,
+            resource_group_name.as_deref(),
+            resource_control,
+            ru_details,
+            replica_read_config,
+            request,
+        )
+        .priority(priority)
+        .not_fill_cache(not_fill_cache)
+        .isolation_level(isolation_level)
+        .task_id(task_id)
+        .resource_group_tag(resource_group_tag)
+        .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_MEDIUM)
+        .validate_read_timestamp(
+            read_timestamp_validator,
+            timestamp.version(),
+            stale_read,
+            read_replica_scope,
+        )
+        .resolve_lock_for_read(
+            timestamp,
+            retry_options.lock_backoff,
+            keyspace,
+            read_lock_context,
+            lock_resolver_context,
+        )
+        .retry_multi_region(retry_options.region_backoff)
+        .merge(Collect)
+        .plan();
+        plan.execute().await.map(|pairs| {
+            pairs
+                .into_iter()
+                .map(|pair| pair.encode_keyspace(keyspace, KeyMode::Txn))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(move |pair| pair.truncate_keyspace(keyspace))
+        })
     }
 
     /// Create a new 'batch get for update' request.
@@ -2738,6 +2837,18 @@ mod tests {
                         .as_slice();
                     let response: Box<dyn Any> = Box::new(kvrpcpb::BatchGetResponse::default());
                     (tag, response)
+                } else if let Some(request) =
+                    request.downcast_ref::<kvrpcpb::BufferBatchGetRequest>()
+                {
+                    let tag = request
+                        .context
+                        .as_ref()
+                        .unwrap()
+                        .resource_group_tag
+                        .as_slice();
+                    let response: Box<dyn Any> =
+                        Box::new(kvrpcpb::BufferBatchGetResponse::default());
+                    (tag, response)
                 } else if let Some(request) = request.downcast_ref::<kvrpcpb::ScanRequest>() {
                     let tag = request
                         .context
@@ -2770,6 +2881,7 @@ mod tests {
             match request_type {
                 SnapshotRequestType::Get => b"tag-get".to_vec(),
                 SnapshotRequestType::BatchGet => b"tag-batch-get".to_vec(),
+                SnapshotRequestType::BufferBatchGet => b"tag-buffer-batch-get".to_vec(),
                 SnapshotRequestType::Scan => b"tag-scan".to_vec(),
             }
         })));
@@ -2777,6 +2889,12 @@ mod tests {
         transaction.get("get".to_owned()).await.unwrap();
         let _: Vec<_> = transaction
             .batch_get(vec!["batch".to_owned()])
+            .await
+            .unwrap()
+            .collect();
+        transaction.set_snapshot_pipelined(1);
+        let _: Vec<_> = transaction
+            .batch_get_from_buffer(vec!["buffer-batch".to_owned()])
             .await
             .unwrap()
             .collect();
@@ -2794,6 +2912,7 @@ mod tests {
             vec![
                 SnapshotRequestType::Get,
                 SnapshotRequestType::BatchGet,
+                SnapshotRequestType::BufferBatchGet,
                 SnapshotRequestType::Scan,
             ]
         );
@@ -2802,10 +2921,66 @@ mod tests {
             vec![
                 b"tag-get".to_vec(),
                 b"tag-batch-get".to_vec(),
+                b"tag-buffer-batch-get".to_vec(),
                 b"tag-scan".to_vec(),
                 b"static".to_vec(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_buffer_batch_get_requires_pipelined_mode() {
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                captured_dispatches.fetch_add(1, Ordering::SeqCst);
+                let request = request
+                    .downcast_ref::<kvrpcpb::BufferBatchGetRequest>()
+                    .expect("pipelined buffer reads must use BufferBatchGet");
+                assert_eq!(request.version, 1);
+                assert_eq!(request.keys, [b"buffer".to_vec()]);
+                Ok(Box::new(kvrpcpb::BufferBatchGetResponse {
+                    pairs: vec![kvrpcpb::KvPair {
+                        key: b"buffer".to_vec(),
+                        value: b"value".to_vec(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        let error = match transaction
+            .batch_get_from_buffer(vec!["buffer".to_owned()])
+            .await
+        {
+            Ok(_) => panic!("unpipelined snapshots must reject buffer-tier reads"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.to_string(),
+            "only snapshot with pipelined dml can read from buffer"
+        );
+        assert_eq!(dispatches.load(Ordering::SeqCst), 0);
+
+        transaction.set_snapshot_pipelined(1);
+        let pairs: Vec<_> = transaction
+            .batch_get_from_buffer(vec!["buffer".to_owned()])
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(
+            pairs,
+            [KvPair(b"buffer".to_vec().into(), b"value".to_vec())]
+        );
+        assert_eq!(dispatches.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

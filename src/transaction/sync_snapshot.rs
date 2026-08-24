@@ -174,6 +174,14 @@ impl SyncSnapshot {
         safe_block_on(&self.runtime, self.inner.batch_get(keys))
     }
 
+    /// Read values from the pipelined transaction buffer tier.
+    pub fn batch_get_from_buffer(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        safe_block_on(&self.runtime, self.inner.batch_get_from_buffer(keys))
+    }
+
     /// Scan a range, return at most `limit` key-value pairs that lie in the range.
     pub fn scan(
         &mut self,

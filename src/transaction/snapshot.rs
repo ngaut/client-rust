@@ -220,6 +220,19 @@ impl Snapshot {
         self.transaction.batch_get(keys).await
     }
 
+    /// Read values from the pipelined transaction buffer tier.
+    ///
+    /// This is the native counterpart of client-go
+    /// `KVSnapshot.BatchGetWithTier(BatchGetBufferTier)`. Call
+    /// [`Self::set_pipelined`] first; ordinary snapshots return the source
+    /// pipelined-mode error.
+    pub async fn batch_get_from_buffer(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        self.transaction.batch_get_from_buffer(keys).await
+    }
+
     /// Scan a range, return at most `limit` key-value pairs that lying in the range.
     pub async fn scan(
         &mut self,
