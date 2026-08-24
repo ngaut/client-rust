@@ -113,36 +113,6 @@ pub(crate) fn reject_shared_locks(locks: &[kvrpcpb::LockInfo]) -> Result<()> {
     Ok(())
 }
 
-/// _Resolves_ the given locks. Returns locks still live. When there is no live locks, all the given locks are resolved.
-///
-/// If a key has a lock, the latest status of the key is unknown. We need to "resolve" the lock,
-/// which means the key is finally either committed or rolled back, before we read the value of
-/// the key. We first use `CheckTxnStatus` to get the transaction's final status (committed or
-/// rolled back), then use `ResolveLock` to resolve the remaining locks in the transaction.
-pub async fn resolve_locks(
-    locks: Vec<kvrpcpb::LockInfo>,
-    timestamp: Timestamp,
-    pd_client: Arc<impl PdClient>,
-    keyspace: Keyspace,
-    keyspace_name: Option<&str>,
-    rpc_interceptor: Option<RpcInterceptorChain>,
-    resource_group_name: Option<&str>,
-    resource_control: Option<ResourceGroupControllerHandle>,
-) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
-    resolve_locks_with_ru_details(
-        locks,
-        timestamp,
-        pd_client,
-        keyspace,
-        keyspace_name,
-        rpc_interceptor,
-        resource_group_name,
-        resource_control,
-        None,
-    )
-    .await
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn resolve_locks_with_ru_details(
     locks: Vec<kvrpcpb::LockInfo>,
@@ -155,6 +125,32 @@ pub(crate) async fn resolve_locks_with_ru_details(
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
 ) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
+    resolve_locks_with_context(
+        locks,
+        timestamp,
+        pd_client,
+        keyspace,
+        keyspace_name,
+        ResolveLocksContext {
+            rpc_interceptor,
+            resource_group_name: resource_group_name.map(ToOwned::to_owned),
+            resource_control,
+            ru_details,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resolve_locks_with_context(
+    locks: Vec<kvrpcpb::LockInfo>,
+    timestamp: Timestamp,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: ResolveLocksContext,
+) -> Result<Vec<kvrpcpb::LockInfo> /* live_locks */> {
     debug!("resolving locks");
     reject_shared_locks(&locks)?;
     let ts = pd_client.clone().get_timestamp().await?;
@@ -162,13 +158,7 @@ pub(crate) async fn resolve_locks_with_ru_details(
     let current_ts = ts.version();
 
     let mut live_locks = Vec::new();
-    let mut lock_resolver = LockResolver::new(ResolveLocksContext {
-        rpc_interceptor,
-        resource_group_name: resource_group_name.map(ToOwned::to_owned),
-        resource_control,
-        ru_details,
-        ..Default::default()
-    });
+    let mut lock_resolver = LockResolver::new(context);
 
     // records the commit version of each primary lock (representing the status of the transaction)
     let mut commit_versions: HashMap<u64, u64> = HashMap::new();
@@ -957,6 +947,7 @@ mod tests {
             .get_resolved(RESOLVED_CACHE_SIZE as u64)
             .await
             .is_some());
+        assert!(context.clone().get_resolved(1).await.is_some());
     }
 
     #[rstest::rstest]
