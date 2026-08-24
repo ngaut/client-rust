@@ -425,8 +425,8 @@ pub struct RegionCache<Client = RetryClient<Cluster>> {
     store_cache: StdRwLock<HashMap<StoreId, CachedStore>>,
     bucket_refreshes: StdMutex<HashSet<RegionId>>,
     gc_cursor: StdMutex<Option<Key>>,
-    gc_cancellation: Cancellation,
-    gc_task: StdMutex<Option<JoinHandle<()>>>,
+    background_cancellation: Cancellation,
+    background_task: StdMutex<Option<JoinHandle<()>>>,
     inner_client: Arc<Client>,
 }
 
@@ -437,8 +437,8 @@ impl<Client> RegionCache<Client> {
             store_cache: StdRwLock::new(HashMap::new()),
             bucket_refreshes: StdMutex::new(HashSet::new()),
             gc_cursor: StdMutex::new(None),
-            gc_cancellation: Cancellation::default(),
-            gc_task: StdMutex::new(None),
+            background_cancellation: Cancellation::default(),
+            background_task: StdMutex::new(None),
             inner_client,
         }
     }
@@ -449,12 +449,12 @@ impl<C: Send + Sync> RegionCache<C> {
     where
         C: 'static,
     {
-        let mut task = self.gc_task.lock().unwrap();
+        let mut task = self.background_task.lock().unwrap();
         if task.is_some() {
             return;
         }
         let cache = Arc::downgrade(self);
-        let cancellation = self.gc_cancellation.child();
+        let cancellation = self.background_cancellation.child();
         *task = Some(tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -471,9 +471,9 @@ impl<C: Send + Sync> RegionCache<C> {
         }));
     }
 
-    pub(crate) async fn close_background_gc(&self) {
-        self.gc_cancellation.cancel();
-        let task = self.gc_task.lock().unwrap().take();
+    pub(crate) async fn close_background_task(&self) {
+        self.background_cancellation.cancel();
+        let task = self.background_task.lock().unwrap().take();
         if let Some(task) = task {
             let _ = task.await;
         }
@@ -557,6 +557,37 @@ impl<C: Send + Sync> RegionCache<C> {
 }
 
 impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
+    pub(crate) fn start_background_refresh(self: &Arc<Self>, interval: Duration)
+    where
+        C: 'static,
+    {
+        if interval.is_zero() {
+            return;
+        }
+        let mut task = self.background_task.lock().unwrap();
+        if task.is_some() {
+            return;
+        }
+        let cache = Arc::downgrade(self);
+        let cancellation = self.background_cancellation.child();
+        *task = Some(tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = cancellation.cancelled() => return,
+                    _ = tokio::time::sleep(interval) => {}
+                }
+                let Some(cache) = cache.upgrade() else {
+                    return;
+                };
+                let max_sleep_ms = u64::try_from(interval.as_millis()).unwrap_or(u64::MAX);
+                let mut backoffer = RetryBackoffer::new(cancellation.child(), max_sleep_ms);
+                if let Err(error) = cache.refresh_region_index(&mut backoffer).await {
+                    debug!("periodic region-cache refresh failed: {error}");
+                }
+            }
+        }));
+    }
+
     // Retrieve cache entry by key. If there's no entry, query PD and update cache.
     pub async fn get_region_by_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let mut region_cache_guard = self.region_cache.write().await;
@@ -989,6 +1020,69 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             }
             return Ok(valid_regions);
         }
+    }
+
+    /// Source `refreshRegionIndex`: scan the complete keyspace in bounded
+    /// 10,000-region pages and replace all three indexes in one write-locked
+    /// step. In-flight by-ID request notifications survive the replacement.
+    pub(crate) async fn refresh_region_index(&self, backoffer: &mut RetryBackoffer) -> Result<()> {
+        let mut all_regions = Vec::new();
+        let mut start_key = Key::default();
+        loop {
+            let regions = self
+                .scan_regions(start_key.clone(), Key::default(), 10_000, backoffer)
+                .await?;
+            let last = regions.last().ok_or_else(|| {
+                Error::StringError("PD returned no region while refreshing region index".to_owned())
+            })?;
+            let next_key = last.end_key();
+            all_regions.extend(regions);
+            if next_key.is_empty() {
+                break;
+            }
+            if next_key <= start_key {
+                return Err(Error::StringError(
+                    "PD returned a region that does not advance refreshRegionIndex".to_owned(),
+                ));
+            }
+            start_key = next_key;
+        }
+
+        let store_epochs = self
+            .store_cache
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(id, store)| (*id, store.epoch.load(Ordering::Acquire)))
+            .collect::<HashMap<_, _>>();
+        let now = now_epoch_secs();
+        let mut refreshed = RegionCacheMap::new();
+        for region in all_regions {
+            let version = region.ver_id();
+            let epochs = region
+                .region
+                .peers
+                .iter()
+                .filter_map(|peer| {
+                    store_epochs
+                        .get(&peer.store_id)
+                        .map(|epoch| (peer.store_id, *epoch))
+                })
+                .collect();
+            refreshed
+                .key_to_ver_id
+                .insert(region.start_key(), version.clone());
+            refreshed.id_to_ver_id.insert(region.id(), version.clone());
+            refreshed
+                .ver_id_to_region
+                .insert(version, CachedRegion::new(region, epochs, now));
+        }
+
+        let mut current = self.region_cache.write().await;
+        refreshed.on_my_way_id = std::mem::take(&mut current.on_my_way_id);
+        *current = refreshed;
+        *self.gc_cursor.lock().unwrap() = None;
+        Ok(())
     }
 
     async fn batch_scan_regions(
@@ -2146,9 +2240,10 @@ mod test {
     use std::sync::atomic::Ordering::SeqCst;
     use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::{Arc, Mutex as StdMutex};
+    use std::time::Duration;
 
     use async_trait::async_trait;
-    use tokio::sync::Mutex;
+    use tokio::sync::{Mutex, Notify};
 
     use super::{
         now_epoch_secs, ranges_after_key, regions_have_gap_in_ranges, BatchLocateRegionMerger,
@@ -2826,9 +2921,68 @@ mod test {
             .contains_key(&unhealthy.ver_id()));
 
         cache.start_background_gc();
-        assert!(cache.gc_task.lock().unwrap().is_some());
-        cache.close_background_gc().await;
-        assert!(cache.gc_task.lock().unwrap().is_none());
+        assert!(cache.background_task.lock().unwrap().is_some());
+        cache.close_background_task().await;
+        assert!(cache.background_task.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn source_full_region_refresh_replaces_indexes_and_can_run_periodically() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        for region in [
+            region_with_leader(1, b"", b"b"),
+            region_with_leader(2, b"b", b"d"),
+            region_with_leader(3, b"d", b""),
+        ] {
+            client.regions.lock().await.insert(region.id(), region);
+        }
+        let cache = Arc::new(RegionCache::new(client));
+        assert!(cache.add_region(region_with_leader(99, b"x", b"z")).await);
+        cache
+            .region_cache
+            .write()
+            .await
+            .on_my_way_id
+            .insert(7, Arc::new(Notify::new()));
+
+        let mut backoffer = RetryBackoffer::noop(Cancellation::default());
+        cache.refresh_region_index(&mut backoffer).await?;
+        let index = cache.region_cache.read().await;
+        assert_eq!(
+            index
+                .key_to_ver_id
+                .values()
+                .map(|version| version.id)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert!(index.on_my_way_id.contains_key(&7));
+        drop(index);
+
+        let client = Arc::new(MockRetryClient::default());
+        let only = region_with_leader(8, b"", b"");
+        client.regions.lock().await.insert(only.id(), only);
+        let periodic = Arc::new(RegionCache::new(client));
+        periodic.start_background_refresh(Duration::from_millis(5));
+        tokio::time::timeout(Duration::from_millis(200), async {
+            loop {
+                if periodic
+                    .region_cache
+                    .read()
+                    .await
+                    .id_to_ver_id
+                    .contains_key(&8)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("periodic region refresh should run");
+        periodic.close_background_task().await;
+        assert!(periodic.background_task.lock().unwrap().is_none());
+        Ok(())
     }
 
     #[tokio::test]

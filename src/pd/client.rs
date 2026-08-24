@@ -974,7 +974,9 @@ impl PdRpcClient<TikvConnect, Cluster> {
         config: Config,
         codec_config: PdCodecConfig,
     ) -> Result<PdRpcClient> {
-        PdRpcClient::new_with_codec_resolver(
+        let enable_preload = config.enable_preload;
+        let regions_refresh_interval = config.regions_refresh_interval;
+        let client = PdRpcClient::new_with_codec_resolver(
             config.clone(),
             |security_mgr| {
                 TikvConnect::new_with_grpc_compression(
@@ -1016,7 +1018,26 @@ impl PdRpcClient<TikvConnect, Cluster> {
                 }
             },
         )
-        .await
+        .await?;
+        if enable_preload {
+            let mut backoffer =
+                RetryBackoffer::new(crate::async_util::Cancellation::default(), 20_000);
+            if let Err(error) = client
+                .region_cache
+                .refresh_region_index(&mut backoffer)
+                .await
+            {
+                log::debug!("preload region index failed: {error}");
+            }
+        }
+        if regions_refresh_interval > 0 {
+            client
+                .region_cache
+                .start_background_refresh(Duration::from_secs(regions_refresh_interval));
+        } else {
+            client.region_cache.start_background_gc();
+        }
+        Ok(client)
     }
 }
 
@@ -1061,10 +1082,12 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         } else {
             KeyMode::Raw
         };
-        Self::new_with_codec_resolver(config, kv_connect, pd, move |_| async move {
+        let client = Self::new_with_codec_resolver(config, kv_connect, pd, move |_| async move {
             Ok((PdRegionCodec::v1(mode), None))
         })
-        .await
+        .await?;
+        client.region_cache.start_background_gc();
+        Ok(client)
     }
 
     async fn new_with_codec_resolver<PdFut, CodecFut, MakeKvC, MakePd, ResolveCodec>(
@@ -1104,7 +1127,6 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         crate::kv::STORE_LIMIT.store(config.tikv_client.store_limit, Ordering::Relaxed);
         let codec_pd = Arc::new(CodecPdClient::new(pd.clone(), region_codec));
         let region_cache = Arc::new(RegionCache::new(codec_pd));
-        region_cache.start_background_gc();
         Ok(PdRpcClient {
             pd: pd.clone(),
             kv_client_cache,
@@ -1185,7 +1207,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         for client in retired {
             client.close();
         }
-        self.region_cache.close_background_gc().await;
+        self.region_cache.close_background_task().await;
     }
 }
 
