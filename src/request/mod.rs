@@ -222,7 +222,7 @@ mod test {
             }
 
             fn label(&self) -> &'static str {
-                "mock"
+                "kv_get"
             }
 
             fn as_any(&self) -> &dyn Any {
@@ -296,7 +296,10 @@ mod test {
             },
         )));
 
+        let runtime_stats = Arc::new(crate::RegionRequestRuntimeStats::new());
+        let region_error_before = crate::stats::region_error_count("unknown", Some(42));
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, request)
+            .region_request_runtime_stats(Some(runtime_stats.clone()))
             .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 3))
             .extract_error()
             .plan();
@@ -308,6 +311,16 @@ mod test {
         assert_eq!(invoking_count.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(rpc_invoking_count.load(Ordering::SeqCst), 2);
         assert_eq!(*retry_flags.lock().unwrap(), vec![false, true]);
+        assert_eq!(runtime_stats.command_rpc_count(crate::CommandType::Get), 2);
+        assert_eq!(runtime_stats.error_stats().error_count("unknown"), 1);
+        let accesses = runtime_stats.replica_access_stats().access_infos();
+        assert_eq!(accesses.len(), 1);
+        assert_eq!(accesses[0].store_id, 42);
+        let region_error_after = crate::stats::region_error_count("unknown", Some(42));
+        assert!(
+            region_error_after >= region_error_before + 1,
+            "before={region_error_before}, after={region_error_after}, accesses={accesses:?}"
+        );
 
         let busy_shard_count = Arc::new(AtomicUsize::new(0));
         let busy_rpc_count = Arc::new(AtomicUsize::new(0));
@@ -596,6 +609,7 @@ mod test {
                     version: 0,
                 });
                 region.leader = Some(metapb::Peer {
+                    id: 40,
                     store_id: 41,
                     ..Default::default()
                 });
@@ -673,7 +687,7 @@ mod test {
             }
 
             fn label(&self) -> &'static str {
-                "mock"
+                "kv_get"
             }
 
             fn as_any(&self) -> &dyn Any {
@@ -732,8 +746,10 @@ mod test {
             preserve_route_on_failure: false,
         });
 
+        let runtime_stats = Arc::new(crate::RegionRequestRuntimeStats::new());
         let plan =
             crate::request::PlanBuilder::new(pd_client.clone(), Keyspace::Disable, MockKvRequest)
+                .region_request_runtime_stats(Some(runtime_stats.clone()))
                 .retry_multi_region(Backoff::no_jitter_backoff(1, 1, 1))
                 .plan();
         let response = plan.execute().await;
@@ -741,6 +757,13 @@ mod test {
         assert_eq!(pd_client.invalidate_region_count.load(Ordering::SeqCst), 1);
         assert_eq!(pd_client.invalidate_store_count.load(Ordering::SeqCst), 1);
         assert_eq!(pd_client.region_lookup_count.load(Ordering::SeqCst), 2);
+        assert_eq!(runtime_stats.command_rpc_count(crate::CommandType::Get), 2);
+        assert_eq!(runtime_stats.error_stats().distinct_error_count(), 1);
+        let accesses = runtime_stats.replica_access_stats().access_infos();
+        assert_eq!(accesses.len(), 1);
+        assert_eq!(accesses[0].peer_id, 40);
+        assert_eq!(accesses[0].store_id, 41);
+        assert!(accesses[0].error.contains("transient failure"));
 
         let preserve_first_dispatch = Arc::new(AtomicBool::new(true));
         let preserve_pd_client = Arc::new(InvalidationTrackingPdClient {

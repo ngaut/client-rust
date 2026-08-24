@@ -48,6 +48,17 @@ macro_rules! impl_inner_shardable {
             self.inner.replica_selector_state()
         }
 
+        fn region_request_runtime_stats(&self) -> Option<Arc<$crate::RegionRequestRuntimeStats>> {
+            self.inner.region_request_runtime_stats()
+        }
+
+        fn set_region_request_runtime_stats(
+            &mut self,
+            stats: Option<Arc<$crate::RegionRequestRuntimeStats>>,
+        ) {
+            self.inner.set_region_request_runtime_stats(stats);
+        }
+
         fn record_replica_attempt(&mut self, peer_id: u64) {
             self.inner.record_replica_attempt(peer_id);
         }
@@ -139,6 +150,16 @@ pub trait Shardable {
 
     fn replica_selector_state(&self) -> ReplicaSelectorState {
         ReplicaSelectorState::default()
+    }
+
+    fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {
+        None
+    }
+
+    fn set_region_request_runtime_stats(
+        &mut self,
+        _stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) {
     }
 
     fn record_replica_attempt(&mut self, _peer_id: u64) {}
@@ -294,6 +315,11 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             ru_details: self.ru_details.clone(),
             store_token_count: self.store_token_count.clone(),
             store_token_store_id: self.store_token_store_id,
+            region_request_runtime_stats: self.region_request_runtime_stats.clone(),
+            logical_peer_id: self.logical_peer_id,
+            logical_store_id: self.logical_store_id,
+            request_stale_read: self.request_stale_read,
+            request_replica_read: self.request_replica_read,
             interceptor: self.interceptor.clone(),
             execution_details_trace_handler: self.execution_details_trace_handler.clone(),
             network_traffic_details: self.network_traffic_details.clone(),
@@ -315,6 +341,10 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.resource_control_access_location = store.resource_control_access_location;
         self.store_token_count = store.store_token_count.clone();
         self.store_token_store_id = store.target_peer.as_ref().map_or(0, |peer| peer.store_id);
+        self.logical_peer_id = store.target_peer.as_ref().map(|peer| peer.id);
+        self.logical_store_id = store.target_peer.as_ref().map(|peer| peer.store_id);
+        self.request_stale_read = store.stale_read;
+        self.request_replica_read = store.is_replica_read();
         if store.busy_threshold_disabled {
             self.replica_selector_state.disable_busy_threshold();
         }
@@ -330,6 +360,17 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
 
     fn replica_selector_state(&self) -> ReplicaSelectorState {
         self.replica_selector_state.clone()
+    }
+
+    fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {
+        self.region_request_runtime_stats.clone()
+    }
+
+    fn set_region_request_runtime_stats(
+        &mut self,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) {
+        self.region_request_runtime_stats = stats;
     }
 
     fn record_replica_attempt(&mut self, peer_id: u64) {
@@ -450,6 +491,17 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
         self.inner.replica_selector_state()
     }
 
+    fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {
+        self.inner.region_request_runtime_stats()
+    }
+
+    fn set_region_request_runtime_stats(
+        &mut self,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) {
+        self.inner.set_region_request_runtime_stats(stats);
+    }
+
     fn record_replica_attempt(&mut self, peer_id: u64) {
         self.inner.record_replica_attempt(peer_id);
     }
@@ -527,6 +579,17 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
 
     fn mark_retry_request(&mut self) {
         self.inner.mark_retry_request();
+    }
+
+    fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {
+        self.inner.region_request_runtime_stats()
+    }
+
+    fn set_region_request_runtime_stats(
+        &mut self,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) {
+        self.inner.set_region_request_runtime_stats(stats);
     }
 }
 
@@ -730,6 +793,11 @@ mod test {
             ru_details: None,
             store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             store_token_store_id: 0,
+            region_request_runtime_stats: None,
+            logical_peer_id: None,
+            logical_store_id: None,
+            request_stale_read: false,
+            request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
             network_traffic_details: None,
@@ -788,6 +856,11 @@ mod test {
             ru_details: None,
             store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             store_token_store_id: 0,
+            region_request_runtime_stats: None,
+            logical_peer_id: None,
+            logical_store_id: None,
+            request_stale_read: false,
+            request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
             network_traffic_details: None,

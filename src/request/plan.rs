@@ -30,6 +30,7 @@ use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
 use crate::region::StoreId;
 use crate::region::{RegionVerId, RegionWithLeader};
+use crate::region_request::{region_error_access_message, region_error_label};
 use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
@@ -42,6 +43,7 @@ use crate::retry::{
     BO_TIKV_SERVER_BUSY,
 };
 use crate::stats::tikv_stats;
+use crate::store::CommandType;
 use crate::store::HasRegionError;
 use crate::store::HasRegionErrors;
 use crate::store::KvClient;
@@ -113,6 +115,13 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
     pub(crate) store_token_count: Arc<AtomicI64>,
     pub(crate) store_token_store_id: StoreId,
+    /// Optional source request-sender statistics shared by every shard and
+    /// retry owned by this logical request.
+    pub(crate) region_request_runtime_stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    pub(crate) logical_peer_id: Option<u64>,
+    pub(crate) logical_store_id: Option<StoreId>,
+    pub(crate) request_stale_read: bool,
+    pub(crate) request_replica_read: bool,
     /// Optional transaction-level decorator for this physical RPC.
     pub interceptor: Option<RpcInterceptorChain>,
     /// Task-scoped execution-detail trace sink captured before this dispatch
@@ -222,6 +231,26 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
             None => next().await,
         };
+        if let Some(runtime_stats) = &self.region_request_runtime_stats {
+            if let Some(command) = CommandType::from_request_label(self.request.label()) {
+                runtime_stats.record_rpc(command, started_at.elapsed());
+            }
+            if let Err(error) = &result {
+                let error = request_error_message(error);
+                runtime_stats.record_error(error.clone());
+                if let (Some(peer_id), Some(store_id)) =
+                    (self.logical_peer_id, self.logical_store_id)
+                {
+                    runtime_stats.record_replica_access(
+                        self.request_stale_read,
+                        self.request_replica_read,
+                        peer_id,
+                        store_id,
+                        error,
+                    );
+                }
+            }
+        }
         let network_collector = crate::traffic::NetworkCollector {
             stale_read: self.network_stale_read || self.replica_read_config.stale_read,
             access_location: self.resource_control_access_location,
@@ -304,6 +333,10 @@ impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
         self.store_health = None;
         self.record_client_side_slow_score = false;
         self.physical_endpoint_type = crate::store::EndpointType::TiKv;
+        self.logical_peer_id = None;
+        self.logical_store_id = None;
+        self.request_stale_read = false;
+        self.request_replica_read = false;
         self.request.apply_store(store);
     }
 }
@@ -314,6 +347,13 @@ const MULTI_STORES_CONCURRENCY: usize = 16;
 pub(crate) fn is_grpc_error(e: &Error) -> bool {
     matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
         || matches!(e, Error::Connection { source, .. } if is_grpc_error(source))
+}
+
+fn request_error_message(error: &Error) -> String {
+    match error {
+        Error::Connection { source, .. } => request_error_message(source),
+        _ => error.to_string(),
+    }
 }
 
 fn is_grpc_deadline_exceeded(e: &Error) -> bool {
@@ -813,6 +853,26 @@ where
                 "single_shard_handler:execute: region error: {:?}, region: {:?}",
                 e, region_ver_id
             );
+            let region_error_label = region_error_label(&e);
+            if region_error_label == "unknown" {
+                info!("unknown region error: {e:?}");
+            }
+            crate::stats::increment_region_error(
+                region_error_label,
+                region_store.target_peer.as_ref().map(|peer| peer.store_id),
+            );
+            if let Some(runtime_stats) = plan.region_request_runtime_stats() {
+                runtime_stats.record_error(region_error_label);
+                if let Some(peer) = region_store.target_peer.as_ref() {
+                    runtime_stats.record_replica_access(
+                        region_store.stale_read,
+                        region_store.is_replica_read(),
+                        peer.id,
+                        peer.store_id,
+                        region_error_access_message(&e, region_error_label),
+                    );
+                }
+            }
             if source_configurable_server_busy_timeout(&plan, &e) {
                 debug!(
                     "single_shard_handler: configurable server-busy deadline, reselection without backoff: {:?}",

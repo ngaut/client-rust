@@ -194,6 +194,23 @@ pub(crate) fn increment_store_limit_error(address: &str, store_id: u64) {
         .inc();
 }
 
+/// Source `TiKVRegionErrorCounter`, emitted before request-sender retry
+/// classification for every region-error response.
+pub(crate) fn increment_region_error(error_type: &str, store_id: Option<u64>) {
+    let store_id = store_id.map_or_else(|| "nil".to_owned(), |store_id| store_id.to_string());
+    TIKV_REGION_ERROR_COUNTER
+        .with_label_values(&[error_type, &store_id])
+        .inc();
+}
+
+#[cfg(test)]
+pub(crate) fn region_error_count(error_type: &str, store_id: Option<u64>) -> u64 {
+    let store_id = store_id.map_or_else(|| "nil".to_owned(), |store_id| store_id.to_string());
+    TIKV_REGION_ERROR_COUNTER
+        .with_label_values(&[error_type, &store_id])
+        .get()
+}
+
 pub(crate) fn set_prefer_leader_flows(destination: &str, store_id: u64, flows: u64) {
     let store_id = store_id.to_string();
     TIKV_PREFER_LEADER_FLOWS
@@ -869,6 +886,12 @@ lazy_static::lazy_static! {
         "tikv_client_go_get_store_limit_token_error_total",
         "Store token is up to the limit, probably because the store is hot or unavailable",
         &["address", "store"]
+    )
+    .unwrap();
+    static ref TIKV_REGION_ERROR_COUNTER: IntCounterVec = register_int_counter_vec!(
+        "tikv_client_go_region_err_total",
+        "Counter of region errors.",
+        &["type", "store"]
     )
     .unwrap();
     static ref TIKV_PREFER_LEADER_FLOWS: GaugeVec = register_gauge_vec!(

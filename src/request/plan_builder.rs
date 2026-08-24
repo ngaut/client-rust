@@ -91,6 +91,11 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 ru_details: None,
                 store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
                 store_token_store_id: 0,
+                region_request_runtime_stats: None,
+                logical_peer_id: None,
+                logical_store_id: None,
+                request_stale_read: false,
+                request_replica_read: false,
                 interceptor: None,
                 execution_details_trace_handler:
                     crate::trace::current_execution_details_trace_handler(),
@@ -153,6 +158,16 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     pub fn replica_read(mut self, config: ReplicaReadConfig) -> Self {
         self.plan.network_stale_read = config.stale_read;
         self.plan.replica_read_config = config;
+        self
+    }
+
+    /// Attach client-go-compatible physical request runtime statistics.
+    /// The collector is shared by every shard and sender retry.
+    pub fn region_request_runtime_stats(
+        mut self,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) -> Self {
+        self.plan.region_request_runtime_stats = stats;
         self
     }
 
@@ -602,11 +617,16 @@ where
     /// Retry a snapshot read with the ordinary schedule while optionally
     /// reporting source retry-class sleeps to snapshot runtime statistics.
     pub(crate) fn retry_multi_region_with_snapshot_stats(
-        self,
+        mut self,
         backoff: Backoff,
         stats: Option<Arc<crate::SnapshotRuntimeStats>>,
         variables: Arc<crate::Variables>,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        self.plan.set_region_request_runtime_stats(
+            stats
+                .as_ref()
+                .map(|stats| stats.region_request_runtime_stats()),
+        );
         self.make_retry_multi_region(SnapshotRegionBackoff::new(backoff, stats, variables), false)
     }
 
@@ -744,8 +764,12 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     plan.network_stale_read |= store.stale_read;
     plan.resource_control_replica_number = store.resource_control_replica_number;
     plan.resource_control_access_location = store.resource_control_access_location;
-    plan.store_token_count = store.store_token_count;
+    plan.logical_peer_id = store.target_peer.as_ref().map(|peer| peer.id);
+    plan.logical_store_id = store.target_peer.as_ref().map(|peer| peer.store_id);
+    plan.request_stale_read = store.stale_read;
+    plan.request_replica_read = store.is_replica_read();
     plan.store_token_store_id = store.target_peer.as_ref().map_or(0, |peer| peer.store_id);
+    plan.store_token_count = store.store_token_count;
     if store.busy_threshold_disabled {
         plan.replica_selector_state.disable_busy_threshold();
     }

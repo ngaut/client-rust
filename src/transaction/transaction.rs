@@ -4021,6 +4021,10 @@ mod tests {
         assert_eq!(stats.backoff_count("tikvServerBusy"), 1);
         assert!(stats.backoff_duration("tikvServerBusy") >= Duration::from_millis(1_000));
         assert!(stats.backoff_duration("tikvServerBusy") < Duration::from_millis(2_000));
+        assert_eq!(stats.request_error_stats().error_count("server_is_busy"), 1);
+        let access = stats.replica_access_stats().access_infos();
+        assert_eq!(access.len(), 1);
+        assert_eq!(access[0].error, "server_is_busy");
     }
 
     #[tokio::test]
