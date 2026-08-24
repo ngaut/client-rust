@@ -30,6 +30,11 @@ pub use self::errors::HasKeyErrors;
 pub use self::errors::HasRegionError;
 pub use self::errors::HasRegionErrors;
 pub use self::request::Request;
+#[allow(unused_imports)]
+pub use self::request::{
+    BatchCoprocessorStreamRequest, BatchCoprocessorStreamResponse, CoprocessorStreamRequest,
+    CoprocessorStreamResponse, MppStreamRequest, MppStreamResponse,
+};
 use crate::kv::AccessLocationType;
 use crate::locate::StoreHealthStatus;
 use crate::pd::PdClient;

@@ -17,6 +17,64 @@ use crate::store::RegionWithLeader;
 use crate::Error;
 use crate::Result;
 
+macro_rules! streaming_response {
+    ($name:ident, $item:ty) => {
+        /// A server-streaming RPC after the first response has been read.
+        ///
+        /// Eagerly reading `first` matches client-go's internal client: region
+        /// errors surface to the request sender before it returns the stream.
+        #[allow(dead_code)]
+        pub struct $name {
+            pub first: Option<$item>,
+            stream: Option<tonic::Streaming<$item>>,
+            timeout: Duration,
+        }
+
+        #[allow(dead_code)]
+        impl $name {
+            pub async fn message(&mut self) -> Result<Option<$item>> {
+                let Some(stream) = self.stream.as_mut() else {
+                    return Ok(None);
+                };
+                tokio::time::timeout(self.timeout, stream.message())
+                    .await
+                    .map_err(|_| {
+                        Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                            "TiKV streaming response deadline exceeded",
+                        ))
+                    })?
+                    .map_err(Error::from)
+            }
+
+            /// Cancels the remaining stream. Dropping this value has the same
+            /// effect through Tonic's request-body cancellation.
+            pub fn close(&mut self) {
+                self.stream = None;
+            }
+        }
+    };
+}
+
+streaming_response!(CoprocessorStreamResponse, coprocessor::Response);
+streaming_response!(BatchCoprocessorStreamResponse, coprocessor::BatchResponse);
+streaming_response!(MppStreamResponse, mpp::MppDataPacket);
+
+/// Distinguishes client-go's `CmdCopStream` from the unary `CmdCop`, which
+/// carries the same protobuf request.
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct CoprocessorStreamRequest(pub coprocessor::Request);
+
+/// Client-go's TiFlash `CmdBatchCop` server-streaming request.
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct BatchCoprocessorStreamRequest(pub coprocessor::BatchRequest);
+
+/// Client-go's `CmdMPPConn` server-streaming request.
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct MppStreamRequest(pub mpp::EstablishMppConnectionRequest);
+
 #[async_trait]
 pub trait Request: Any + Sync + Send + 'static {
     async fn dispatch(
@@ -753,6 +811,244 @@ impl Request for coprocessor::Request {
 
     fn encoded_request_size(&self) -> u64 {
         self.encoded_len() as u64
+    }
+}
+
+#[async_trait]
+impl Request for CoprocessorStreamRequest {
+    async fn dispatch(
+        &self,
+        client: &TikvClient<Channel>,
+        timeout: Duration,
+    ) -> Result<Box<dyn Any>> {
+        self.dispatch_with_forwarded_host(client, timeout, "").await
+    }
+
+    async fn dispatch_with_forwarded_host(
+        &self,
+        client: &TikvClient<Channel>,
+        timeout: Duration,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
+        let mut request = with_forwarded_host(self.0.clone().into_request(), forwarded_host)?;
+        request.set_timeout(timeout);
+        let mut stream = client
+            .clone()
+            .coprocessor_stream(request)
+            .await
+            .map_err(Error::from)?
+            .into_inner();
+        let first = tokio::time::timeout(timeout, stream.message())
+            .await
+            .map_err(|_| {
+                Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                    "TiKV CoprocessorStream first response deadline exceeded",
+                ))
+            })?
+            .map_err(Error::from)?;
+        Ok(Box::new(CoprocessorStreamResponse {
+            first,
+            stream: Some(stream),
+            timeout,
+        }))
+    }
+
+    fn label(&self) -> &'static str {
+        "coprocessor_stream"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
+        self.0.set_leader(leader)
+    }
+
+    fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
+        self.0.set_api_version(api_version);
+    }
+
+    fn set_is_retry_request(&mut self) {
+        self.0.set_is_retry_request();
+    }
+
+    fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
+        self.0.set_keyspace_id(keyspace_id);
+    }
+
+    fn set_keyspace_name(&mut self, keyspace_name: Option<&str>) {
+        self.0.set_keyspace_name(keyspace_name);
+    }
+
+    fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
+        self.0.set_priority(priority);
+    }
+
+    fn set_max_execution_duration_ms(&mut self, duration_ms: u64) {
+        self.0.set_max_execution_duration_ms(duration_ms);
+    }
+
+    fn max_execution_duration_ms(&self) -> u64 {
+        self.0.max_execution_duration_ms()
+    }
+
+    fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
+        self.0.tikv_context()
+    }
+
+    fn encoded_request_size(&self) -> u64 {
+        self.0.encoded_len() as u64
+    }
+}
+
+#[async_trait]
+impl Request for BatchCoprocessorStreamRequest {
+    async fn dispatch(
+        &self,
+        client: &TikvClient<Channel>,
+        timeout: Duration,
+    ) -> Result<Box<dyn Any>> {
+        self.dispatch_with_forwarded_host(client, timeout, "").await
+    }
+
+    async fn dispatch_with_forwarded_host(
+        &self,
+        client: &TikvClient<Channel>,
+        timeout: Duration,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
+        let mut request = with_forwarded_host(self.0.clone().into_request(), forwarded_host)?;
+        request.set_timeout(timeout);
+        let mut stream = client
+            .clone()
+            .batch_coprocessor(request)
+            .await
+            .map_err(Error::from)?
+            .into_inner();
+        let first = tokio::time::timeout(timeout, stream.message())
+            .await
+            .map_err(|_| {
+                Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                    "TiKV BatchCoprocessor first response deadline exceeded",
+                ))
+            })?
+            .map_err(Error::from)?;
+        Ok(Box::new(BatchCoprocessorStreamResponse {
+            first,
+            stream: Some(stream),
+            timeout,
+        }))
+    }
+
+    fn label(&self) -> &'static str {
+        "batch_coprocessor"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
+        Ok(())
+    }
+
+    fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion) {
+        self.0
+            .context
+            .get_or_insert(kvrpcpb::Context::default())
+            .api_version = api_version.into();
+    }
+
+    fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
+        if let Some(keyspace_id) = keyspace_id {
+            self.0
+                .context
+                .get_or_insert(kvrpcpb::Context::default())
+                .keyspace_id = keyspace_id;
+        }
+    }
+
+    fn set_keyspace_name(&mut self, keyspace_name: Option<&str>) {
+        if let Some(keyspace_name) = keyspace_name {
+            self.0
+                .context
+                .get_or_insert(kvrpcpb::Context::default())
+                .keyspace_name = keyspace_name.to_owned();
+        }
+    }
+
+    fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
+        self.0
+            .context
+            .get_or_insert(kvrpcpb::Context::default())
+            .priority = priority.into();
+    }
+
+    fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
+        self.0.context.as_ref()
+    }
+
+    fn encoded_request_size(&self) -> u64 {
+        self.0.encoded_len() as u64
+    }
+}
+
+#[async_trait]
+impl Request for MppStreamRequest {
+    async fn dispatch(
+        &self,
+        client: &TikvClient<Channel>,
+        timeout: Duration,
+    ) -> Result<Box<dyn Any>> {
+        self.dispatch_with_forwarded_host(client, timeout, "").await
+    }
+
+    async fn dispatch_with_forwarded_host(
+        &self,
+        client: &TikvClient<Channel>,
+        timeout: Duration,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
+        let mut request = with_forwarded_host(self.0.clone().into_request(), forwarded_host)?;
+        request.set_timeout(timeout);
+        let mut stream = client
+            .clone()
+            .establish_mpp_connection(request)
+            .await
+            .map_err(Error::from)?
+            .into_inner();
+        let first = tokio::time::timeout(timeout, stream.message())
+            .await
+            .map_err(|_| {
+                Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                    "TiKV MPP stream first response deadline exceeded",
+                ))
+            })?
+            .map_err(Error::from)?;
+        Ok(Box::new(MppStreamResponse {
+            first,
+            stream: Some(stream),
+            timeout,
+        }))
+    }
+
+    fn label(&self) -> &'static str {
+        "establish_mpp_connection"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
+        Ok(())
+    }
+
+    fn set_api_version(&mut self, _api_version: kvrpcpb::ApiVersion) {}
+
+    fn encoded_request_size(&self) -> u64 {
+        self.0.encoded_len() as u64
     }
 }
 

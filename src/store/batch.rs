@@ -1155,6 +1155,7 @@ impl BatchCommandsStream {
             {
                 return;
             }
+            client.mark_connection_transient_failure(connection_index);
             state.lock().await.outbound = None;
             ready.notify_waiters();
 

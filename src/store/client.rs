@@ -1,12 +1,14 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::any::Any;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::Stream;
+use tokio::sync::Notify;
 use tonic::codec::CompressionEncoding;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
@@ -19,6 +21,117 @@ use crate::proto::kvrpcpb;
 use crate::proto::tikvpb::tikv_client::TikvClient;
 use crate::Result;
 use crate::SecurityManager;
+
+const READ_TIMEOUT_SHORT: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum GrpcConnectionState {
+    Idle,
+    Connecting,
+    Ready,
+    TransientFailure,
+}
+
+impl GrpcConnectionState {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Idle => "IDLE",
+            Self::Connecting => "CONNECTING",
+            Self::Ready => "READY",
+            Self::TransientFailure => "TRANSIENT_FAILURE",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ResolveLockCollapseKey {
+    region_id: u64,
+    start_version: u64,
+    is_async: bool,
+}
+
+#[derive(Clone)]
+enum CollapsedResolveLockError {
+    GrpcApi(tonic::Status),
+    Connection {
+        source: Box<CollapsedResolveLockError>,
+        address: String,
+        version: u64,
+    },
+    Message(String),
+}
+
+impl CollapsedResolveLockError {
+    fn from_error(error: crate::Error) -> Self {
+        match error {
+            crate::Error::GrpcAPI(status) => Self::GrpcApi(status),
+            crate::Error::Connection {
+                source,
+                address,
+                version,
+            } => Self::Connection {
+                source: Box::new(Self::from_error(*source)),
+                address,
+                version,
+            },
+            error => Self::Message(error.to_string()),
+        }
+    }
+
+    fn to_error(&self) -> crate::Error {
+        match self {
+            Self::GrpcApi(status) => crate::Error::GrpcAPI(status.clone()),
+            Self::Connection {
+                source,
+                address,
+                version,
+            } => crate::Error::Connection {
+                source: Box::new(source.to_error()),
+                address: address.clone(),
+                version: *version,
+            },
+            Self::Message(message) => crate::Error::StringError(message.clone()),
+        }
+    }
+}
+
+type CollapsedResolveLockResult =
+    std::result::Result<kvrpcpb::ResolveLockResponse, CollapsedResolveLockError>;
+
+#[derive(Default)]
+struct ResolveLockFlight {
+    result: Mutex<Option<CollapsedResolveLockResult>>,
+    ready: Notify,
+}
+
+impl ResolveLockFlight {
+    fn complete(&self, result: CollapsedResolveLockResult) {
+        *self.result.lock().unwrap() = Some(result);
+        self.ready.notify_waiters();
+    }
+
+    async fn wait(&self) -> CollapsedResolveLockResult {
+        loop {
+            let notified = self.ready.notified();
+            if let Some(result) = self.result.lock().unwrap().clone() {
+                return result;
+            }
+            notified.await;
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct ResolveLockCollapser {
+    flights: Arc<Mutex<HashMap<ResolveLockCollapseKey, Arc<ResolveLockFlight>>>>,
+}
+
+lazy_static::lazy_static! {
+    // client-go deliberately owns one process-wide `resolveRegionSf` group,
+    // rather than one group per RPC client or address.
+    static ref RESOLVE_LOCK_COLLAPSER: ResolveLockCollapser = ResolveLockCollapser::default();
+}
 
 /// A trait for connecting to TiKV stores.
 #[async_trait]
@@ -253,6 +366,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_coprocessor_stream_reads_first_response_before_returning() {
+        let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
+            .await
+            .unwrap();
+        let address = server.addr().unwrap();
+        server.set_metadata_checker(Some(Arc::new(|metadata| {
+            (metadata.get("tikv-forwarded-host") == Some(&"store-2".parse().unwrap()))
+                .then_some(())
+                .ok_or_else(|| tonic::Status::permission_denied("missing forwarding metadata"))
+        })));
+        let client = KvClient::with_connection_info(
+            KvRpcClient::new(
+                vec![TikvClient::connect(format!("http://{address}"))
+                    .await
+                    .unwrap()],
+                Duration::from_secs(1),
+            ),
+            "store-stream".to_owned(),
+            1,
+        );
+        let response = client
+            .dispatch_with_forwarded_host(
+                &crate::store::CoprocessorStreamRequest(
+                    crate::proto::coprocessor::Request::default(),
+                ),
+                "store-2",
+            )
+            .await
+            .unwrap();
+        let mut response = response
+            .downcast::<crate::store::CoprocessorStreamResponse>()
+            .unwrap();
+        assert_eq!(
+            response.first.take(),
+            Some(crate::proto::coprocessor::Response::default())
+        );
+        assert_eq!(response.message().await.unwrap(), None);
+        response.close();
+        assert_eq!(
+            crate::stats::grpc_connection_state("store-stream-0", "store-stream", "READY"),
+            1.0
+        );
+
+        client.close();
+        server.stop().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn source_transport_error_carries_cached_connection_identity() {
         let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
             .await
@@ -271,6 +432,10 @@ mod tests {
             "store-a".to_owned(),
             7,
         );
+        assert_eq!(
+            crate::stats::grpc_connection_state("store-a-0", "store-a", "IDLE"),
+            1.0
+        );
 
         let error = KvClient::dispatch(&rpc, &crate::proto::kvrpcpb::PrewriteRequest::default())
             .await
@@ -283,7 +448,19 @@ mod tests {
                 source,
             } if address == "store-a" && matches!(*source, crate::Error::GrpcAPI(_))
         ));
-        drop(rpc);
+        assert_eq!(
+            crate::stats::grpc_connection_state("store-a-0", "store-a", "TRANSIENT_FAILURE"),
+            1.0
+        );
+        rpc.close();
+        assert_eq!(
+            crate::stats::grpc_connection_state("store-a-0", "store-a", "SHUTDOWN"),
+            0.0
+        );
+        assert_eq!(
+            crate::stats::grpc_connection_state("store-a-0", "store-a", "TRANSIENT_FAILURE"),
+            0.0
+        );
         server.stop().await.unwrap();
     }
 
@@ -327,6 +504,148 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, 2, 0, 1, 2, 0, 1]
         );
+    }
+
+    #[tokio::test]
+    async fn source_resolve_lock_singleflight_key_and_exclusions() {
+        use crate::proto::tikvpb;
+        use tikvpb::batch_commands_response::response::Cmd;
+
+        let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
+            .await
+            .unwrap();
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let counted = request_count.clone();
+        server.set_batch_commands_handler(Some(Arc::new(move |request| {
+            counted.fetch_add(request.requests.len(), Ordering::Relaxed);
+            // Keep the first physical request in flight long enough for all
+            // logical callers to join its source singleflight group.
+            std::thread::sleep(Duration::from_millis(30));
+            Ok(tikvpb::BatchCommandsResponse {
+                responses: request
+                    .requests
+                    .iter()
+                    .map(|_| tikvpb::batch_commands_response::Response {
+                        cmd: Some(Cmd::ResolveLock(kvrpcpb::ResolveLockResponse::default())),
+                    })
+                    .collect(),
+                request_ids: request.request_ids,
+                ..Default::default()
+            })
+        })));
+        let address = server.addr().unwrap();
+        let mut config = crate::config::TiKvClient::default();
+        config.max_batch_size = 8;
+        let client = KvRpcClient::new(
+            vec![TikvClient::connect(format!("http://{address}"))
+                .await
+                .unwrap()],
+            Duration::from_secs(1),
+        )
+        .with_batch_worker(&config);
+        let other_client = KvRpcClient::new(
+            vec![TikvClient::connect(format!("http://{address}"))
+                .await
+                .unwrap()],
+            Duration::from_secs(1),
+        )
+        .with_batch_worker(&config);
+
+        let request = kvrpcpb::ResolveLockRequest {
+            context: Some(kvrpcpb::Context {
+                region_id: 7,
+                ..Default::default()
+            }),
+            start_version: 11,
+            ..Default::default()
+        };
+        let (first, second) = tokio::join!(
+            other_client.dispatch_with_timeout_and_forwarded_host(
+                &request,
+                Some(Duration::from_secs(1)),
+                ""
+            ),
+            client.dispatch_with_timeout_and_forwarded_host(
+                &request,
+                Some(Duration::from_secs(1)),
+                ""
+            )
+        );
+        first
+            .unwrap()
+            .downcast::<kvrpcpb::ResolveLockResponse>()
+            .unwrap();
+        second
+            .unwrap()
+            .downcast::<kvrpcpb::ResolveLockResponse>()
+            .unwrap();
+        assert_eq!(request_count.load(Ordering::Relaxed), 1);
+
+        let independently_timed = kvrpcpb::ResolveLockRequest {
+            start_version: 12,
+            ..request.clone()
+        };
+        let (short, long) = tokio::join!(
+            client.dispatch_with_timeout_and_forwarded_host(
+                &independently_timed,
+                Some(Duration::from_millis(1)),
+                ""
+            ),
+            client.dispatch_with_timeout_and_forwarded_host(
+                &independently_timed,
+                Some(Duration::from_secs(1)),
+                ""
+            )
+        );
+        assert!(
+            matches!(short, Err(crate::Error::GrpcAPI(status)) if status.code() == tonic::Code::DeadlineExceeded)
+        );
+        assert!(long.is_ok());
+        assert_eq!(request_count.load(Ordering::Relaxed), 2);
+
+        let async_request = kvrpcpb::ResolveLockRequest {
+            is_async: true,
+            ..request.clone()
+        };
+        let lite_request = kvrpcpb::ResolveLockRequest {
+            keys: vec![b"key".to_vec()],
+            ..request.clone()
+        };
+        let batch_request = kvrpcpb::ResolveLockRequest {
+            txn_infos: vec![kvrpcpb::TxnInfo::default()],
+            ..request.clone()
+        };
+        let (sync, asynchronous, lite, batch) = tokio::join!(
+            client.dispatch_with_timeout_and_forwarded_host(
+                &request,
+                Some(Duration::from_secs(1)),
+                ""
+            ),
+            client.dispatch_with_timeout_and_forwarded_host(
+                &async_request,
+                Some(Duration::from_secs(1)),
+                ""
+            ),
+            client.dispatch_with_timeout_and_forwarded_host(
+                &lite_request,
+                Some(Duration::from_secs(1)),
+                ""
+            ),
+            client.dispatch_with_timeout_and_forwarded_host(
+                &batch_request,
+                Some(Duration::from_secs(1)),
+                ""
+            )
+        );
+        assert!(sync.is_ok());
+        assert!(asynchronous.is_ok());
+        assert!(lite.is_ok());
+        assert!(batch.is_ok());
+        assert_eq!(request_count.load(Ordering::Relaxed), 6);
+
+        client.close();
+        other_client.close();
+        server.stop().await.unwrap();
     }
 
     #[test]
@@ -429,6 +748,7 @@ pub trait ClientEventListener: Send + Sync {
 #[derive(Clone)]
 pub struct KvRpcClient {
     rpc_clients: Arc<[TikvClient<Channel>]>,
+    connection_states: Arc<[AtomicU8]>,
     next_client: Arc<AtomicUsize>,
     timeout: Duration,
     batch_worker: Option<Arc<BatchCommandsWorker>>,
@@ -442,14 +762,43 @@ struct ConnectionInfo {
     closed: AtomicBool,
 }
 
+fn resolve_lock_collapse_request(
+    request: &dyn Request,
+) -> Option<(ResolveLockCollapseKey, kvrpcpb::ResolveLockRequest)> {
+    let request = request
+        .as_any()
+        .downcast_ref::<kvrpcpb::ResolveLockRequest>()?;
+    if !request.keys.is_empty() || !request.txn_infos.is_empty() {
+        return None;
+    }
+    Some((
+        ResolveLockCollapseKey {
+            region_id: request
+                .context
+                .as_ref()
+                .map_or(0, |context| context.region_id),
+            start_version: request.start_version,
+            // `is_txn_file` is implied by `start_version` in client-go and is
+            // deliberately absent from this key.
+            is_async: request.is_async,
+        },
+        request.clone(),
+    ))
+}
+
 impl KvRpcClient {
     pub(crate) fn new(rpc_clients: Vec<TikvClient<Channel>>, timeout: Duration) -> Self {
         assert!(
             !rpc_clients.is_empty(),
             "TiKV connection pool must not be empty"
         );
+        let connection_states = (0..rpc_clients.len())
+            .map(|_| AtomicU8::new(GrpcConnectionState::Idle as u8))
+            .collect::<Vec<_>>()
+            .into();
         Self {
             rpc_clients: rpc_clients.into(),
+            connection_states,
             next_client: Arc::new(AtomicUsize::new(0)),
             timeout,
             batch_worker: None,
@@ -562,7 +911,8 @@ impl KvRpcClient {
             connection_index < self.rpc_clients.len(),
             "batch connection index must belong to this pool"
         );
-        self.rpc_clients[connection_index]
+        self.set_connection_state(connection_index, GrpcConnectionState::Connecting);
+        let result = self.rpc_clients[connection_index]
             .clone()
             .batch_commands(Self::batch_commands_request(
                 requests,
@@ -571,7 +921,16 @@ impl KvRpcClient {
             )?)
             .await
             .map(|response| response.into_inner())
-            .map_err(crate::Error::from)
+            .map_err(crate::Error::from);
+        self.set_connection_state(
+            connection_index,
+            if result.is_ok() {
+                GrpcConnectionState::Ready
+            } else {
+                GrpcConnectionState::TransientFailure
+            },
+        );
+        result
     }
 
     /// Dispatches a source request through a forwarding store. This is the
@@ -588,6 +947,90 @@ impl KvRpcClient {
     }
 
     pub(crate) async fn dispatch_with_timeout_and_forwarded_host(
+        &self,
+        request: &dyn Request,
+        timeout: Option<Duration>,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
+        if let Some((key, request)) = resolve_lock_collapse_request(request) {
+            return self
+                .dispatch_collapsed_resolve_lock(
+                    key,
+                    request,
+                    timeout.unwrap_or(self.timeout),
+                    forwarded_host,
+                )
+                .await;
+        }
+        self.dispatch_uncollapsed(request, timeout, forwarded_host)
+            .await
+    }
+
+    async fn dispatch_collapsed_resolve_lock(
+        &self,
+        key: ResolveLockCollapseKey,
+        request: kvrpcpb::ResolveLockRequest,
+        caller_timeout: Duration,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
+        let (flight, created) = {
+            let mut flights = RESOLVE_LOCK_COLLAPSER.flights.lock().unwrap();
+            match flights.get(&key) {
+                Some(flight) => (flight.clone(), false),
+                None => {
+                    let flight = Arc::new(ResolveLockFlight::default());
+                    flights.insert(key.clone(), flight.clone());
+                    (flight, true)
+                }
+            }
+        };
+
+        if created {
+            let client = self.clone();
+            let forwarded_host = forwarded_host.to_owned();
+            let collapser = RESOLVE_LOCK_COLLAPSER.clone();
+            let spawned_flight = flight.clone();
+            tokio::spawn(async move {
+                let result = client
+                    .dispatch_uncollapsed(&request, Some(READ_TIMEOUT_SHORT), &forwarded_host)
+                    .await
+                    .and_then(|response| {
+                        response
+                            .downcast::<kvrpcpb::ResolveLockResponse>()
+                            .map(|response| *response)
+                            .map_err(|_| {
+                                crate::Error::StringError(
+                                    "ResolveLock RPC returned an unexpected response type"
+                                        .to_owned(),
+                                )
+                            })
+                    })
+                    .map_err(CollapsedResolveLockError::from_error);
+                spawned_flight.complete(result);
+                let mut flights = collapser.flights.lock().unwrap();
+                if flights
+                    .get(&key)
+                    .is_some_and(|current| Arc::ptr_eq(current, &spawned_flight))
+                {
+                    flights.remove(&key);
+                }
+            });
+        }
+
+        let result = tokio::time::timeout(caller_timeout, flight.wait())
+            .await
+            .map_err(|_| {
+                crate::Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                    "collapsed ResolveLock request deadline exceeded",
+                ))
+            })?;
+        match result {
+            Ok(response) => Ok(Box::new(response)),
+            Err(error) => Err(error.to_error()),
+        }
+    }
+
+    async fn dispatch_uncollapsed(
         &self,
         request: &dyn Request,
         timeout: Option<Duration>,
@@ -625,10 +1068,36 @@ impl KvRpcClient {
         }
         let index = self.next_client_index();
         let timeout = timeout.unwrap_or(self.timeout);
-        request
+        self.set_connection_state(index, GrpcConnectionState::Connecting);
+        let result = request
             .dispatch_with_forwarded_host(&self.rpc_clients[index], timeout, forwarded_host)
             .await
-            .map_err(|error| self.wrap_connection_error(error))
+            .map_err(|error| self.wrap_connection_error(error));
+        self.set_connection_state(
+            index,
+            if result.is_ok() {
+                GrpcConnectionState::Ready
+            } else {
+                GrpcConnectionState::TransientFailure
+            },
+        );
+        result
+    }
+
+    fn set_connection_state(&self, index: usize, state: GrpcConnectionState) {
+        self.connection_states[index].store(state as u8, Ordering::Release);
+        let Some(connection) = self.connection.read().unwrap().clone() else {
+            return;
+        };
+        crate::stats::set_grpc_connection_state(
+            &format!("{}-{index}", connection.address),
+            &connection.address,
+            state.name(),
+        );
+    }
+
+    pub(crate) fn mark_connection_transient_failure(&self, index: usize) {
+        self.set_connection_state(index, GrpcConnectionState::TransientFailure);
     }
 
     fn wrap_connection_error(&self, error: crate::Error) -> crate::Error {
@@ -691,6 +1160,9 @@ impl KvClient for KvRpcClient {
             version,
             closed: AtomicBool::new(false),
         }));
+        for index in 0..self.rpc_clients.len() {
+            self.set_connection_state(index, GrpcConnectionState::Idle);
+        }
         self
     }
 
@@ -700,6 +1172,15 @@ impl KvClient for KvRpcClient {
         }
         if let Some(worker) = &self.batch_worker {
             worker.close();
+        }
+        for index in 0..self.rpc_clients.len() {
+            let Some(connection) = self.connection.read().unwrap().clone() else {
+                continue;
+            };
+            crate::stats::clear_grpc_connection_state(
+                &format!("{}-{index}", connection.address),
+                &connection.address,
+            );
         }
     }
 }

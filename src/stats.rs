@@ -169,6 +169,47 @@ pub(crate) fn increment_store_limit_error(address: &str, store_id: u64) {
         .inc();
 }
 
+/// Event-driven native mapping of client-go's one-second grpc-go connection
+/// state sampler. Tonic does not expose `ClientConn.GetState`, while all
+/// externally observable transitions pass through the Rust pool owner.
+pub(crate) fn set_grpc_connection_state(connection_id: &str, store_ip: &str, state: &str) {
+    for candidate in [
+        "IDLE",
+        "CONNECTING",
+        "READY",
+        "TRANSIENT_FAILURE",
+        "SHUTDOWN",
+    ] {
+        TIKV_GRPC_CONNECTION_STATE
+            .with_label_values(&[connection_id, store_ip, candidate])
+            .set(if candidate == state { 1.0 } else { 0.0 });
+    }
+}
+
+/// Removes a connection from client-go's monitor by clearing every retained
+/// state label. Prometheus vectors retain the series, matching the source's
+/// explicit zeroing in `connMonitor.RemoveConn`.
+pub(crate) fn clear_grpc_connection_state(connection_id: &str, store_ip: &str) {
+    for state in [
+        "IDLE",
+        "CONNECTING",
+        "READY",
+        "TRANSIENT_FAILURE",
+        "SHUTDOWN",
+    ] {
+        TIKV_GRPC_CONNECTION_STATE
+            .with_label_values(&[connection_id, store_ip, state])
+            .set(0.0);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn grpc_connection_state(connection_id: &str, store_ip: &str, state: &str) -> f64 {
+    TIKV_GRPC_CONNECTION_STATE
+        .with_label_values(&[connection_id, store_ip, state])
+        .get()
+}
+
 /// Source `TiKVLockResolverCounter`. The caller supplies the source shortcut
 /// label (for example `read_async_resolve_fallback`).
 pub(crate) fn increment_lock_resolver_action(action: &'static str) {
@@ -531,6 +572,12 @@ lazy_static::lazy_static! {
         "tikv_client_go_get_store_limit_token_error_total",
         "Store token is up to the limit, probably because the store is hot or unavailable",
         &["address", "store"]
+    )
+    .unwrap();
+    static ref TIKV_GRPC_CONNECTION_STATE: GaugeVec = register_gauge_vec!(
+        "tikv_client_go_grpc_connection_state",
+        "State of gRPC connection",
+        &["connection_id", "store_ip", "grpc_state"]
     )
     .unwrap();
     static ref TIKV_LOCK_RESOLVER_ACTIONS: IntCounterVec = register_int_counter_vec!(
