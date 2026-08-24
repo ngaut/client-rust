@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use lazy_static::lazy_static;
 
-use crate::proto::{coprocessor, kvrpcpb};
+use crate::proto::kvrpcpb;
 
 /// One source `spanInfo` node reconstructed from TiKV `ExecDetailsV2`.
 ///
@@ -240,48 +240,12 @@ pub fn build_execution_detail_span(
     Some(root)
 }
 
-fn exec_details_from_response(response: &dyn Any) -> Option<&kvrpcpb::ExecDetailsV2> {
-    macro_rules! detail_response {
-        ($($response:ty),+ $(,)?) => {
-            $(
-                if let Some(response) = response.downcast_ref::<$response>() {
-                    return response.exec_details_v2.as_ref();
-                }
-            )+
-        };
-    }
-    detail_response!(
-        kvrpcpb::GetResponse,
-        kvrpcpb::PrewriteResponse,
-        kvrpcpb::PessimisticLockResponse,
-        kvrpcpb::PessimisticRollbackResponse,
-        kvrpcpb::TxnHeartBeatResponse,
-        kvrpcpb::CheckTxnStatusResponse,
-        kvrpcpb::CheckSecondaryLocksResponse,
-        kvrpcpb::CommitResponse,
-        kvrpcpb::BatchGetResponse,
-        kvrpcpb::BatchRollbackResponse,
-        kvrpcpb::ScanLockResponse,
-        kvrpcpb::ResolveLockResponse,
-        kvrpcpb::FlushResponse,
-        kvrpcpb::BufferBatchGetResponse,
-        coprocessor::Response,
-    );
-    if let Some(response) = response.downcast_ref::<crate::store::CoprocessorStreamResponse>() {
-        return response
-            .first
-            .as_ref()
-            .and_then(|response| response.exec_details_v2.as_ref());
-    }
-    None
-}
-
 pub(crate) fn trace_exec_details_response(started_at: Instant, response: &dyn Any) {
     let Ok(handler) = EXECUTION_DETAILS_TRACE_HANDLER.try_with(ExecutionDetailsTraceHandler::clone)
     else {
         return;
     };
-    let Some(details) = exec_details_from_response(response) else {
+    let Some(details) = crate::store::exec_details_v2(response) else {
         return;
     };
     let Some(span) = build_execution_detail_span(details) else {
@@ -454,6 +418,9 @@ pub type TraceEventHandler =
     Arc<dyn Fn(&TraceContext, Category, &str, &[TraceField]) + Send + Sync>;
 pub type CategoryEnabledHandler = Arc<dyn Fn(Category) -> bool + Send + Sync>;
 pub type TraceControlExtractor = Arc<dyn Fn(&TraceContext) -> TraceControlFlags + Send + Sync>;
+/// Native counterpart of grpc-opentracing's global text-map injector.
+/// Implementations add the active trace carrier to outgoing gRPC metadata.
+pub type GrpcTraceMetadataInjector = Arc<dyn Fn(&mut tonic::metadata::MetadataMap) + Send + Sync>;
 
 fn no_op_event(_: &TraceContext, _: Category, _: &str, _: &[TraceField]) {}
 fn no_categories(_: Category) -> bool {
@@ -462,6 +429,7 @@ fn no_categories(_: Category) -> bool {
 fn default_trace_control(_: &TraceContext) -> TraceControlFlags {
     TraceControlFlags::TIKV_CATEGORY_REQUEST
 }
+fn no_op_grpc_trace_injector(_: &mut tonic::metadata::MetadataMap) {}
 
 lazy_static! {
     static ref TRACE_EVENT_HANDLER: RwLock<TraceEventHandler> = RwLock::new(Arc::new(no_op_event));
@@ -469,6 +437,12 @@ lazy_static! {
         RwLock::new(Arc::new(no_categories));
     static ref TRACE_CONTROL_EXTRACTOR: RwLock<TraceControlExtractor> =
         RwLock::new(Arc::new(default_trace_control));
+    static ref GRPC_TRACE_METADATA_INJECTOR: RwLock<GrpcTraceMetadataInjector> =
+        RwLock::new(Arc::new(no_op_grpc_trace_injector));
+}
+
+tokio::task_local! {
+    static GRPC_OPEN_TRACING_ENABLED: bool;
 }
 
 /// Replace the event handler; `None` restores the no-op implementation.
@@ -498,6 +472,40 @@ pub fn set_trace_control_extractor(extractor: Option<TraceControlExtractor>) {
         extractor.unwrap_or_else(|| Arc::new(default_trace_control));
 }
 
+/// Installs the process-wide carrier injector used when
+/// [`crate::Config::open_tracing_enable`] is true. `None` restores the no-op
+/// global tracer behavior.
+pub fn set_grpc_trace_metadata_injector(injector: Option<GrpcTraceMetadataInjector>) {
+    *GRPC_TRACE_METADATA_INJECTOR.write().unwrap() =
+        injector.unwrap_or_else(|| Arc::new(no_op_grpc_trace_injector));
+}
+
+pub(crate) async fn with_grpc_open_tracing<F>(enabled: bool, future: F) -> F::Output
+where
+    F: Future,
+{
+    GRPC_OPEN_TRACING_ENABLED.scope(enabled, future).await
+}
+
+pub(crate) fn inject_current_grpc_trace_metadata(metadata: &mut tonic::metadata::MetadataMap) {
+    if GRPC_OPEN_TRACING_ENABLED.try_with(|enabled| *enabled) != Ok(true) {
+        return;
+    }
+    let injector = GRPC_TRACE_METADATA_INJECTOR.read().unwrap().clone();
+    injector(metadata);
+}
+
+pub(crate) fn inject_grpc_trace_metadata(
+    metadata: &mut tonic::metadata::MetadataMap,
+    enabled: bool,
+) {
+    if !enabled {
+        return;
+    }
+    let injector = GRPC_TRACE_METADATA_INJECTOR.read().unwrap().clone();
+    injector(metadata);
+}
+
 pub fn trace_control_flags(context: &TraceContext) -> TraceControlFlags {
     let extractor = TRACE_CONTROL_EXTRACTOR.read().unwrap().clone();
     extractor(context)
@@ -517,6 +525,7 @@ mod tests {
         set_trace_event_handler(None);
         set_category_enabled_handler(None);
         set_trace_control_extractor(None);
+        set_grpc_trace_metadata_injector(None);
     }
 
     #[test]

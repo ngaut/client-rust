@@ -1017,6 +1017,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
                         .filter(|size| *size > 0),
                     config.tikv_client.grpc_connection_count as usize,
                 )
+                .with_open_tracing(config.open_tracing_enable)
                 .with_tikv_client_config(config.tikv_client.clone())
             },
             |security_mgr| RetryClient::connect(pd_endpoints, security_mgr, config.timeout),

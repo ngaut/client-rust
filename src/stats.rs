@@ -210,6 +210,82 @@ pub(crate) fn grpc_connection_state(connection_id: &str, store_ip: &str, state: 
         .get()
 }
 
+/// Records client-go's per-store request histogram, source-dimensional
+/// summary, and client-minus-server network latency observation. The Go
+/// summary has no configured quantiles, so the native histogram preserves
+/// its count/sum observations while also exposing buckets.
+pub(crate) fn observe_tikv_store_rpc(
+    request: &dyn crate::store::Request,
+    response: Option<&dyn std::any::Any>,
+    latency: Duration,
+) {
+    let context = request.tikv_context();
+    let store = context
+        .and_then(|context| context.peer.as_ref())
+        .map_or(0, |peer| peer.store_id)
+        .to_string();
+    let stale = context
+        .is_some_and(|context| context.stale_read)
+        .to_string();
+    let source = context.map_or("", |context| context.request_source.as_str());
+    let internal = source.starts_with("internal");
+    let scope = internal.to_string();
+    let command = crate::store::CommandType::from_request_label(request.label())
+        .map_or("Unknown", crate::store::CommandType::name);
+    let seconds = duration_to_sec(latency);
+
+    TIKV_SEND_REQUEST_DURATION
+        .with_label_values(&[command, &store, &stale, &scope])
+        .observe(seconds);
+    TIKV_SEND_REQUEST_BY_SOURCE
+        .with_label_values(&[command, &store, &stale, &scope, source])
+        .observe(seconds);
+
+    let Some(details) = response.and_then(crate::store::exec_details_v2) else {
+        return;
+    };
+    let total_rpc_wall_time_ns = details
+        .time_detail_v2
+        .as_ref()
+        .map(|time| time.total_rpc_wall_time_ns)
+        .or_else(|| {
+            details
+                .time_detail
+                .as_ref()
+                .map(|time| time.total_rpc_wall_time_ns)
+        })
+        .unwrap_or_default();
+    if total_rpc_wall_time_ns > 0 {
+        TIKV_RPC_NET_LATENCY
+            .with_label_values(&[&store, &scope])
+            .observe(seconds - total_rpc_wall_time_ns as f64 / 1_000_000_000.0);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn tikv_store_rpc_samples(
+    command: &str,
+    store: &str,
+    stale: &str,
+    scope: &str,
+    source: &str,
+) -> (u64, u64, u64, f64) {
+    (
+        TIKV_SEND_REQUEST_DURATION
+            .with_label_values(&[command, store, stale, scope])
+            .get_sample_count(),
+        TIKV_SEND_REQUEST_BY_SOURCE
+            .with_label_values(&[command, store, stale, scope, source])
+            .get_sample_count(),
+        TIKV_RPC_NET_LATENCY
+            .with_label_values(&[store, scope])
+            .get_sample_count(),
+        TIKV_RPC_NET_LATENCY
+            .with_label_values(&[store, scope])
+            .get_sample_sum(),
+    )
+}
+
 /// Source `TiKVLockResolverCounter`. The caller supplies the source shortcut
 /// label (for example `read_async_resolve_fallback`).
 pub(crate) fn increment_lock_resolver_action(action: &'static str) {
@@ -580,6 +656,30 @@ lazy_static::lazy_static! {
         &["connection_id", "store_ip", "grpc_state"]
     )
     .unwrap();
+    static ref TIKV_SEND_REQUEST_DURATION: HistogramVec = register_histogram_vec!(
+        HistogramOpts::new(
+            "tikv_client_go_request_seconds",
+            "Bucketed histogram of sending request duration."
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 24).unwrap()),
+        &["type", "store", "stale_read", "scope"]
+    )
+    .unwrap();
+    static ref TIKV_SEND_REQUEST_BY_SOURCE: HistogramVec = register_histogram_vec!(
+        "tikv_client_go_source_request_seconds",
+        "Summary-compatible sending request observations with source dimensions.",
+        &["type", "store", "stale_read", "scope", "source"]
+    )
+    .unwrap();
+    static ref TIKV_RPC_NET_LATENCY: HistogramVec = register_histogram_vec!(
+        HistogramOpts::new(
+            "tikv_client_go_rpc_net_latency_seconds",
+            "Bucketed histogram of time difference between TiDB and TiKV."
+        )
+        .buckets(prometheus::exponential_buckets(0.0001, 2.0, 20).unwrap()),
+        &["store", "scope"]
+    )
+    .unwrap();
     static ref TIKV_LOCK_RESOLVER_ACTIONS: IntCounterVec = register_int_counter_vec!(
         "tikv_client_go_lock_resolver_actions_total",
         "Counter of lock resolver actions.",
@@ -671,4 +771,57 @@ fn duration_to_sec(d: Duration) -> f64 {
     let nanos = f64::from(d.subsec_nanos());
     // In most cases, we can't have so large Duration, so here just panic if overflow now.
     d.as_secs() as f64 + (nanos / 1_000_000_000.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::{kvrpcpb, metapb};
+
+    #[test]
+    fn source_store_rpc_metrics_preserve_dimensions_and_net_latency() {
+        let source = "internal_metrics_transport_unique";
+        let request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                peer: Some(metapb::Peer {
+                    store_id: 987_654,
+                    ..Default::default()
+                }),
+                stale_read: true,
+                request_source: source.to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let response = kvrpcpb::GetResponse {
+            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                    total_rpc_wall_time_ns: 1_000_000,
+                    ..Default::default()
+                }),
+                // V2 has source precedence over this legacy value.
+                time_detail: Some(kvrpcpb::TimeDetail {
+                    total_rpc_wall_time_ns: 2_000_000,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let before = tikv_store_rpc_samples("Get", "987654", "true", "true", source);
+
+        observe_tikv_store_rpc(&request, Some(&response), Duration::from_millis(4));
+        let after_success = tikv_store_rpc_samples("Get", "987654", "true", "true", source);
+        assert_eq!(after_success.0, before.0 + 1);
+        assert_eq!(after_success.1, before.1 + 1);
+        assert_eq!(after_success.2, before.2 + 1);
+        assert!((after_success.3 - before.3 - 0.003).abs() < 1e-12);
+
+        observe_tikv_store_rpc(&request, None, Duration::from_millis(2));
+        let after_failure = tikv_store_rpc_samples("Get", "987654", "true", "true", source);
+        assert_eq!(after_failure.0, after_success.0 + 1);
+        assert_eq!(after_failure.1, after_success.1 + 1);
+        assert_eq!(after_failure.2, after_success.2);
+        assert_eq!(after_failure.3, after_success.3);
+    }
 }

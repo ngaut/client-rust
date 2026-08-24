@@ -155,6 +155,7 @@ pub struct TikvConnect {
     grpc_initial_connection_window_size: Option<u32>,
     grpc_connection_count: usize,
     batch_config: crate::config::TiKvClient,
+    open_tracing_enable: bool,
 }
 
 impl TikvConnect {
@@ -202,6 +203,7 @@ impl TikvConnect {
             grpc_initial_connection_window_size,
             grpc_connection_count,
             batch_config: crate::config::TiKvClient::default(),
+            open_tracing_enable: false,
         }
     }
 
@@ -211,6 +213,12 @@ impl TikvConnect {
     /// whole because its collection policy has several coupled fields.
     pub fn with_tikv_client_config(mut self, config: crate::config::TiKvClient) -> Self {
         self.batch_config = config;
+        self
+    }
+
+    /// Enables source-compatible process-wide gRPC trace-carrier injection.
+    pub fn with_open_tracing(mut self, enabled: bool) -> Self {
+        self.open_tracing_enable = enabled;
         self
     }
 }
@@ -252,6 +260,7 @@ impl KvConnect for TikvConnect {
         // requests retain the unary path below.
         Ok(
             KvRpcClient::new_with_debug_clients(clients, debug_clients, self.timeout)
+                .with_open_tracing(self.open_tracing_enable)
                 .with_batch_worker(&self.batch_config),
         )
     }
@@ -260,6 +269,7 @@ impl KvConnect for TikvConnect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::sync::atomic::AtomicUsize;
 
     #[test]
@@ -309,6 +319,49 @@ mod tests {
         );
         assert_eq!(defaults.grpc_initial_stream_window_size, None);
         assert_eq!(defaults.grpc_initial_connection_window_size, None);
+        assert!(!defaults.open_tracing_enable);
+        assert!(defaults.with_open_tracing(true).open_tracing_enable);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn source_open_tracing_config_injects_unary_and_stream_grpc_metadata() {
+        crate::trace::set_grpc_trace_metadata_injector(Some(Arc::new(|metadata| {
+            metadata.insert("x-source-trace", MetadataValue::from_static("active"));
+        })));
+        let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
+            .await
+            .unwrap();
+        let address = server.addr().unwrap();
+        server.set_metadata_checker(Some(Arc::new(|metadata| {
+            (metadata.get("x-source-trace") == Some(&MetadataValue::from_static("active")))
+                .then_some(())
+                .ok_or_else(|| tonic::Status::permission_denied("missing trace carrier"))
+        })));
+        let channel = Channel::from_shared(format!("http://{address}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let client = KvRpcClient::new(vec![TikvClient::new(channel)], Duration::from_secs(1))
+            .with_open_tracing(true);
+
+        client
+            .dispatch(&crate::proto::kvrpcpb::PrewriteRequest::default())
+            .await
+            .unwrap();
+        let stream = client
+            .open_batch_commands(
+                "",
+                futures::stream::pending::<crate::proto::tikvpb::BatchCommandsRequest>(),
+            )
+            .await
+            .unwrap();
+        drop(stream);
+
+        client.close();
+        server.stop().await.unwrap();
+        crate::trace::set_grpc_trace_metadata_injector(None);
     }
 
     #[tokio::test]
@@ -395,13 +448,23 @@ mod tests {
             "store-stream".to_owned(),
             1,
         );
+        let source = "internal_cop_stream_transport_unique";
+        let request =
+            crate::store::CoprocessorStreamRequest::new(crate::proto::coprocessor::Request {
+                context: Some(crate::proto::kvrpcpb::Context {
+                    peer: Some(crate::proto::metapb::Peer {
+                        store_id: 765_432,
+                        ..Default::default()
+                    }),
+                    request_source: source.to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+        let metrics_before =
+            crate::stats::tikv_store_rpc_samples("CopStream", "765432", "false", "true", source);
         let response = client
-            .dispatch_with_forwarded_host(
-                &crate::store::CoprocessorStreamRequest::new(
-                    crate::proto::coprocessor::Request::default(),
-                ),
-                "store-2",
-            )
+            .dispatch_with_forwarded_host(&request, "store-2")
             .await
             .unwrap();
         let mut response = response
@@ -413,6 +476,11 @@ mod tests {
         );
         assert_eq!(response.message().await.unwrap(), None);
         response.close();
+        let metrics_after =
+            crate::stats::tikv_store_rpc_samples("CopStream", "765432", "false", "true", source);
+        assert_eq!(metrics_after.0, metrics_before.0 + 1);
+        assert_eq!(metrics_after.1, metrics_before.1 + 1);
+        assert_eq!(metrics_after.2, metrics_before.2);
         assert_eq!(
             crate::stats::grpc_connection_state("store-stream-0", "store-stream", "READY"),
             1.0
@@ -894,6 +962,7 @@ pub struct KvRpcClient {
     batch_worker: Option<Arc<BatchCommandsWorker>>,
     event_listener: Arc<RwLock<Option<Arc<dyn ClientEventListener>>>>,
     connection: Arc<RwLock<Option<Arc<ConnectionInfo>>>>,
+    open_tracing_enable: bool,
 }
 
 struct ConnectionInfo {
@@ -966,6 +1035,7 @@ impl KvRpcClient {
             batch_worker: None,
             event_listener: Arc::new(RwLock::new(None)),
             connection: Arc::new(RwLock::new(None)),
+            open_tracing_enable: false,
         }
     }
 
@@ -994,6 +1064,11 @@ impl KvRpcClient {
             let dispatcher = Arc::new(dispatcher);
             self.batch_worker = Some(Arc::new(dispatcher.spawn_worker(config)));
         }
+        self
+    }
+
+    fn with_open_tracing(mut self, enabled: bool) -> Self {
+        self.open_tracing_enable = enabled;
         self
     }
 
@@ -1074,13 +1149,11 @@ impl KvRpcClient {
             "batch connection index must belong to this pool"
         );
         self.set_connection_state(connection_index, GrpcConnectionState::Connecting);
+        let mut request = Self::batch_commands_request(requests, forwarded_host, connection_index)?;
+        crate::trace::inject_grpc_trace_metadata(request.metadata_mut(), self.open_tracing_enable);
         let result = self.rpc_clients[connection_index]
             .clone()
-            .batch_commands(Self::batch_commands_request(
-                requests,
-                forwarded_host,
-                connection_index,
-            )?)
+            .batch_commands(request)
             .await
             .map(|response| response.into_inner())
             .map_err(crate::Error::from);
@@ -1212,16 +1285,28 @@ impl KvRpcClient {
         {
             let index = self.next_client_index();
             let Some(debug_clients) = self.debug_clients.as_ref() else {
-                return request
-                    .dispatch(&self.rpc_clients[index], timeout.unwrap_or(self.timeout))
-                    .await;
+                let result = crate::trace::with_grpc_open_tracing(
+                    self.open_tracing_enable,
+                    request.dispatch(&self.rpc_clients[index], timeout.unwrap_or(self.timeout)),
+                )
+                .await;
+                crate::stats::observe_tikv_store_rpc(
+                    request,
+                    result.as_ref().ok().map(|response| response.as_ref()),
+                    started_at.elapsed(),
+                );
+                return result;
             };
             self.set_connection_state(index, GrpcConnectionState::Connecting);
-            let mut request = request.clone().into_request();
-            request.set_timeout(timeout.unwrap_or(self.timeout));
+            let mut wire_request = request.clone().into_request();
+            wire_request.set_timeout(timeout.unwrap_or(self.timeout));
+            crate::trace::inject_grpc_trace_metadata(
+                wire_request.metadata_mut(),
+                self.open_tracing_enable,
+            );
             let result = debug_clients[index]
                 .clone()
-                .get_region_properties(request)
+                .get_region_properties(wire_request)
                 .await
                 .map(|response| Box::new(response.into_inner()) as Box<dyn Any>)
                 .map_err(Error::from)
@@ -1234,6 +1319,11 @@ impl KvRpcClient {
                     GrpcConnectionState::TransientFailure
                 },
             );
+            crate::stats::observe_tikv_store_rpc(
+                request,
+                result.as_ref().ok().map(|response| response.as_ref()),
+                started_at.elapsed(),
+            );
             return result;
         }
         if let (Some(worker), Some(batch_request)) = (
@@ -1244,32 +1334,48 @@ impl KvRpcClient {
                 .submit(batch_request, request.batch_priority(), forwarded_host)
                 .await;
             let timeout = timeout.unwrap_or(self.timeout);
-            let response = tokio::time::timeout(timeout, submission.recv())
-                .await
-                .map_err(|_| {
-                    crate::Error::GrpcAPI(tonic::Status::deadline_exceeded(
-                        "batch request deadline exceeded",
-                    ))
-                })?
-                .map_err(|_| {
-                    crate::Error::StringError(
-                        "BatchCommands worker stopped before responding".to_owned(),
-                    )
-                })?
-                .map_err(|error| self.wrap_connection_error(error))?;
-            let mut response = BatchCommandResponse::into_any(response);
-            crate::trace::trace_exec_details_response(started_at, response.as_ref());
-            request.decode_transport_response(response.as_mut())?;
-            return Ok(response);
+            let response = match tokio::time::timeout(timeout, submission.recv()).await {
+                Err(_) => Err(crate::Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                    "batch request deadline exceeded",
+                ))),
+                Ok(Err(_)) => Err(crate::Error::StringError(
+                    "BatchCommands worker stopped before responding".to_owned(),
+                )),
+                Ok(Ok(result)) => result.map_err(|error| self.wrap_connection_error(error)),
+            };
+            return match response {
+                Ok(response) => {
+                    let mut response = BatchCommandResponse::into_any(response);
+                    crate::stats::observe_tikv_store_rpc(
+                        request,
+                        Some(response.as_ref()),
+                        started_at.elapsed(),
+                    );
+                    crate::trace::trace_exec_details_response(started_at, response.as_ref());
+                    request.decode_transport_response(response.as_mut())?;
+                    Ok(response)
+                }
+                Err(error) => {
+                    crate::stats::observe_tikv_store_rpc(request, None, started_at.elapsed());
+                    Err(error)
+                }
+            };
         }
         let index = self.next_client_index();
         let timeout = timeout.unwrap_or(self.timeout);
         self.set_connection_state(index, GrpcConnectionState::Connecting);
-        let mut result = request
-            .dispatch_with_forwarded_host(&self.rpc_clients[index], timeout, forwarded_host)
-            .await
-            .map_err(|error| self.wrap_connection_error(error));
+        let mut result = crate::trace::with_grpc_open_tracing(
+            self.open_tracing_enable,
+            request.dispatch_with_forwarded_host(&self.rpc_clients[index], timeout, forwarded_host),
+        )
+        .await
+        .map_err(|error| self.wrap_connection_error(error));
         let transport_succeeded = result.is_ok();
+        crate::stats::observe_tikv_store_rpc(
+            request,
+            result.as_ref().ok().map(|response| response.as_ref()),
+            started_at.elapsed(),
+        );
         if let Ok(response) = &mut result {
             crate::trace::trace_exec_details_response(started_at, response.as_ref());
             if let Err(error) = request.decode_transport_response(response.as_mut()) {

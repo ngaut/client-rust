@@ -341,10 +341,48 @@ pub(crate) fn exec_details_v2_mut(response: &mut dyn Any) -> Option<&mut kvrpcpb
     None
 }
 
+/// Immutable companion used by source transport latency accounting.
+pub(crate) fn exec_details_v2(response: &dyn Any) -> Option<&kvrpcpb::ExecDetailsV2> {
+    macro_rules! detail_response {
+        ($($response:ty),+ $(,)?) => {
+            $(
+                if let Some(response) = response.downcast_ref::<$response>() {
+                    return response.exec_details_v2.as_ref();
+                }
+            )+
+        };
+    }
+    detail_response!(
+        kvrpcpb::GetResponse,
+        kvrpcpb::PrewriteResponse,
+        kvrpcpb::PessimisticLockResponse,
+        kvrpcpb::PessimisticRollbackResponse,
+        kvrpcpb::TxnHeartBeatResponse,
+        kvrpcpb::CheckTxnStatusResponse,
+        kvrpcpb::CheckSecondaryLocksResponse,
+        kvrpcpb::CommitResponse,
+        kvrpcpb::BatchGetResponse,
+        kvrpcpb::BatchRollbackResponse,
+        kvrpcpb::ScanLockResponse,
+        kvrpcpb::ResolveLockResponse,
+        kvrpcpb::FlushResponse,
+        kvrpcpb::BufferBatchGetResponse,
+        coprocessor::Response,
+    );
+    if let Some(response) = response.downcast_ref::<CoprocessorStreamResponse>() {
+        return response
+            .first
+            .as_ref()
+            .and_then(|response| response.exec_details_v2.as_ref());
+    }
+    None
+}
+
 fn with_forwarded_host<T>(
     mut request: tonic::Request<T>,
     forwarded_host: &str,
 ) -> Result<tonic::Request<T>> {
+    crate::trace::inject_current_grpc_trace_metadata(request.metadata_mut());
     if !forwarded_host.is_empty() {
         request.metadata_mut().insert(
             "tikv-forwarded-host",
@@ -365,7 +403,7 @@ macro_rules! impl_request {
                 client: &TikvClient<Channel>,
                 timeout: Duration,
             ) -> Result<Box<dyn Any>> {
-                let mut req = self.clone().into_request();
+                let mut req = with_forwarded_host(self.clone().into_request(), "")?;
                 req.set_timeout(timeout);
                 client
                     .clone()
@@ -577,7 +615,7 @@ macro_rules! impl_store_request {
                 client: &TikvClient<Channel>,
                 timeout: Duration,
             ) -> Result<Box<dyn Any>> {
-                let mut request = self.clone().into_request();
+                let mut request = with_forwarded_host(self.clone().into_request(), "")?;
                 request.set_timeout(timeout);
                 client
                     .clone()
@@ -797,7 +835,7 @@ impl Request for kvrpcpb::CompactRequest {
         client: &TikvClient<Channel>,
         timeout: Duration,
     ) -> Result<Box<dyn Any>> {
-        let mut request = self.clone().into_request();
+        let mut request = with_forwarded_host(self.clone().into_request(), "")?;
         request.set_timeout(timeout);
         client
             .clone()
@@ -853,7 +891,7 @@ impl Request for kvrpcpb::StoreSafeTsRequest {
         client: &TikvClient<Channel>,
         timeout: Duration,
     ) -> Result<Box<dyn Any>> {
-        let mut request = self.clone().into_request();
+        let mut request = with_forwarded_host(self.clone().into_request(), "")?;
         request.set_timeout(timeout);
         client
             .clone()
@@ -901,7 +939,7 @@ impl Request for coprocessor::Request {
         client: &TikvClient<Channel>,
         timeout: Duration,
     ) -> Result<Box<dyn Any>> {
-        let mut request = self.clone().into_request();
+        let mut request = with_forwarded_host(self.clone().into_request(), "")?;
         request.set_timeout(timeout);
         client
             .clone()
@@ -1274,7 +1312,7 @@ impl Request for mpp::DispatchTaskRequest {
         client: &TikvClient<Channel>,
         timeout: Duration,
     ) -> Result<Box<dyn Any>> {
-        let mut request = self.clone().into_request();
+        let mut request = with_forwarded_host(self.clone().into_request(), "")?;
         request.set_timeout(timeout);
         client
             .clone()
