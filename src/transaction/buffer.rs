@@ -62,11 +62,28 @@ impl Buffer {
         F: FnOnce(Key) -> Fut,
         Fut: Future<Output = Result<Option<Value>>>,
     {
+        self.get_or_else_with_cache(key, true, f).await
+    }
+
+    /// Get a value from the buffer, optionally retaining a fetched read in
+    /// the local cache.
+    pub async fn get_or_else_with_cache<F, Fut>(
+        &mut self,
+        key: Key,
+        cache_result: bool,
+        f: F,
+    ) -> Result<Option<Value>>
+    where
+        F: FnOnce(Key) -> Fut,
+        Fut: Future<Output = Result<Option<Value>>>,
+    {
         match self.get_from_mutations(&key) {
             MutationValue::Determined(value) => Ok(value),
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
-                self.update_cache(key, value.clone());
+                if cache_result {
+                    self.update_cache(key, value.clone());
+                }
                 Ok(value)
             }
         }
@@ -79,6 +96,21 @@ impl Buffer {
     pub async fn batch_get_or_else<F, Fut>(
         &mut self,
         keys: impl Iterator<Item = Key>,
+        f: F,
+    ) -> Result<impl Iterator<Item = KvPair>>
+    where
+        F: FnOnce(Box<dyn Iterator<Item = Key> + Send>) -> Fut,
+        Fut: Future<Output = Result<Vec<KvPair>>>,
+    {
+        self.batch_get_or_else_with_cache(keys, true, f).await
+    }
+
+    /// Get multiple values from the buffer, optionally retaining fetched
+    /// values and misses in the local cache.
+    pub async fn batch_get_or_else_with_cache<F, Fut>(
+        &mut self,
+        keys: impl Iterator<Item = Key>,
+        cache_results: bool,
         f: F,
     ) -> Result<impl Iterator<Item = KvPair>>
     where
@@ -103,15 +135,20 @@ impl Buffer {
                 .into_iter()
                 .filter_map(|(k, v)| v.unwrap().map(|v| KvPair(k, v)));
 
-            let undetermined_keys = undetermined_keys.into_iter().map(|(k, _)| k);
+            let undetermined_keys: Vec<Key> =
+                undetermined_keys.into_iter().map(|(k, _)| k).collect();
             (cached_results, undetermined_keys)
         };
 
-        let fetched_results = f(Box::new(undetermined_keys)).await?;
-        for kvpair in &fetched_results {
-            let key = kvpair.0.clone();
-            let value = Some(kvpair.1.clone());
-            self.update_cache(key, value);
+        let fetched_results = f(Box::new(undetermined_keys.clone().into_iter())).await?;
+        if cache_results {
+            let fetched_by_key: HashMap<_, _> = fetched_results
+                .iter()
+                .map(|pair| (pair.0.clone(), pair.1.clone()))
+                .collect();
+            for key in undetermined_keys {
+                self.update_cache(key.clone(), fetched_by_key.get(&key).cloned());
+            }
         }
 
         let results = cached_results.chain(fetched_results);
