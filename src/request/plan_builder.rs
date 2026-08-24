@@ -275,6 +275,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         backoff: Backoff,
         keyspace: Keyspace,
         read_lock_context: ReadLockContext,
+        mut resolve_locks_context: ResolveLocksContext,
     ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
         P: Shardable,
@@ -293,12 +294,13 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 resource_group_name: self.resource_group_name.clone(),
                 resource_control: self.resource_control.clone(),
                 ru_details: self.ru_details.clone(),
-                resolve_locks_context: ResolveLocksContext::with_request_options(
-                    self.rpc_interceptor.clone(),
-                    self.resource_group_name.clone(),
-                    self.resource_control.clone(),
-                    self.ru_details.clone(),
-                ),
+                resolve_locks_context: {
+                    resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
+                    resolve_locks_context.resource_group_name = self.resource_group_name.clone();
+                    resolve_locks_context.resource_control = self.resource_control.clone();
+                    resolve_locks_context.ru_details = self.ru_details.clone();
+                    resolve_locks_context
+                },
                 read_lock_context: Some(read_lock_context),
             },
             keyspace_name: self.keyspace_name,

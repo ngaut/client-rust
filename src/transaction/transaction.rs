@@ -42,6 +42,7 @@ use crate::transaction::latch::LatchesScheduler;
 use crate::transaction::lock::format_key_for_log;
 use crate::transaction::lowering::*;
 use crate::transaction::ReadLockContext;
+use crate::transaction::ResolveLocksContext;
 use crate::BoundRange;
 use crate::Error;
 use crate::Key;
@@ -111,6 +112,8 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// client-go keeps resolved/committed transaction IDs on each snapshot;
     /// they must not leak across transactions with different read timestamps.
     read_lock_context: ReadLockContext,
+    /// Shared client-side final-status and resolving-lock observer state.
+    lock_resolver_context: ResolveLocksContext,
     is_heartbeat_started: bool,
     /// Set once the transaction enters the commit path (`StartedCommit`), where
     /// prewrite may place 2PC locks. Kept as a dedicated flag because the status
@@ -171,6 +174,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
             read_lock_context: ReadLockContext::default(),
+            lock_resolver_context: ResolveLocksContext::default(),
             is_heartbeat_started: false,
             prewritten: false,
             start_instant: std::time::Instant::now(),
@@ -190,6 +194,10 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub(crate) fn set_replica_read_config(&mut self, config: ReplicaReadConfig) {
         self.replica_read_config = config;
+    }
+
+    pub(crate) fn set_lock_resolver_context(&mut self, context: ResolveLocksContext) {
+        self.lock_resolver_context = context;
     }
 
     pub(crate) fn set_stale_read(&mut self, stale_read: bool) {
@@ -295,6 +303,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let priority = self.options.priority;
         let replica_read_config = self.replica_read_config_for_items(1);
         let read_lock_context = self.read_lock_context.clone();
+        let lock_resolver_context = self.lock_resolver_context.clone();
 
         self.buffer
             .get_or_else(key, |key| async move {
@@ -316,6 +325,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     retry_options.lock_backoff,
                     keyspace,
                     read_lock_context,
+                    lock_resolver_context,
                 )
                 .retry_multi_region(DEFAULT_REGION_BACKOFF)
                 .merge(CollectSingle)
@@ -455,6 +465,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let replica_read_config = self.replica_read_config.clone();
         let replica_read_adjuster = self.replica_read_adjuster.clone();
         let read_lock_context = self.read_lock_context.clone();
+        let lock_resolver_context = self.lock_resolver_context.clone();
 
         self.buffer
             .batch_get_or_else(keys, move |keys| async move {
@@ -482,6 +493,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     retry_options.lock_backoff,
                     keyspace,
                     read_lock_context,
+                    lock_resolver_context,
                 )
                 .retry_multi_region(retry_options.region_backoff)
                 .merge(Collect)
@@ -1065,6 +1077,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let priority = self.options.priority;
         let replica_read_config = self.replica_read_config.clone();
         let read_lock_context = self.read_lock_context.clone();
+        let lock_resolver_context = self.lock_resolver_context.clone();
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
 
         self.buffer
@@ -1098,6 +1111,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         retry_options.lock_backoff,
                         keyspace,
                         read_lock_context,
+                        lock_resolver_context,
                     )
                     .retry_multi_region(retry_options.region_backoff)
                     .merge(Collect)
@@ -2101,7 +2115,9 @@ impl From<u8> for TransactionStatus {
 #[cfg(test)]
 mod tests {
     use super::TransactionStatus;
+    use crate::transaction::ResolveLocksContext;
     use std::any::Any;
+    use std::collections::HashMap;
     use std::io;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
@@ -2368,6 +2384,9 @@ mod tests {
                         ..Default::default()
                     }) as Box<dyn Any>);
                 }
+                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
                 panic!("unexpected request while resolving a transactional read lock");
             },
         )));
@@ -2380,6 +2399,67 @@ mod tests {
 
         assert_eq!(txn.get("read".to_owned()).await.unwrap(), Some(Vec::new()));
         assert_eq!(get_attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn transactional_reads_share_the_client_lock_resolver_status_cache() {
+        let get_attempts = Arc::new(Mutex::new(HashMap::<Vec<u8>, usize>::new()));
+        let get_attempts_by_hook = Arc::clone(&get_attempts);
+        let status_checks = Arc::new(AtomicUsize::new(0));
+        let status_checks_by_hook = Arc::clone(&status_checks);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if let Some(req) = req.downcast_ref::<kvrpcpb::GetRequest>() {
+                    let first_attempt = {
+                        let mut attempts = get_attempts_by_hook.lock().unwrap();
+                        let attempt = attempts.entry(req.key.clone()).or_insert(0);
+                        *attempt += 1;
+                        *attempt == 1
+                    };
+                    if first_attempt {
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: req.key.clone(),
+                                    primary_lock: b"primary".to_vec(),
+                                    lock_version: 1,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    return Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    status_checks_by_hook.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if req.is::<kvrpcpb::ResolveLockRequest>() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request while testing resolver status sharing");
+            },
+        )));
+        let shared_context = ResolveLocksContext::default();
+        let mut txn = Transaction::new(
+            Timestamp::from_version(3),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        txn.set_lock_resolver_context(shared_context);
+
+        assert_eq!(txn.get("first".to_owned()).await.unwrap(), Some(Vec::new()));
+        assert_eq!(
+            txn.get("second".to_owned()).await.unwrap(),
+            Some(Vec::new())
+        );
+        assert_eq!(status_checks.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

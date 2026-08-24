@@ -488,14 +488,16 @@ impl Client {
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
-        Transaction::new_with_latches_and_keyspace_name(
+        let mut transaction = Transaction::new_with_latches_and_keyspace_name(
             timestamp,
             self.pd.clone(),
             options,
             self.keyspace,
             self.keyspace_name.clone(),
             self.latches.clone(),
-        )
+        );
+        transaction.set_lock_resolver_context(self.lock_resolver_context.clone());
+        transaction
     }
 
     fn plan<Req: KvRequest>(
