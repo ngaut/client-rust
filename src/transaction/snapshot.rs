@@ -113,6 +113,13 @@ impl Snapshot {
         self.transaction.set_snapshot_key_only(key_only);
     }
 
+    /// Set the maximum number of pairs requested by each TiKV scan RPC.
+    /// Values zero and one use client-go's default batch size of 256.
+    /// The `limit` passed to [`Self::scan`] remains the total result limit.
+    pub fn set_scan_batch_size(&mut self, batch_size: u32) {
+        self.transaction.set_snapshot_scan_batch_size(batch_size);
+    }
+
     /// Allow reads to proceed through locks flushed by this pipelined
     /// transaction, matching client-go `KVSnapshot.SetPipelined`.
     pub fn set_pipelined(&mut self, timestamp: u64) {

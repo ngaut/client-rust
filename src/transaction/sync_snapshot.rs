@@ -36,6 +36,11 @@ impl SyncSnapshot {
         self.inner.set_key_only(key_only);
     }
 
+    /// Set the maximum number of pairs requested by each TiKV scan RPC.
+    pub fn set_scan_batch_size(&mut self, batch_size: u32) {
+        self.inner.set_scan_batch_size(batch_size);
+    }
+
     /// Allow reads to proceed through locks flushed by this pipelined transaction.
     pub fn set_pipelined(&mut self, timestamp: u64) {
         self.inner.set_pipelined(timestamp);
