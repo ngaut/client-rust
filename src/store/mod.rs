@@ -12,6 +12,7 @@ mod request;
 
 use std::cmp::max;
 use std::cmp::min;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 use futures::prelude::*;
@@ -80,6 +81,7 @@ pub struct RegionStore {
     pub(crate) resource_control_replica_number: i64,
     /// Source resource-control traffic zone for selector-owned TiKV routes.
     pub(crate) resource_control_access_location: AccessLocationType,
+    pub(crate) store_token_count: Arc<AtomicI64>,
 }
 
 impl RegionStore {
@@ -104,6 +106,7 @@ impl RegionStore {
             record_client_side_slow_score: false,
             resource_control_replica_number,
             resource_control_access_location: AccessLocationType::Unknown,
+            store_token_count: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -176,6 +179,11 @@ impl RegionStore {
         self
     }
 
+    pub(crate) fn with_store_token_count(mut self, store_token_count: Arc<AtomicI64>) -> Self {
+        self.store_token_count = store_token_count;
+        self
+    }
+
     /// Returns the region metadata with the selected logical peer installed
     /// as its request-context leader. `Request::set_leader` historically uses
     /// this shape, so this preserves its API while permitting replica reads.
@@ -205,6 +213,34 @@ impl RegionStore {
         let target = self.target_peer.as_ref()?;
         let leader = self.region_with_leader.leader.as_ref()?;
         (self.force_leader_read && target.id != leader.id).then(|| target.clone())
+    }
+}
+
+pub(crate) struct StoreToken {
+    count: Arc<AtomicI64>,
+}
+
+impl StoreToken {
+    pub(crate) fn acquire(count: Arc<AtomicI64>, store_id: StoreId, limit: i64) -> Result<Self> {
+        let current = count.load(Ordering::Relaxed);
+        if current >= limit {
+            return Err(crate::Error::TokenLimit(crate::error::TokenLimitError {
+                store_id,
+            }));
+        }
+        count.fetch_add(1, Ordering::Relaxed);
+        Ok(Self { count })
+    }
+}
+
+impl Drop for StoreToken {
+    fn drop(&mut self) {
+        let current = self.count.load(Ordering::Relaxed);
+        if current > 0 {
+            self.count.fetch_sub(1, Ordering::Relaxed);
+        } else {
+            log::warn!("source store-token release observed a zero count");
+        }
     }
 }
 
@@ -437,5 +473,19 @@ mod tests {
                 .resource_control_access_location,
             AccessLocationType::Unknown
         );
+    }
+
+    #[test]
+    fn source_store_token_limit_rejects_and_releases() {
+        let count = Arc::new(AtomicI64::new(0));
+        let token = StoreToken::acquire(count.clone(), 42, 1).unwrap();
+        assert_eq!(count.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            StoreToken::acquire(count.clone(), 42, 1),
+            Err(crate::Error::TokenLimit(error)) if error.store_id == 42
+        ));
+
+        drop(token);
+        assert_eq!(count.load(Ordering::Relaxed), 0);
     }
 }

@@ -80,6 +80,8 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 record_client_side_slow_score: false,
                 resource_control_replica_number: 1,
                 resource_control_access_location: crate::kv::AccessLocationType::Unknown,
+                store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+                store_token_store_id: 0,
                 interceptor: None,
                 resource_control: None,
                 response_codec,

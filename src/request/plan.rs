@@ -1,6 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::marker::PhantomData;
+use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -84,6 +85,8 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) record_client_side_slow_score: bool,
     pub(crate) resource_control_replica_number: i64,
     pub(crate) resource_control_access_location: AccessLocationType,
+    pub(crate) store_token_count: Arc<AtomicI64>,
+    pub(crate) store_token_store_id: StoreId,
     /// Optional transaction-level decorator for this physical RPC.
     pub interceptor: Option<RpcInterceptorChain>,
     /// Optional client-go-compatible resource-group controller applied before
@@ -98,6 +101,16 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
+        let store_token_limit = crate::kv::STORE_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
+        let _store_token = (store_token_limit > 0)
+            .then(|| {
+                crate::store::StoreToken::acquire(
+                    self.store_token_count.clone(),
+                    self.store_token_store_id,
+                    store_token_limit,
+                )
+            })
+            .transpose()?;
         let mut request = self.request.clone();
         let resource_control = self
             .resource_control
