@@ -120,6 +120,7 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     not_fill_cache: bool,
     isolation_level: kvrpcpb::IsolationLevel,
     task_id: u64,
+    resource_group_tag: Option<Vec<u8>>,
     snapshot_read_timeout: Option<Duration>,
     /// client-go keeps resolved/committed transaction IDs on each snapshot;
     /// they must not leak across transactions with different read timestamps.
@@ -190,6 +191,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             not_fill_cache: false,
             isolation_level: kvrpcpb::IsolationLevel::Si,
             task_id: 0,
+            resource_group_tag: None,
             snapshot_read_timeout: None,
             read_lock_context: ReadLockContext::default(),
             lock_resolver_context: ResolveLocksContext::default(),
@@ -273,6 +275,10 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub(crate) fn set_task_id(&mut self, task_id: u64) {
         self.task_id = task_id;
+    }
+
+    pub(crate) fn set_resource_group_tag(&mut self, resource_group_tag: Option<Vec<u8>>) {
+        self.resource_group_tag = resource_group_tag;
     }
 
     pub(crate) fn set_snapshot_read_timeout(&mut self, timeout: Duration) {
@@ -368,6 +374,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let not_fill_cache = self.not_fill_cache;
         let isolation_level = self.isolation_level;
         let task_id = self.task_id;
+        let resource_group_tag = self.resource_group_tag.clone();
         let snapshot_read_timeout = self.snapshot_read_timeout;
         let replica_read_config = self.replica_read_config_for_items(1);
         let read_lock_context = self.read_lock_context.clone();
@@ -391,6 +398,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .not_fill_cache(not_fill_cache)
                 .isolation_level(isolation_level)
                 .task_id(task_id)
+                .resource_group_tag(resource_group_tag)
                 .snapshot_read_timeout(snapshot_read_timeout)
                 .resolve_lock_for_read(
                     timestamp,
@@ -537,6 +545,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let not_fill_cache = self.not_fill_cache;
         let isolation_level = self.isolation_level;
         let task_id = self.task_id;
+        let resource_group_tag = self.resource_group_tag.clone();
         let snapshot_read_timeout = self.snapshot_read_timeout;
         let replica_read_config = self.replica_read_config.clone();
         let replica_read_adjuster = self.replica_read_adjuster.clone();
@@ -567,6 +576,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .not_fill_cache(not_fill_cache)
                 .isolation_level(isolation_level)
                 .task_id(task_id)
+                .resource_group_tag(resource_group_tag)
                 .snapshot_read_timeout(snapshot_read_timeout)
                 .resolve_lock_for_read(
                     timestamp,
@@ -1163,6 +1173,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let not_fill_cache = self.not_fill_cache;
         let isolation_level = self.isolation_level;
         let task_id = self.task_id;
+        let resource_group_tag = self.resource_group_tag.clone();
         let snapshot_read_timeout = self.snapshot_read_timeout;
         let replica_read_config = self.replica_read_config.clone();
         let read_lock_context = self.read_lock_context.clone();
@@ -1199,6 +1210,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .not_fill_cache(not_fill_cache)
                     .isolation_level(isolation_level)
                     .task_id(task_id)
+                    .resource_group_tag(resource_group_tag)
                     .snapshot_read_timeout(snapshot_read_timeout)
                     .resolve_lock_for_read(
                         timestamp,
@@ -2444,6 +2456,7 @@ mod tests {
                 assert_eq!(context.isolation_level, kvrpcpb::IsolationLevel::Rc as i32);
                 assert_eq!(context.task_id, 42);
                 assert_eq!(context.max_execution_duration_ms, 17);
+                assert_eq!(context.resource_group_tag, b"snapshot-tag");
 
                 if request.is::<kvrpcpb::GetRequest>() {
                     Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>)
@@ -2464,6 +2477,7 @@ mod tests {
         transaction.set_isolation_level(kvrpcpb::IsolationLevel::Rc);
         transaction.set_task_id(42);
         transaction.set_snapshot_read_timeout(Duration::from_millis(17));
+        transaction.set_resource_group_tag(Some(b"snapshot-tag".to_vec()));
 
         transaction.get("get".to_owned()).await.unwrap();
         let _: Vec<_> = transaction

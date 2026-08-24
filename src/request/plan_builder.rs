@@ -131,6 +131,15 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self
     }
 
+    /// Set the source resource-group tag carried by every shard and retry.
+    /// `None` deliberately leaves the protobuf default untouched.
+    pub fn resource_group_tag(mut self, resource_group_tag: Option<Vec<u8>>) -> Self {
+        if let Some(resource_group_tag) = resource_group_tag {
+            self.plan.request.set_resource_group_tag(resource_group_tag);
+        }
+        self
+    }
+
     /// Select replicas for this read using client-go's region selector. The
     /// setting is retained through shard and retry clones; leader is default.
     pub fn replica_read(mut self, config: ReplicaReadConfig) -> Self {

@@ -46,6 +46,11 @@ impl SyncSnapshot {
         self.inner.set_kv_read_timeout(timeout);
     }
 
+    /// Set the static TiKV resource-group tag for subsequent snapshot reads.
+    pub fn set_resource_group_tag(&mut self, resource_group_tag: Option<Vec<u8>>) {
+        self.inner.set_resource_group_tag(resource_group_tag);
+    }
+
     /// Return the configured snapshot read deadline, if any.
     pub fn kv_read_timeout(&self) -> Option<Duration> {
         self.inner.kv_read_timeout()

@@ -115,6 +115,12 @@ impl Snapshot {
         self.transaction.set_snapshot_read_timeout(timeout);
     }
 
+    /// Set the static TiKV resource-group tag for subsequent snapshot reads.
+    /// `None` restores the source nil-tag state.
+    pub fn set_resource_group_tag(&mut self, resource_group_tag: Option<Vec<u8>>) {
+        self.transaction.set_resource_group_tag(resource_group_tag);
+    }
+
     /// Return the configured snapshot read deadline, or `None` when the
     /// client-wide transport timeout remains in effect.
     pub fn kv_read_timeout(&self) -> Option<Duration> {
