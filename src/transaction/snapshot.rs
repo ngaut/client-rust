@@ -97,6 +97,22 @@ impl Snapshot {
         self.transaction.set_sample_step(sample_step);
     }
 
+    /// Control whether TiKV should bypass cache population for subsequent
+    /// snapshot reads, matching client-go `KVSnapshot.SetNotFillCache`.
+    pub fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
+        self.transaction.set_not_fill_cache(not_fill_cache);
+    }
+
+    /// Set the TiKV isolation level used by subsequent snapshot reads.
+    pub fn set_isolation_level(&mut self, isolation_level: crate::proto::kvrpcpb::IsolationLevel) {
+        self.transaction.set_isolation_level(isolation_level);
+    }
+
+    /// Set TiKV's scheduling task ID for subsequent snapshot reads.
+    pub fn set_task_id(&mut self, task_id: u64) {
+        self.transaction.set_task_id(task_id);
+    }
+
     /// Set the source-compatible resource group on subsequent snapshot RPCs.
     pub fn set_resource_group_name(&mut self, resource_group_name: impl Into<String>) {
         self.transaction

@@ -106,6 +106,30 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self
     }
 
+    /// Set TiKV's cache-fill behavior carried by every shard and retry of
+    /// this request.
+    pub fn not_fill_cache(mut self, not_fill_cache: bool) -> Self {
+        self.plan.request.set_not_fill_cache(not_fill_cache);
+        self
+    }
+
+    /// Set TiKV's isolation level carried by every shard and retry of this
+    /// request.
+    pub fn isolation_level(
+        mut self,
+        isolation_level: crate::proto::kvrpcpb::IsolationLevel,
+    ) -> Self {
+        self.plan.request.set_isolation_level(isolation_level);
+        self
+    }
+
+    /// Set TiKV's scheduling task ID carried by every shard and retry of this
+    /// request.
+    pub fn task_id(mut self, task_id: u64) -> Self {
+        self.plan.request.set_task_id(task_id);
+        self
+    }
+
     /// Select replicas for this read using client-go's region selector. The
     /// setting is retained through shard and retry clones; leader is default.
     pub fn replica_read(mut self, config: ReplicaReadConfig) -> Self {

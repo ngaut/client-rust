@@ -30,6 +30,22 @@ impl SyncSnapshot {
         self.inner.set_sample_step(sample_step);
     }
 
+    /// Control whether TiKV should bypass cache population for subsequent
+    /// snapshot reads.
+    pub fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
+        self.inner.set_not_fill_cache(not_fill_cache);
+    }
+
+    /// Set the TiKV isolation level used by subsequent snapshot reads.
+    pub fn set_isolation_level(&mut self, isolation_level: crate::proto::kvrpcpb::IsolationLevel) {
+        self.inner.set_isolation_level(isolation_level);
+    }
+
+    /// Set TiKV's scheduling task ID for subsequent snapshot reads.
+    pub fn set_task_id(&mut self, task_id: u64) {
+        self.inner.set_task_id(task_id);
+    }
+
     /// Choose the TiKV replica-read type for subsequent snapshot reads.
     pub fn set_replica_read(&mut self, read_type: ReplicaReadType) {
         self.inner.set_replica_read(read_type);

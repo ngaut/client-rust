@@ -39,6 +39,12 @@ pub trait Request: Any + Sync + Send + 'static {
     /// Set the API V2 keyspace name carried alongside the numeric identifier.
     fn set_keyspace_name(&mut self, _keyspace_name: Option<&str>) {}
     fn set_priority(&mut self, _priority: kvrpcpb::CommandPri) {}
+    /// Controls whether TiKV should bypass its data cache for this request.
+    fn set_not_fill_cache(&mut self, _not_fill_cache: bool) {}
+    /// Sets the isolation level carried in this request's TiKV context.
+    fn set_isolation_level(&mut self, _isolation_level: kvrpcpb::IsolationLevel) {}
+    /// Sets TiKV's scheduling task ID for this request.
+    fn set_task_id(&mut self, _task_id: u64) {}
     /// Marks a request sent to a selected follower or learner. Leader reads,
     /// including leader-through-proxy forwarding, retain the default false.
     fn set_replica_read(&mut self, _replica_read: bool) {}
@@ -237,6 +243,24 @@ macro_rules! impl_request {
             fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
                 ctx.priority = priority.into();
+            }
+
+            fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
+                self.context
+                    .get_or_insert(kvrpcpb::Context::default())
+                    .not_fill_cache = not_fill_cache;
+            }
+
+            fn set_isolation_level(&mut self, isolation_level: kvrpcpb::IsolationLevel) {
+                self.context
+                    .get_or_insert(kvrpcpb::Context::default())
+                    .isolation_level = isolation_level.into();
+            }
+
+            fn set_task_id(&mut self, task_id: u64) {
+                self.context
+                    .get_or_insert(kvrpcpb::Context::default())
+                    .task_id = task_id;
             }
 
             fn set_replica_read(&mut self, replica_read: bool) {

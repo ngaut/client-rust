@@ -112,6 +112,11 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     /// Number of keys TiKV skips after each scan result. Zero disables
     /// sampling, matching client-go `KVSnapshot.sampleStep`.
     sample_step: u32,
+    /// Snapshot-only request-context settings retained through physical read
+    /// retries, matching client-go `KVSnapshot`.
+    not_fill_cache: bool,
+    isolation_level: kvrpcpb::IsolationLevel,
+    task_id: u64,
     /// client-go keeps resolved/committed transaction IDs on each snapshot;
     /// they must not leak across transactions with different read timestamps.
     read_lock_context: ReadLockContext,
@@ -177,6 +182,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
             sample_step: 0,
+            not_fill_cache: false,
+            isolation_level: kvrpcpb::IsolationLevel::Si,
+            task_id: 0,
             read_lock_context: ReadLockContext::default(),
             lock_resolver_context: ResolveLocksContext::default(),
             is_heartbeat_started: false,
@@ -237,6 +245,18 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub(crate) fn set_sample_step(&mut self, sample_step: u32) {
         self.sample_step = sample_step;
+    }
+
+    pub(crate) fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
+        self.not_fill_cache = not_fill_cache;
+    }
+
+    pub(crate) fn set_isolation_level(&mut self, isolation_level: kvrpcpb::IsolationLevel) {
+        self.isolation_level = isolation_level;
+    }
+
+    pub(crate) fn set_task_id(&mut self, task_id: u64) {
+        self.task_id = task_id;
     }
 
     fn replica_read_config_for_items(&self, item_count: usize) -> ReplicaReadConfig {
@@ -321,6 +341,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
+        let not_fill_cache = self.not_fill_cache;
+        let isolation_level = self.isolation_level;
+        let task_id = self.task_id;
         let replica_read_config = self.replica_read_config_for_items(1);
         let read_lock_context = self.read_lock_context.clone();
         let lock_resolver_context = self.lock_resolver_context.clone();
@@ -340,6 +363,9 @@ impl<PdC: PdClient> Transaction<PdC> {
                     request,
                 )
                 .priority(priority)
+                .not_fill_cache(not_fill_cache)
+                .isolation_level(isolation_level)
+                .task_id(task_id)
                 .resolve_lock_for_read(
                     timestamp,
                     retry_options.lock_backoff,
@@ -482,6 +508,9 @@ impl<PdC: PdClient> Transaction<PdC> {
             .map(move |k| k.into().encode_keyspace(keyspace, KeyMode::Txn));
         let retry_options = self.options.retry_options.clone();
         let priority = self.options.priority;
+        let not_fill_cache = self.not_fill_cache;
+        let isolation_level = self.isolation_level;
+        let task_id = self.task_id;
         let replica_read_config = self.replica_read_config.clone();
         let replica_read_adjuster = self.replica_read_adjuster.clone();
         let read_lock_context = self.read_lock_context.clone();
@@ -508,6 +537,9 @@ impl<PdC: PdClient> Transaction<PdC> {
                     request,
                 )
                 .priority(priority)
+                .not_fill_cache(not_fill_cache)
+                .isolation_level(isolation_level)
+                .task_id(task_id)
                 .resolve_lock_for_read(
                     timestamp,
                     retry_options.lock_backoff,
@@ -1099,6 +1131,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
         let sample_step = self.sample_step;
+        let not_fill_cache = self.not_fill_cache;
+        let isolation_level = self.isolation_level;
+        let task_id = self.task_id;
         let replica_read_config = self.replica_read_config.clone();
         let read_lock_context = self.read_lock_context.clone();
         let lock_resolver_context = self.lock_resolver_context.clone();
@@ -1131,6 +1166,9 @@ impl<PdC: PdClient> Transaction<PdC> {
                         request,
                     )
                     .priority(priority)
+                    .not_fill_cache(not_fill_cache)
+                    .isolation_level(isolation_level)
+                    .task_id(task_id)
                     .resolve_lock_for_read(
                         timestamp,
                         retry_options.lock_backoff,
@@ -2306,6 +2344,62 @@ mod tests {
             .collect();
 
         assert!(pairs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_context_settings_reach_all_read_requests() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let captured_calls = Arc::clone(&calls);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let context = if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    captured_calls.lock().unwrap().push("get");
+                    request.context.as_ref().unwrap()
+                } else if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    captured_calls.lock().unwrap().push("batch-get");
+                    request.context.as_ref().unwrap()
+                } else if let Some(request) = request.downcast_ref::<kvrpcpb::ScanRequest>() {
+                    captured_calls.lock().unwrap().push("scan");
+                    request.context.as_ref().unwrap()
+                } else {
+                    panic!("unexpected request while testing snapshot context settings");
+                };
+                assert!(context.not_fill_cache);
+                assert_eq!(context.isolation_level, kvrpcpb::IsolationLevel::Rc as i32);
+                assert_eq!(context.task_id, 42);
+
+                if request.is::<kvrpcpb::GetRequest>() {
+                    Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>)
+                } else if request.is::<kvrpcpb::BatchGetRequest>() {
+                    Ok(Box::new(kvrpcpb::BatchGetResponse::default()) as Box<dyn Any>)
+                } else {
+                    Ok(Box::new(kvrpcpb::ScanResponse::default()) as Box<dyn Any>)
+                }
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_not_fill_cache(true);
+        transaction.set_isolation_level(kvrpcpb::IsolationLevel::Rc);
+        transaction.set_task_id(42);
+
+        transaction.get("get".to_owned()).await.unwrap();
+        let _: Vec<_> = transaction
+            .batch_get(vec!["batch".to_owned()])
+            .await
+            .unwrap()
+            .collect();
+        let _: Vec<_> = transaction
+            .scan(b"scan-a".to_vec()..b"scan-b".to_vec(), 1)
+            .await
+            .unwrap()
+            .collect();
+
+        assert_eq!(*calls.lock().unwrap(), vec!["get", "batch-get", "scan"]);
     }
 
     #[test]
