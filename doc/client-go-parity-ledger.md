@@ -9,7 +9,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | Go package | Initial Rust owner | Status | Receipt / dependency note |
 | --- | --- | --- | --- |
 | `config` | `src/config.rs`, `src/config/client_go.rs`, client constructors | complete | Receipt below; all defaults, nested sections, validation, global snapshot/restore, path parsing, TLS material behavior, RU-v2 accounting, and both `nextgen` build selections are covered. |
-| `config/retry` | `src/retry.rs`, `src/backoff.rs`, `src/request` | in-progress | Full two-production/one-test/one-goleak-harness inventory audited. `RetryBackoffer` now covers named classes, cumulative/excluded budgets (including the source fallback to the triggering error when only excluded classes slept), cancellation/kill checks, rolling diagnostics with a lifetime count, clone/fork/update accounting, type history, metrics, and region-error classification. RawKV production paths now create the source 20,000-ms cumulative `RetryBackoffer` and `RetryableMultiRegion` owns the parent/child fork, sibling cancellation, and final-child merge topology. Completion still requires auditing and converting the remaining production loops that correctly retain their own source-owned budgets. |
+| `config/retry` | `src/retry.rs`, `src/async_util.rs`, `src/kv/variables.rs`, `src/request/plan.rs`, `src/stats.rs` | complete | Complete package receipt below and full artifact/symbol/test/consumer mapping in [`config-retry-source-artifact-audit.md`](config-retry-source-artifact-audit.md). Both production files, the original test file, goleak harness, all 17 retry classes, every state/error/cancellation/fork branch, native context/error decisions, metrics/runtime-stat boundaries, and validation gates are accounted for. Each unfinished caller loop remains explicitly owned by its own package row. |
 | `error` | `src/error.rs`, `src/common/errors.rs`, `src/stats.rs` | complete | Receipt below; every singleton and typed wrapper, predicates, constructors, extraction precedence/failpoint/redaction, protobuf text/debug JSON, logging, and write-conflict metric side effect are covered. |
 | `internal/apicodec` | `src/request/keyspace.rs`, `src/kv/codec.rs`, request/response transforms, `proto/{apipb,keyspacepb}.proto` | in-progress | Full four-production/three-test inventory audited. Reusable V1/V2 codecs, source-exact V1 command response matrix, ID/name request context fields, region/error transforms, raw/transaction/lock context propagation, deprecated Cleanup and legacy GC decoding, transactional DeleteRange, Flashback, PrepareFlashback, pipelined Flush/BufferBatchGet, PhysicalScanLock, MvccGetByKey/MvccGetByStartTs, CheckLockObserver, GetLockWaitInfo, SplitRegion, StoreSafeTS, ordinary Coprocessor, and TiFlash BatchCop/MPP request transforms (including MPP TaskMeta keyspace/API metadata) are implemented. The pinned API-v3 `KeyspaceIdentity` input and `KeyspaceMeta` oneof now prevent V2 RawKV/transaction clients from silently treating V3 metadata as numeric ID zero. Completion still requires the complete cloned request/response transform matrix, remaining keyspace/namespace generated service inputs, and unsupported-command integration. |
 | `internal/client` | `src/store`, `src/pd`, transport | complete | Complete package receipt below and full per-artifact/test mapping in [`internal-client-source-artifact-audit.md`](internal-client-source-artifact-audit.md). All ten production files, the mockserver support dependency, six ordinary test files, goleak harness, metadata-only `OWNERS`, typed command matrix, native API-codec boundary, and validation gates are accounted for. Proxy selection remains correctly owned by the separate `internal/locate` row. |
@@ -54,6 +54,40 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 ## Non-package artifacts still required
 
 The final repository claim must additionally account for root build and policy files, `go.mod`/`go.sum` dependencies, `.github` CI, `examples`, `integration_tests` including its separate Go module, generated protobuf inputs and outputs, configuration fixtures, and client-rust's `proto-build`, `proto`, `tests`, examples, Cargo features, and toolchain files. `proto/keyspacepb.proto` now carries the pinned V3 identity oneof required by `internal/apicodec`, but the same pinned schema's namespace and lookup service expansion remains an explicit generated-input artifact. These artifacts are not package rows, but no full parity claim is possible without their final receipt.
+
+## Complete package receipt: `config/retry`
+
+Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
+
+The complete two-production-file, one-test-file, and goleak-harness inventory, SHA-256 identities, per-symbol mapping, native context/error decisions, exact original-test mapping, and source-consumer audit are recorded in [`config-retry-source-artifact-audit.md`](config-retry-source-artifact-audit.md). The package has no other fixture, generated/build input, platform/build-tag variant, documentation artifact, benchmark, example, or metadata file.
+
+Rust now preserves all 17 source retry classes; four jitter algorithms; variable-derived bases and weighted budgets; ordinary and separately excluded cumulative sleep; one-sleep caps; failpoint skipping; cancellation and kill precedence; last-three versus lifetime diagnostics; source-selected terminal errors; clone/fork/descendant-merge/type ancestry; reset; exact metric labels; runtime-stat inputs; and fake/real region-error classification. A cancelled pending sleep records zero without advancing the exponential state, correcting the prior seed. Cluster-ID mismatch is still immediate and non-retryable, but maps Go's process-terminating `Fatal` to a typed Rust error so an embedded client library cannot terminate its host process.
+
+Validation on `nightly-2026-08-22`:
+
+    cargo +nightly-2026-08-22 test -p tikv-client retry::tests --lib
+    # 20 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client retry::tests --lib --all-features
+    # 20 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet
+    # 530 passed; 0 failed
+
+    cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet
+    # 530 passed; 0 failed
+
+    cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features
+    # passed with the existing warning backlog
+
+    cargo +nightly-2026-08-22 doc -p tikv-client --all-features --no-deps
+    # passed with two pre-existing unrelated rustdoc warnings
+
+    cargo +nightly-2026-08-22 fmt --all -- --check
+    git diff --check
+    # passed
+
+The pinned Go tests were inspected but not re-executed because this host has no `go` binary. No live cluster is required for the package's deterministic state machine. Correct class/budget/topology selection remains part of every owning consumer package and the final TiKV/PD differential matrix; this receipt does not promote those incomplete rows.
 
 ## Complete package receipt: `internal/resourcecontrol`
 
