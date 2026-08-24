@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use futures::StreamExt;
+use log::info;
 use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
 use tokio::task::JoinSet;
 
@@ -22,6 +23,7 @@ use crate::store::region_stream_for_range;
 use crate::Result;
 
 pub(crate) const DEFAULT_REGIONS_PER_TASK: usize = 128;
+const DEFAULT_STAT_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// The completed and failed region counts returned by one source task.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -44,10 +46,12 @@ pub(crate) trait RangeTaskHandler: Clone + Send + Sync + 'static {
 /// Source-compatible scheduler for operations performed across a key range.
 pub(crate) struct Runner<PdC: PdClient, H: RangeTaskHandler> {
     name: &'static str,
+    identifier: String,
     pd_client: Arc<PdC>,
     handler: H,
     concurrency: usize,
     regions_per_task: usize,
+    stat_log_interval: std::time::Duration,
     completed_regions: Arc<AtomicUsize>,
     failed_regions: Arc<AtomicUsize>,
 }
@@ -59,13 +63,27 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         concurrency: usize,
         handler: H,
     ) -> Self {
+        Self::new_with_id(name, name, pd_client, concurrency, handler)
+    }
+
+    /// Source `NewRangeTaskRunnerWithID`: metrics are keyed by `name`, while
+    /// human-readable progress logging can distinguish individual runners.
+    pub(crate) fn new_with_id(
+        name: &'static str,
+        identifier: impl Into<String>,
+        pd_client: Arc<PdC>,
+        concurrency: usize,
+        handler: H,
+    ) -> Self {
         assert!(concurrency > 0, "range task concurrency must be at least 1");
         Self {
             name,
+            identifier: identifier.into(),
             pd_client,
             handler,
             concurrency,
             regions_per_task: DEFAULT_REGIONS_PER_TASK,
+            stat_log_interval: DEFAULT_STAT_LOG_INTERVAL,
             completed_regions: Arc::new(AtomicUsize::new(0)),
             failed_regions: Arc::new(AtomicUsize::new(0)),
         }
@@ -77,6 +95,12 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
             "range task regions_per_task must be at least 1"
         );
         self.regions_per_task = regions_per_task;
+    }
+
+    /// Changes the source periodic progress-log cadence. As in Go,
+    /// non-positive intervals are rejected by ticker construction at run time.
+    pub(crate) fn set_stat_log_interval(&mut self, interval: std::time::Duration) {
+        self.stat_log_interval = interval;
     }
 
     pub(crate) fn completed_regions(&self) -> usize {
@@ -93,8 +117,21 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         self.completed_regions.store(0, Ordering::Release);
         self.failed_regions.store(0, Ordering::Release);
         if !end_key.is_empty() && start_key >= end_key {
+            info!(
+                "range task ignored empty range; name={}, start_key={}, end_key={}",
+                self.identifier,
+                crate::redact::key(&start_key),
+                crate::redact::key(&end_key)
+            );
             return Ok(());
         }
+        info!(
+            "range task started; name={}, start_key={}, end_key={}, concurrency={}",
+            self.identifier,
+            crate::redact::key(&start_key),
+            crate::redact::key(&end_key),
+            self.concurrency
+        );
 
         let cancellation = Cancellation::default();
         // client-go has `concurrency` workers and a channel with the same
@@ -125,9 +162,25 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
             .chunks(self.regions_per_task);
         futures::pin_mut!(tasks);
 
+        let started_at = Instant::now();
+        let mut progress_ticker = tokio::time::interval(self.stat_log_interval);
+        // Tokio's first interval tick is immediate, unlike Go's `NewTicker`.
+        progress_ticker.tick().await;
         let mut stop_producer = stop.subscribe();
         let producer_result = loop {
-            let Some(ranges) = tasks.next().await else {
+            let next_ranges = tokio::select! {
+                next_ranges = tasks.next() => next_ranges,
+                _ = progress_ticker.tick() => {
+                    info!(
+                        "range task in progress; name={}, elapsed_ms={}, completed_regions={}",
+                        self.identifier,
+                        started_at.elapsed().as_millis(),
+                        self.completed_regions()
+                    );
+                    continue;
+                }
+            };
+            let Some(ranges) = next_ranges else {
                 break Ok(());
             };
             let ranges = match ranges.into_iter().collect::<Result<Vec<_>>>() {
@@ -162,8 +215,39 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
             }
         }
         match producer_result {
-            Err(error) => Err(error),
-            Ok(()) => worker_error.map_or(Ok(()), Err),
+            Err(error) => {
+                info!(
+                    "range task failed loading regions; name={}, elapsed_ms={}, completed_regions={}, failed_regions={}, error={}",
+                    self.identifier,
+                    started_at.elapsed().as_millis(),
+                    self.completed_regions(),
+                    self.failed_regions(),
+                    error
+                );
+                Err(error)
+            }
+            Ok(()) => match worker_error {
+                Some(error) => {
+                    info!(
+                        "range task failed; name={}, elapsed_ms={}, completed_regions={}, failed_regions={}, error={}",
+                        self.identifier,
+                        started_at.elapsed().as_millis(),
+                        self.completed_regions(),
+                        self.failed_regions(),
+                        error
+                    );
+                    Err(error)
+                }
+                None => {
+                    info!(
+                        "range task finished; name={}, elapsed_ms={}, completed_regions={}",
+                        self.identifier,
+                        started_at.elapsed().as_millis(),
+                        self.completed_regions()
+                    );
+                    Ok(())
+                }
+            },
         }
     }
 
@@ -194,11 +278,18 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
             if *stop_receiver.borrow() {
                 return Ok(());
             }
-            let (stat, result) = handler.handle(cancellation.clone(), task).await;
+            let (stat, result) = handler.handle(cancellation.clone(), task.clone()).await;
             completed_regions.fetch_add(stat.completed_regions, Ordering::AcqRel);
             failed_regions.fetch_add(stat.failed_regions, Ordering::AcqRel);
             crate::stats::add_range_task_stats(name, stat.completed_regions, stat.failed_regions);
             if let Err(error) = result {
+                info!(
+                    "range task worker cancelling after error; name={}, start_key={}, end_key={}, error={}",
+                    name,
+                    crate::redact::key(&task.0),
+                    crate::redact::key(&task.1),
+                    error
+                );
                 cancellation.cancel();
                 stop.send_replace(true);
                 return Err(error);
@@ -315,6 +406,21 @@ mod tests {
             crate::stats::range_task_push_duration_samples("range-task-grouping"),
             2
         );
+    }
+
+    #[test]
+    fn source_runner_keeps_a_distinct_log_identifier_and_interval() {
+        let mut runner = Runner::new_with_id(
+            "range-task-metric-name",
+            "range-task-log-id",
+            Arc::new(MockPdClient::default()),
+            1,
+            RecordingHandler::default(),
+        );
+        runner.set_stat_log_interval(Duration::from_secs(7));
+        assert_eq!(runner.name, "range-task-metric-name");
+        assert_eq!(runner.identifier, "range-task-log-id");
+        assert_eq!(runner.stat_log_interval, Duration::from_secs(7));
     }
 
     #[tokio::test]
