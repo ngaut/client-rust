@@ -45,7 +45,7 @@ use crate::store::HasRegionErrors;
 use crate::store::KvClient;
 use crate::store::RegionStore;
 use crate::store::{HasKeyErrors, Store};
-use crate::transaction::resolve_locks;
+use crate::transaction::resolve_locks_with_ru_details;
 use crate::transaction::HasLocks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
@@ -1399,6 +1399,7 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub rpc_interceptor: Option<RpcInterceptorChain>,
     pub resource_group_name: Option<String>,
     pub resource_control: Option<ResourceGroupControllerHandle>,
+    pub ru_details: Option<Arc<crate::RuDetails>>,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1413,6 +1414,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             rpc_interceptor: self.rpc_interceptor.clone(),
             resource_group_name: self.resource_group_name.clone(),
             resource_control: self.resource_control.clone(),
+            ru_details: self.ru_details.clone(),
         }
     }
 }
@@ -1444,7 +1446,7 @@ where
             clone.disable_stale_read_after_lock();
 
             let pd_client = self.pd_client.clone();
-            let live_locks = resolve_locks(
+            let live_locks = resolve_locks_with_ru_details(
                 locks,
                 self.timestamp.clone(),
                 pd_client.clone(),
@@ -1453,6 +1455,7 @@ where
                 self.rpc_interceptor.clone(),
                 self.resource_group_name.as_deref(),
                 self.resource_control.clone(),
+                self.ru_details.clone(),
             )
             .await?;
             if live_locks.is_empty() {
@@ -2537,6 +2540,7 @@ mod test {
                 rpc_interceptor: None,
                 resource_group_name: None,
                 resource_control: None,
+                ru_details: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),
