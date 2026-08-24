@@ -920,6 +920,33 @@ impl LockResolver {
                     }
                     return Err(Error::TxnNotFound(txn_not_found));
                 }
+                Err(Error::KeyError(key_error))
+                    if lock.lock_type == kvrpcpb::Op::PessimisticLock as i32
+                        && key_error.primary_mismatch.is_some() =>
+                {
+                    // client-go's primaryMismatch is valid only while resolving a
+                    // pessimistic secondary. Treat it as an already-determined
+                    // rollback so the caller executes PessimisticRollback on the
+                    // actual lock rather than surfacing a protocol error.
+                    return Ok(Arc::new(TransactionStatus {
+                        kind: TransactionStatusKind::RolledBack,
+                        action: kvrpcpb::Action::NoAction,
+                        is_expired: false,
+                    }));
+                }
+                Err(Error::MultipleKeyErrors(errors))
+                    if lock.lock_type == kvrpcpb::Op::PessimisticLock as i32
+                        && matches!(
+                            errors.first(),
+                            Some(Error::KeyError(key_error)) if key_error.primary_mismatch.is_some()
+                        ) =>
+                {
+                    return Ok(Arc::new(TransactionStatus {
+                        kind: TransactionStatusKind::RolledBack,
+                        action: kvrpcpb::Action::NoAction,
+                        is_expired: false,
+                    }));
+                }
                 Err(err) => return Err(err),
             }
         }
@@ -1419,6 +1446,56 @@ mod tests {
         .unwrap()
         .is_empty());
         assert_eq!(rollback_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn source_pessimistic_primary_mismatch_rolls_back_the_secondary() {
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .is_some()
+                {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        error: Some(kvrpcpb::KeyError {
+                            primary_mismatch: Some(kvrpcpb::PrimaryMismatch {
+                                lock_info: Some(kvrpcpb::LockInfo::default()),
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if req
+                    .downcast_ref::<kvrpcpb::PessimisticRollbackRequest>()
+                    .is_some()
+                {
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        let lock = kvrpcpb::LockInfo {
+            key: vec![2],
+            primary_lock: vec![1],
+            lock_version: 1,
+            lock_type: kvrpcpb::Op::PessimisticLock as i32,
+            ..Default::default()
+        };
+
+        assert!(resolve_locks_with_context(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+        )
+        .await
+        .unwrap()
+        .is_empty());
     }
 
     #[test]
