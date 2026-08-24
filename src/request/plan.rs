@@ -371,40 +371,89 @@ impl RegionRetryState for Backoff {
     fn update_using_forked(&mut self, _forked: &Self) {}
 }
 
-/// Snapshot-read retry state that retains the legacy retry schedule while
-/// reporting client-go retry-class sleep totals to an optional collector.
+/// client-go's `getMaxBackoff`, `batchGetMaxBackoff`, and scanner retry
+/// budget. `RetryBackoffer` applies the configured backoff weight.
+const SNAPSHOT_MAX_BACKOFF_MS: u64 = 20_000;
+
+/// Snapshot-read retry state that owns client-go's cumulative retry budget
+/// while reporting retry-class sleep totals to an optional collector.
 #[derive(Clone)]
 pub(crate) struct SnapshotRegionBackoff {
-    backoff: Backoff,
+    backoff: RetryBackoffer,
     stats: Option<Arc<SnapshotRuntimeStats>>,
+    disabled: bool,
 }
 
 impl SnapshotRegionBackoff {
-    pub(crate) fn new(backoff: Backoff, stats: Option<Arc<SnapshotRuntimeStats>>) -> Self {
-        Self { backoff, stats }
+    pub(crate) fn new(legacy_backoff: Backoff, stats: Option<Arc<SnapshotRuntimeStats>>) -> Self {
+        let cancellation = Cancellation::default();
+        Self {
+            backoff: RetryBackoffer::new(cancellation, SNAPSHOT_MAX_BACKOFF_MS),
+            stats,
+            disabled: legacy_backoff.is_none(),
+        }
     }
 }
 
 #[async_trait]
 impl RegionRetryState for SnapshotRegionBackoff {
     async fn backoff(&mut self, config: RetryConfig, _reason: String) -> Result<bool> {
-        match self.backoff.next_delay_duration() {
-            Some(duration) => {
-                sleep(duration).await;
-                if let Some(stats) = &self.stats {
-                    stats.record_backoff(config.name, duration);
-                }
-                Ok(true)
-            }
-            None => Ok(false),
+        if self.disabled {
+            return Ok(false);
         }
+        let before_count = self
+            .backoff
+            .times_by_type()
+            .get(config.name)
+            .copied()
+            .unwrap_or_default();
+        let before_sleep = self
+            .backoff
+            .sleep_by_type()
+            .get(config.name)
+            .copied()
+            .unwrap_or_default();
+        let result = self.backoff.backoff(config, _reason).await;
+        let after_count = self
+            .backoff
+            .times_by_type()
+            .get(config.name)
+            .copied()
+            .unwrap_or_default();
+        let after_sleep = self
+            .backoff
+            .sleep_by_type()
+            .get(config.name)
+            .copied()
+            .unwrap_or_default();
+        if after_count > before_count {
+            if let Some(stats) = &self.stats {
+                stats.record_backoff(
+                    config.name,
+                    Duration::from_millis(after_sleep.saturating_sub(before_sleep)),
+                );
+            }
+        }
+        result
+            .map(|_| true)
+            .map_err(|error| Error::StringError(error.to_string()))
     }
 
     fn fork(&self) -> (Self, Cancellation) {
-        (self.clone(), Cancellation::default())
+        let (backoff, cancellation) = self.backoff.fork();
+        (
+            Self {
+                backoff,
+                stats: self.stats.clone(),
+                disabled: self.disabled,
+            },
+            cancellation,
+        )
     }
 
-    fn update_using_forked(&mut self, _forked: &Self) {}
+    fn update_using_forked(&mut self, forked: &Self) {
+        self.backoff.update_using_forked(&forked.backoff);
+    }
 }
 
 #[async_trait]

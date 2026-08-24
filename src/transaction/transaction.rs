@@ -3587,10 +3587,8 @@ mod tests {
         );
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
         assert_eq!(stats.backoff_count("tikvServerBusy"), 1);
-        assert_eq!(
-            stats.backoff_duration("tikvServerBusy"),
-            Duration::from_millis(2)
-        );
+        assert!(stats.backoff_duration("tikvServerBusy") >= Duration::from_millis(1_000));
+        assert!(stats.backoff_duration("tikvServerBusy") < Duration::from_millis(2_000));
     }
 
     #[tokio::test]
