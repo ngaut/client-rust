@@ -45,6 +45,7 @@ pub(crate) use lock::ReadLockContext;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;
 pub use lock::ResolvingLock;
+pub(crate) use lock::ResolvingLocksGuard;
 #[doc(hidden)]
 pub mod arena;
 mod snapshot;

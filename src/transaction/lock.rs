@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::Mutex as StdMutex;
 use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 
@@ -1034,7 +1035,7 @@ async fn resolve_lock_with_retry_inner(
 pub struct ResolveLocksContext {
     // Record the status of each transaction.
     resolved: Arc<Mutex<ResolvedStatusCache>>,
-    resolving: Arc<Mutex<ResolvingLocks>>,
+    resolving: Arc<StdMutex<ResolvingLocks>>,
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
     pub(crate) rpc_interceptor: Option<RpcInterceptorChain>,
     pub(crate) resource_group_name: Option<String>,
@@ -1102,7 +1103,15 @@ impl ResolveLocksContext {
         locks: &[kvrpcpb::LockInfo],
         caller_start_ts: u64,
     ) -> usize {
-        let mut resolving = self.resolving.lock().await;
+        self.record_resolving_locks_sync(locks, caller_start_ts)
+    }
+
+    pub(crate) fn record_resolving_locks_sync(
+        &self,
+        locks: &[kvrpcpb::LockInfo],
+        caller_start_ts: u64,
+    ) -> usize {
+        let mut resolving = self.resolving.lock().unwrap();
         let slots = resolving.locks.entry(caller_start_ts).or_default();
         let token = slots.len();
         slots.push(Some(locks.to_vec()));
@@ -1117,7 +1126,16 @@ impl ResolveLocksContext {
         caller_start_ts: u64,
         token: usize,
     ) {
-        let mut resolving = self.resolving.lock().await;
+        self.update_resolving_locks_sync(locks, caller_start_ts, token);
+    }
+
+    pub(crate) fn update_resolving_locks_sync(
+        &self,
+        locks: &[kvrpcpb::LockInfo],
+        caller_start_ts: u64,
+        token: usize,
+    ) {
+        let mut resolving = self.resolving.lock().unwrap();
         let slot = resolving
             .locks
             .get_mut(&caller_start_ts)
@@ -1129,7 +1147,11 @@ impl ResolveLocksContext {
     /// Mark a recorded lock-resolution attempt complete and drop its caller
     /// entry only after the source-equivalent last active slot finishes.
     pub async fn resolving_locks_done(&self, caller_start_ts: u64, token: usize) {
-        let mut resolving = self.resolving.lock().await;
+        self.resolving_locks_done_sync(caller_start_ts, token);
+    }
+
+    pub(crate) fn resolving_locks_done_sync(&self, caller_start_ts: u64, token: usize) {
+        let mut resolving = self.resolving.lock().unwrap();
         let slot = resolving
             .locks
             .get_mut(&caller_start_ts)
@@ -1152,7 +1174,7 @@ impl ResolveLocksContext {
     /// Snapshot every currently active resolving lock in source insertion
     /// order, omitting completed slots.
     pub async fn resolving_locks(&self) -> Vec<ResolvingLock> {
-        let resolving = self.resolving.lock().await;
+        let resolving = self.resolving.lock().unwrap();
         resolving
             .locks
             .iter()
@@ -1209,6 +1231,45 @@ impl ResolveLocksContext {
             .entry(txn_id)
             .or_insert_with(HashSet::new)
             .insert(region);
+    }
+}
+
+/// Owns a resolving-lock observer slot for the lifetime of a retry operation.
+///
+/// Unlike a normal async cleanup call, observer completion must also happen
+/// when the owning future is dropped. The registry uses a short synchronous
+/// critical section specifically so this guard can uphold client-go's deferred
+/// `ResolveLocksDone` lifetime without relying on a Tokio runtime in `Drop`.
+pub(crate) struct ResolvingLocksGuard {
+    context: ResolveLocksContext,
+    caller_start_ts: u64,
+    token: usize,
+}
+
+impl ResolvingLocksGuard {
+    pub(crate) fn new(
+        context: ResolveLocksContext,
+        locks: &[kvrpcpb::LockInfo],
+        caller_start_ts: u64,
+    ) -> Self {
+        let token = context.record_resolving_locks_sync(locks, caller_start_ts);
+        Self {
+            context,
+            caller_start_ts,
+            token,
+        }
+    }
+
+    pub(crate) fn update(&self, locks: &[kvrpcpb::LockInfo]) {
+        self.context
+            .update_resolving_locks_sync(locks, self.caller_start_ts, self.token);
+    }
+}
+
+impl Drop for ResolvingLocksGuard {
+    fn drop(&mut self) {
+        self.context
+            .resolving_locks_done_sync(self.caller_start_ts, self.token);
     }
 }
 

@@ -45,12 +45,14 @@ use crate::store::HasRegionErrors;
 use crate::store::KvClient;
 use crate::store::RegionStore;
 use crate::store::{HasKeyErrors, Store};
+use crate::timestamp::TimestampExt;
 use crate::transaction::resolve_locks_for_read_with_context;
 use crate::transaction::resolve_locks_with_context;
 use crate::transaction::HasLocks;
 use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
+use crate::transaction::ResolvingLocksGuard;
 use crate::util::iter::FlatMapOkIterExt;
 use crate::Error;
 use crate::Result;
@@ -1444,6 +1446,7 @@ where
 
     async fn execute(&self) -> Result<Self::Result> {
         let mut clone = self.clone();
+        let mut resolving_locks_guard: Option<ResolvingLocksGuard> = None;
         let mut result = clone.execute_inner().await?;
         loop {
             let locks = result.take_locks();
@@ -1453,6 +1456,16 @@ where
 
             if self.backoff.is_none() {
                 return Err(Error::ResolveLockError(locks));
+            }
+
+            if let Some(guard) = &resolving_locks_guard {
+                guard.update(&locks);
+            } else {
+                resolving_locks_guard = Some(ResolvingLocksGuard::new(
+                    self.resolve_locks_context.clone(),
+                    &locks,
+                    self.timestamp.version(),
+                ));
             }
 
             // Source `KVSnapshot.get` turns a stale read that met a lock
@@ -1801,11 +1814,87 @@ mod test {
     use tokio::sync::Barrier;
 
     use super::*;
+    use crate::backoff::Backoff;
     use crate::mock::{MockKvClient, MockPdClient};
+    use crate::proto::kvrpcpb;
     use crate::proto::kvrpcpb::BatchGetResponse;
+    use crate::request::PlanBuilder;
 
     fn region_store() -> RegionStore {
         RegionStore::new(MockPdClient::region1(), Arc::new(MockKvClient::default()))
+    }
+
+    #[tokio::test]
+    async fn resolve_lock_observer_is_removed_when_the_retry_future_is_cancelled() {
+        let check_status_sent = Arc::new(tokio::sync::Notify::new());
+        let check_status_sent_by_hook = Arc::clone(&check_status_sent);
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn std::any::Any| {
+                if request.is::<kvrpcpb::GetRequest>() {
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        error: Some(kvrpcpb::KeyError {
+                            locked: Some(kvrpcpb::LockInfo {
+                                key: b"locked".to_vec(),
+                                primary_lock: b"primary".to_vec(),
+                                lock_version: 1,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn std::any::Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    check_status_sent_by_hook.notify_one();
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 60_000,
+                        lock_info: Some(kvrpcpb::LockInfo {
+                            key: b"locked".to_vec(),
+                            primary_lock: b"primary".to_vec(),
+                            lock_version: 1,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn std::any::Any>);
+                }
+                panic!("unexpected request while observing lock retry");
+            },
+        )));
+        let context = ResolveLocksContext::default();
+        let plan = PlanBuilder::new(
+            client,
+            Keyspace::Disable,
+            kvrpcpb::GetRequest {
+                key: b"locked".to_vec(),
+                ..Default::default()
+            },
+        )
+        .resolve_lock_with_context(
+            Timestamp::from_version(7),
+            Backoff::no_jitter_backoff(1_000, 1_000, 2),
+            Keyspace::Disable,
+            context.clone(),
+        )
+        .retry_multi_region(Backoff::no_jitter_backoff(0, 0, 1))
+        .plan();
+        let task = tokio::spawn(async move { plan.execute().await });
+
+        tokio::time::timeout(Duration::from_secs(1), check_status_sent.notified())
+            .await
+            .expect("lock resolver should begin status lookup");
+        assert_eq!(
+            context.resolving_locks().await,
+            vec![crate::transaction::ResolvingLock {
+                txn_id: 7,
+                lock_txn_id: 1,
+                key: b"locked".to_vec(),
+                primary: b"primary".to_vec(),
+            }]
+        );
+
+        task.abort();
+        let _ = task.await;
+        assert!(context.resolving_locks().await.is_empty());
     }
 
     #[tokio::test]
