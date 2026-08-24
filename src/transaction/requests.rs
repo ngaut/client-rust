@@ -1104,6 +1104,22 @@ impl SecondaryLocksStatus {
             Ok(Some(min_commit_ts))
         }
     }
+
+    /// The source resolver only sends ResolveLock for returned secondaries
+    /// when every requested lock is present. A missing lock has already been
+    /// resolved by TiKV according to its returned commit timestamp, so only
+    /// the primary needs an explicit resolve request.
+    pub fn keys_to_resolve(&self, primary: &[u8]) -> Vec<Vec<u8>> {
+        if self.missing_lock {
+            return vec![primary.to_vec()];
+        }
+
+        self.locks
+            .iter()
+            .map(|lock| lock.key.clone())
+            .chain(std::iter::once(primary.to_vec()))
+            .collect()
+    }
 }
 
 pair_locks!(kvrpcpb::BatchGetResponse);
@@ -1836,6 +1852,27 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, crate::Error::InternalError { .. }));
+    }
+
+    #[test]
+    fn source_async_commit_secondary_status_requests_forced_2pc_for_non_async_lock() {
+        let merger = CollectWithShard {};
+        let mut status: SecondaryLocksStatus = merger
+            .merge(vec![Ok(ResponseWithShard(
+                kvrpcpb::CheckSecondaryLocksResponse {
+                    locks: vec![kvrpcpb::LockInfo {
+                        lock_version: 7,
+                        use_async_commit: false,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                vec![b"a".to_vec()],
+            ))])
+            .unwrap();
+
+        assert_eq!(status.determine_commit_ts(7, 1).unwrap(), None);
+        assert!(status.fallback_2pc);
     }
 
     #[test]
