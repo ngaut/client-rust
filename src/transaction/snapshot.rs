@@ -157,6 +157,18 @@ impl Snapshot {
         self.transaction.snapshot_read_timeout()
     }
 
+    /// Return the number of reads served from the snapshot cache. This is the
+    /// Rust counterpart of client-go `KVSnapshot.SnapCacheHitCount`.
+    pub fn snap_cache_hit_count(&self) -> usize {
+        self.transaction.snapshot_cache_hit_count()
+    }
+
+    /// Return the number of cached snapshot-read entries. Cached missing keys
+    /// are included, matching client-go `KVSnapshot.SnapCacheSize`.
+    pub fn snap_cache_size(&self) -> usize {
+        self.transaction.snapshot_cache_size()
+    }
+
     /// Control whether TiKV should bypass cache population for subsequent
     /// snapshot reads, matching client-go `KVSnapshot.SetNotFillCache`.
     pub fn set_not_fill_cache(&mut self, not_fill_cache: bool) {

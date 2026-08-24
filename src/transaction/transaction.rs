@@ -268,6 +268,14 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.read_lock_context.clear_resolved();
     }
 
+    pub(crate) fn snapshot_cache_hit_count(&self) -> usize {
+        self.buffer.snapshot_cache_hit_count()
+    }
+
+    pub(crate) fn snapshot_cache_size(&self) -> usize {
+        self.buffer.snapshot_cache_size()
+    }
+
     pub(crate) fn set_stale_read(&mut self, stale_read: bool) {
         self.replica_read_config.stale_read = stale_read;
     }

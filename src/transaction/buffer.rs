@@ -19,6 +19,7 @@ pub struct Buffer {
     primary_key: Option<Key>,
     entry_map: BTreeMap<Key, BufferEntry>,
     is_pessimistic: bool,
+    snapshot_cache_hits: usize,
 }
 
 impl Buffer {
@@ -27,6 +28,7 @@ impl Buffer {
             primary_key: None,
             entry_map: BTreeMap::new(),
             is_pessimistic,
+            snapshot_cache_hits: 0,
         }
     }
 
@@ -39,6 +41,21 @@ impl Buffer {
     pub(crate) fn clear_cached_reads(&mut self) {
         self.entry_map
             .retain(|_, entry| !matches!(entry, BufferEntry::Cached(_)));
+    }
+
+    /// Return the number of source snapshot-cache hits observed by this
+    /// buffer. Clearing cached reads deliberately preserves this counter.
+    pub(crate) fn snapshot_cache_hit_count(&self) -> usize {
+        self.snapshot_cache_hits
+    }
+
+    /// Return the number of entries retained solely by snapshot reads.
+    /// Cached misses count as entries, matching client-go's snapshot cache.
+    pub(crate) fn snapshot_cache_size(&self) -> usize {
+        self.entry_map
+            .values()
+            .filter(|entry| matches!(entry, BufferEntry::Cached(_)))
+            .count()
     }
 
     /// Set the primary key if it is not set
@@ -77,7 +94,12 @@ impl Buffer {
         F: FnOnce(Key) -> Fut,
         Fut: Future<Output = Result<Option<Value>>>,
     {
-        match self.get_from_mutations(&key) {
+        let cached = matches!(self.entry_map.get(&key), Some(BufferEntry::Cached(_)));
+        let value = self.get_from_mutations(&key);
+        if cached {
+            self.snapshot_cache_hits += 1;
+        }
+        match value {
             MutationValue::Determined(value) => Ok(value),
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
@@ -117,30 +139,35 @@ impl Buffer {
         F: FnOnce(Box<dyn Iterator<Item = Key> + Send>) -> Fut,
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
-        let (cached_results, undetermined_keys) = {
-            // Partition the keys into those we have buffered and those we have to
-            // get from the store.
-            let (undetermined_keys, cached_results): (Vec<_>, Vec<_>) = keys
-                .map(|key| {
-                    let value = self
-                        .entry_map
-                        .get(&key)
-                        .map(BufferEntry::get_value)
-                        .unwrap_or(MutationValue::Undetermined);
-                    (key, value)
-                })
-                .partition(|(_, v)| *v == MutationValue::Undetermined);
+        // Partition the keys into those we have buffered and those we have to
+        // get from the store. A cached miss is still a source snapshot-cache
+        // hit, even though it produces no output pair.
+        let mut undetermined_keys = Vec::new();
+        let mut cached_results = Vec::new();
+        for key in keys {
+            match self.entry_map.get(&key) {
+                Some(BufferEntry::Cached(value)) => {
+                    self.snapshot_cache_hits += 1;
+                    if let Some(value) = value {
+                        cached_results.push(KvPair(key, value.clone()));
+                    }
+                }
+                Some(entry) => match entry.get_value() {
+                    MutationValue::Determined(Some(value)) => {
+                        cached_results.push(KvPair(key, value));
+                    }
+                    MutationValue::Determined(None) => {}
+                    MutationValue::Undetermined => undetermined_keys.push(key),
+                },
+                None => undetermined_keys.push(key),
+            }
+        }
 
-            let cached_results = cached_results
-                .into_iter()
-                .filter_map(|(k, v)| v.unwrap().map(|v| KvPair(k, v)));
-
-            let undetermined_keys: Vec<Key> =
-                undetermined_keys.into_iter().map(|(k, _)| k).collect();
-            (cached_results, undetermined_keys)
+        let fetched_results = if undetermined_keys.is_empty() {
+            Vec::new()
+        } else {
+            f(Box::new(undetermined_keys.clone().into_iter())).await?
         };
-
-        let fetched_results = f(Box::new(undetermined_keys.clone().into_iter())).await?;
         if cache_results {
             let fetched_by_key: HashMap<_, _> = fetched_results
                 .iter()
@@ -151,8 +178,7 @@ impl Buffer {
             }
         }
 
-        let results = cached_results.chain(fetched_results);
-        Ok(results)
+        Ok(cached_results.into_iter().chain(fetched_results))
     }
 
     /// Run `f` to fetch entries in `range` from TiKV. Combine them with mutations in local buffer. Returns the results.
@@ -440,15 +466,6 @@ enum MutationValue {
     Undetermined,
 }
 
-impl MutationValue {
-    fn unwrap(self) -> Option<Value> {
-        match self {
-            MutationValue::Determined(v) => v,
-            MutationValue::Undetermined => unreachable!(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use futures::executor::block_on;
@@ -557,6 +574,31 @@ mod tests {
             r3.unwrap().collect::<Vec<_>>(),
             vec![KvPair(k1, v1), KvPair(k2, v2)]
         );
+    }
+
+    #[test]
+    fn source_snapshot_cache_observability_counts_values_and_misses() {
+        let key: Key = b"missing".to_vec().into();
+        let mut buffer = Buffer::new(false);
+
+        let first = block_on(
+            buffer.batch_get_or_else(vec![key.clone()].into_iter(), |_| ready(Ok(Vec::new()))),
+        )
+        .unwrap()
+        .collect::<Vec<_>>();
+        let second = block_on(buffer.batch_get_or_else(vec![key].into_iter(), |_| {
+            ready(Err(internal_err!("cached snapshot miss must avoid fetch")))
+        }))
+        .unwrap()
+        .collect::<Vec<_>>();
+
+        assert!(first.is_empty());
+        assert!(second.is_empty());
+        assert_eq!(buffer.snapshot_cache_hit_count(), 1);
+        assert_eq!(buffer.snapshot_cache_size(), 1);
+        buffer.clear_cached_reads();
+        assert_eq!(buffer.snapshot_cache_hit_count(), 1);
+        assert_eq!(buffer.snapshot_cache_size(), 0);
     }
 
     #[test]
