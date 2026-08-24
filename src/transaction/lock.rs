@@ -66,6 +66,23 @@ struct ResolvedStatusCache {
     insertion_order: VecDeque<u64>,
 }
 
+#[derive(Default)]
+struct ResolvingLocks {
+    locks: HashMap<u64, Vec<Option<Vec<kvrpcpb::LockInfo>>>>,
+    concurrency: HashMap<u64, usize>,
+}
+
+/// A lock operation currently being resolved on behalf of a transaction.
+///
+/// This is the native representation of client-go's `txnlock.ResolvingLock`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvingLock {
+    pub txn_id: u64,
+    pub lock_txn_id: u64,
+    pub key: Vec<u8>,
+    pub primary: Vec<u8>,
+}
+
 /// Extract the lock carried by a TiKV key error.
 ///
 /// This mirrors client-go's `ExtractLockFromKeyErr`: a shared-lock wrapper is
@@ -757,6 +774,7 @@ async fn resolve_lock_with_retry_inner(
 pub struct ResolveLocksContext {
     // Record the status of each transaction.
     resolved: Arc<Mutex<ResolvedStatusCache>>,
+    resolving: Arc<Mutex<ResolvingLocks>>,
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
     pub(crate) rpc_interceptor: Option<RpcInterceptorChain>,
     pub(crate) resource_group_name: Option<String>,
@@ -832,6 +850,80 @@ impl ResolveLocksContext {
         self.resolved.lock().await.statuses.get(&txn_id).cloned()
     }
 
+    /// Record a source transaction beginning a lock-resolution attempt and
+    /// return its stable slot token.
+    pub async fn record_resolving_locks(
+        &self,
+        locks: &[kvrpcpb::LockInfo],
+        caller_start_ts: u64,
+    ) -> usize {
+        let mut resolving = self.resolving.lock().await;
+        let slots = resolving.locks.entry(caller_start_ts).or_default();
+        let token = slots.len();
+        slots.push(Some(locks.to_vec()));
+        *resolving.concurrency.entry(caller_start_ts).or_default() += 1;
+        token
+    }
+
+    /// Replace the currently reported locks for a previously recorded slot.
+    pub async fn update_resolving_locks(
+        &self,
+        locks: &[kvrpcpb::LockInfo],
+        caller_start_ts: u64,
+        token: usize,
+    ) {
+        let mut resolving = self.resolving.lock().await;
+        let slot = resolving
+            .locks
+            .get_mut(&caller_start_ts)
+            .and_then(|slots| slots.get_mut(token))
+            .expect("updating an active resolving-lock token");
+        *slot = Some(locks.to_vec());
+    }
+
+    /// Mark a recorded lock-resolution attempt complete and drop its caller
+    /// entry only after the source-equivalent last active slot finishes.
+    pub async fn resolving_locks_done(&self, caller_start_ts: u64, token: usize) {
+        let mut resolving = self.resolving.lock().await;
+        let slot = resolving
+            .locks
+            .get_mut(&caller_start_ts)
+            .and_then(|slots| slots.get_mut(token))
+            .expect("completing an active resolving-lock token");
+        *slot = None;
+        let concurrent = resolving
+            .concurrency
+            .get_mut(&caller_start_ts)
+            .expect("resolving-lock concurrency for active token");
+        *concurrent = concurrent
+            .checked_sub(1)
+            .expect("resolving-lock counter underflow");
+        if *concurrent == 0 {
+            resolving.concurrency.remove(&caller_start_ts);
+            resolving.locks.remove(&caller_start_ts);
+        }
+    }
+
+    /// Snapshot every currently active resolving lock in source insertion
+    /// order, omitting completed slots.
+    pub async fn resolving_locks(&self) -> Vec<ResolvingLock> {
+        let resolving = self.resolving.lock().await;
+        resolving
+            .locks
+            .iter()
+            .flat_map(|(&txn_id, slots)| {
+                slots.iter().flatten().flat_map(move |locks| {
+                    locks.iter().map(move |lock| ResolvingLock {
+                        txn_id,
+                        lock_txn_id: lock.lock_version,
+                        key: lock.key.clone(),
+                        primary: lock.primary_lock.clone(),
+                    })
+                })
+            })
+            .collect()
+    }
+
     pub async fn save_resolved(&mut self, txn_id: u64, txn_status: Arc<TransactionStatus>) {
         assert!(
             txn_status.is_cacheable(),
@@ -892,6 +984,39 @@ pub struct LockResolver {
 impl LockResolver {
     pub fn new(ctx: ResolveLocksContext) -> Self {
         Self { ctx }
+    }
+
+    /// Source `RecordResolvingLocks` compatibility entry point.
+    pub async fn record_resolving_locks(
+        &self,
+        locks: &[kvrpcpb::LockInfo],
+        caller_start_ts: u64,
+    ) -> usize {
+        self.ctx
+            .record_resolving_locks(locks, caller_start_ts)
+            .await
+    }
+
+    /// Source `UpdateResolvingLocks` compatibility entry point.
+    pub async fn update_resolving_locks(
+        &self,
+        locks: &[kvrpcpb::LockInfo],
+        caller_start_ts: u64,
+        token: usize,
+    ) {
+        self.ctx
+            .update_resolving_locks(locks, caller_start_ts, token)
+            .await;
+    }
+
+    /// Source `ResolveLocksDone` compatibility entry point.
+    pub async fn resolving_locks_done(&self, caller_start_ts: u64, token: usize) {
+        self.ctx.resolving_locks_done(caller_start_ts, token).await;
+    }
+
+    /// Source `Resolving` compatibility entry point.
+    pub async fn resolving_locks(&self) -> Vec<ResolvingLock> {
+        self.ctx.resolving_locks().await
     }
 
     /// Source `resolvePessimisticLock` uses PessimisticRollback after the
@@ -1489,6 +1614,67 @@ mod tests {
             .await
             .is_some());
         assert!(context.clone().get_resolved(1).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn source_resolving_locks_tracks_slots_updates_and_last_completion() {
+        let resolver = LockResolver::new(ResolveLocksContext::default());
+        let first = kvrpcpb::LockInfo {
+            key: b"first".to_vec(),
+            primary_lock: b"primary".to_vec(),
+            lock_version: 11,
+            ..Default::default()
+        };
+        let second = kvrpcpb::LockInfo {
+            key: b"second".to_vec(),
+            primary_lock: b"primary".to_vec(),
+            lock_version: 12,
+            ..Default::default()
+        };
+        let replacement = kvrpcpb::LockInfo {
+            key: b"replacement".to_vec(),
+            primary_lock: b"primary-2".to_vec(),
+            lock_version: 13,
+            ..Default::default()
+        };
+
+        let first_token = resolver.record_resolving_locks(&[first], 100).await;
+        let second_token = resolver.record_resolving_locks(&[second], 100).await;
+        assert_eq!((first_token, second_token), (0, 1));
+        resolver
+            .update_resolving_locks(&[replacement], 100, first_token)
+            .await;
+
+        assert_eq!(
+            resolver.resolving_locks().await,
+            vec![
+                ResolvingLock {
+                    txn_id: 100,
+                    lock_txn_id: 13,
+                    key: b"replacement".to_vec(),
+                    primary: b"primary-2".to_vec(),
+                },
+                ResolvingLock {
+                    txn_id: 100,
+                    lock_txn_id: 12,
+                    key: b"second".to_vec(),
+                    primary: b"primary".to_vec(),
+                },
+            ]
+        );
+
+        resolver.resolving_locks_done(100, first_token).await;
+        assert_eq!(
+            resolver.resolving_locks().await,
+            vec![ResolvingLock {
+                txn_id: 100,
+                lock_txn_id: 12,
+                key: b"second".to_vec(),
+                primary: b"primary".to_vec(),
+            }]
+        );
+        resolver.resolving_locks_done(100, second_token).await;
+        assert!(resolver.resolving_locks().await.is_empty());
     }
 
     #[tokio::test]
