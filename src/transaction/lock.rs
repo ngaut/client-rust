@@ -1276,6 +1276,14 @@ impl ReadLockContext {
         self.state.write().unwrap().resolved.insert(txn_id);
     }
 
+    /// Reset only the timestamp-scoped ignore-lock hints.
+    ///
+    /// client-go's `KVSnapshot.SetSnapshotTS` leaves committed read-through
+    /// hints intact.
+    pub(crate) fn clear_resolved(&self) {
+        self.state.write().unwrap().resolved.clear();
+    }
+
     pub(crate) fn add_committed(&self, txn_id: u64) {
         self.state.write().unwrap().committed.insert(txn_id);
     }

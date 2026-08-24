@@ -261,7 +261,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         self.timestamp = timestamp;
         self.buffer.clear_cached_reads();
-        self.read_lock_context = ReadLockContext::default();
+        self.read_lock_context.clear_resolved();
     }
 
     pub(crate) fn set_stale_read(&mut self, stale_read: bool) {
@@ -2447,7 +2447,7 @@ mod tests {
     use crate::TransactionOptions;
 
     #[test]
-    fn source_snapshot_timestamp_reset_discards_prior_read_lock_hints() {
+    fn source_snapshot_timestamp_reset_discards_only_resolved_lock_hints() {
         let mut transaction = Transaction::new(
             Timestamp::from_version(1),
             Arc::new(MockPdClient::default()),
@@ -2462,7 +2462,7 @@ mod tests {
         assert_eq!(transaction.start_timestamp().version(), 2);
         assert_eq!(
             transaction.read_lock_context.snapshot(),
-            (Vec::new(), Vec::new())
+            (Vec::new(), vec![12])
         );
     }
 

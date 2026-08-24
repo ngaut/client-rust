@@ -30,8 +30,8 @@ impl Snapshot {
     /// Reset the read timestamp for subsequent snapshot operations.
     ///
     /// This is the Rust counterpart of client-go `KVSnapshot.SetSnapshotTS`.
-    /// It clears lock-resolution hints from the prior timestamp; Rust has no
-    /// separate snapshot value cache to invalidate.
+    /// It discards cached reads and timestamp-scoped resolved-lock hints;
+    /// committed read-through hints remain intact as in client-go.
     pub fn set_snapshot_timestamp(&mut self, timestamp: crate::Timestamp) {
         self.transaction.set_snapshot_timestamp(timestamp);
     }
