@@ -4,11 +4,13 @@ use std::time::Duration;
 use std::time::Instant;
 
 use prometheus::register_gauge;
+use prometheus::register_gauge_vec;
 use prometheus::register_histogram;
 use prometheus::register_histogram_vec;
 use prometheus::register_int_counter;
 use prometheus::register_int_counter_vec;
 use prometheus::Gauge;
+use prometheus::GaugeVec;
 use prometheus::Histogram;
 use prometheus::HistogramOpts;
 use prometheus::HistogramVec;
@@ -108,6 +110,34 @@ pub(crate) fn observe_retry_backoff(kind: &'static str, duration: Duration) {
     TIKV_BACKOFF_HISTOGRAM
         .with_label_values(&[kind])
         .observe(duration_to_sec(duration));
+}
+
+/// Mirrors client-go's range-task completed/failed region gauges. Completed
+/// work is reset when a runner exits; failed work remains cumulative.
+pub(crate) fn reset_range_task_completed(task_type: &'static str) {
+    TIKV_RANGE_TASK_STATS
+        .with_label_values(&[task_type, "completed-regions"])
+        .set(0.0);
+}
+
+pub(crate) fn add_range_task_stats(
+    task_type: &'static str,
+    completed_regions: usize,
+    failed_regions: usize,
+) {
+    TIKV_RANGE_TASK_STATS
+        .with_label_values(&[task_type, "completed-regions"])
+        .add(completed_regions as f64);
+    TIKV_RANGE_TASK_STATS
+        .with_label_values(&[task_type, "failed-regions"])
+        .add(failed_regions as f64);
+}
+
+#[cfg(test)]
+pub(crate) fn range_task_stat(task_type: &'static str, result: &'static str) -> f64 {
+    TIKV_RANGE_TASK_STATS
+        .with_label_values(&[task_type, result])
+        .get()
 }
 
 /// Records the stage/outcome breakdown emitted by client-go's BatchCommands
@@ -379,6 +409,12 @@ lazy_static::lazy_static! {
         )
         .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).unwrap()),
         &["type"]
+    )
+    .unwrap();
+    static ref TIKV_RANGE_TASK_STATS: GaugeVec = register_gauge_vec!(
+        "tikv_client_go_range_task_stats",
+        "stat of range tasks",
+        &["type", "result"]
     )
     .unwrap();
     static ref TIKV_BATCH_REQUEST_STAGE_DURATION: HistogramVec = register_histogram_vec!(

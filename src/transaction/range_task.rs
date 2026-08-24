@@ -40,6 +40,7 @@ pub(crate) trait RangeTaskHandler: Clone + Send + Sync + 'static {
 
 /// Source-compatible scheduler for operations performed across a key range.
 pub(crate) struct Runner<PdC: PdClient, H: RangeTaskHandler> {
+    name: &'static str,
     pd_client: Arc<PdC>,
     handler: H,
     concurrency: usize,
@@ -49,9 +50,15 @@ pub(crate) struct Runner<PdC: PdClient, H: RangeTaskHandler> {
 }
 
 impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
-    pub(crate) fn new(pd_client: Arc<PdC>, concurrency: usize, handler: H) -> Self {
+    pub(crate) fn new(
+        name: &'static str,
+        pd_client: Arc<PdC>,
+        concurrency: usize,
+        handler: H,
+    ) -> Self {
         assert!(concurrency > 0, "range task concurrency must be at least 1");
         Self {
+            name,
             pd_client,
             handler,
             concurrency,
@@ -78,6 +85,8 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
     }
 
     pub(crate) async fn run_on_range(&self, start_key: Vec<u8>, end_key: Vec<u8>) -> Result<()> {
+        crate::stats::reset_range_task_completed(self.name);
+        let _metric_reset = RangeTaskMetricReset { name: self.name };
         self.completed_regions.store(0, Ordering::Release);
         self.failed_regions.store(0, Ordering::Release);
         if !end_key.is_empty() && start_key >= end_key {
@@ -113,12 +122,27 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
                 .fetch_add(stat.completed_regions, Ordering::AcqRel);
             self.failed_regions
                 .fetch_add(stat.failed_regions, Ordering::AcqRel);
+            crate::stats::add_range_task_stats(
+                self.name,
+                stat.completed_regions,
+                stat.failed_regions,
+            );
             if let Err(error) = result {
                 cancellation.cancel();
                 return Err(error);
             }
         }
         Ok(())
+    }
+}
+
+struct RangeTaskMetricReset {
+    name: &'static str,
+}
+
+impl Drop for RangeTaskMetricReset {
+    fn drop(&mut self) {
+        crate::stats::reset_range_task_completed(self.name);
     }
 }
 
@@ -201,7 +225,12 @@ mod tests {
     async fn source_runner_groups_region_intersections_and_counts_results() {
         let handler = RecordingHandler::default();
         let ranges = handler.ranges.clone();
-        let mut runner = Runner::new(Arc::new(MockPdClient::default()), 1, handler);
+        let mut runner = Runner::new(
+            "range-task-grouping",
+            Arc::new(MockPdClient::default()),
+            1,
+            handler,
+        );
         runner.set_regions_per_task(1);
         runner.run_on_range(vec![], vec![250, 250]).await.unwrap();
 
@@ -220,7 +249,12 @@ mod tests {
             ..Default::default()
         };
         let ranges = handler.ranges.clone();
-        let mut runner = Runner::new(Arc::new(MockPdClient::default()), 1, handler);
+        let mut runner = Runner::new(
+            "range-task-stop",
+            Arc::new(MockPdClient::default()),
+            1,
+            handler,
+        );
         runner.set_regions_per_task(1);
         let error = runner
             .run_on_range(vec![], vec![250, 250])
@@ -231,17 +265,30 @@ mod tests {
         assert_eq!(*ranges.lock().unwrap(), vec![(vec![], vec![10])]);
         assert_eq!(runner.completed_regions(), 0);
         assert_eq!(runner.failed_regions(), 1);
+        assert_eq!(
+            crate::stats::range_task_stat("range-task-stop", "failed-regions"),
+            1.0
+        );
     }
 
     #[tokio::test]
     async fn source_runner_bounds_concurrent_task_handlers() {
         let handler = ConcurrentHandler::default();
         let peak_active = handler.peak_active.clone();
-        let mut runner = Runner::new(Arc::new(MockPdClient::default()), 2, handler);
+        let mut runner = Runner::new(
+            "range-task-concurrency",
+            Arc::new(MockPdClient::default()),
+            2,
+            handler,
+        );
         runner.set_regions_per_task(1);
         runner.run_on_range(vec![], vec![250, 250]).await.unwrap();
 
         assert_eq!(peak_active.load(Ordering::Acquire), 2);
         assert_eq!(runner.completed_regions(), 2);
+        assert_eq!(
+            crate::stats::range_task_stat("range-task-concurrency", "completed-regions"),
+            0.0
+        );
     }
 }

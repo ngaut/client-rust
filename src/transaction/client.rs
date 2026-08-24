@@ -465,6 +465,11 @@ impl Client {
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let (start_key, end_key) = range.into_keys();
         let runner = Runner::new(
+            if notify_only {
+                "delete-range-notify"
+            } else {
+                "delete-range"
+            },
             self.pd.clone(),
             concurrency,
             DeleteRangeHandler {
