@@ -943,12 +943,17 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         if let Ok(store_id) = store_id {
             pd_client.invalidate_store_cache(store_id).await;
         }
-        // `RegionRequestSender.onRegionError` closes the physical RPC address
-        // even when the store cache was already removed, so a stale DNS
-        // resolution cannot leave a reusable channel behind.
-        if !region_store.target.is_empty() {
+        // `RegionRequestSender.onRegionError` closes `RPCContext.Addr`, which
+        // is the logical destination. A forwarding proxy has a separate
+        // transport address and must not be retired for this error.
+        let store_address = if region_store.forwarded_host.is_empty() {
+            &region_store.target
+        } else {
+            &region_store.forwarded_host
+        };
+        if !store_address.is_empty() {
             pd_client
-                .close_kv_client_addr_ver(&region_store.target, u64::MAX)
+                .close_kv_client_addr_ver(store_address, u64::MAX)
                 .await;
         }
         Err(Error::RegionError(Box::new(e)))
@@ -1805,6 +1810,22 @@ mod test {
         .await;
         assert!(matches!(result, Err(Error::RegionError(_))));
         assert_eq!(pd_client.invalidated_regions(), vec![ver_id]);
+        assert_eq!(pd_client.closed_client_addresses(), vec!["tikv-a"]);
+
+        let pd_client = Arc::new(MockPdClient::default());
+        let store = region_store()
+            .with_target("proxy-a")
+            .with_forwarded_host("tikv-a");
+        let result = handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                store_not_match: Some(Default::default()),
+                ..Default::default()
+            },
+            store,
+        )
+        .await;
+        assert!(matches!(result, Err(Error::RegionError(_))));
         assert_eq!(pd_client.closed_client_addresses(), vec!["tikv-a"]);
 
         let pd_client = Arc::new(MockPdClient::default());
