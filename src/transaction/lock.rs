@@ -1356,6 +1356,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_lite_primary_skips_resolve_lock_after_status_check() {
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                if req
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .is_some()
+                {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                assert!(req.downcast_ref::<kvrpcpb::ResolveLockRequest>().is_none());
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        let lock = kvrpcpb::LockInfo {
+            key: vec![1],
+            primary_lock: vec![1],
+            lock_version: 1,
+            txn_size: get_global_config().tikv_client.resolve_lock_lite_threshold - 1,
+            ..Default::default()
+        };
+        assert!(resolve_locks_with_context(
+            vec![lock],
+            Timestamp::default(),
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+        )
+        .await
+        .unwrap()
+        .is_empty());
+    }
+
+    #[tokio::test]
     #[serial]
     async fn test_resolve_locks_resolves_committed_even_if_ttl_not_expired() {
         let check_txn_status_count = Arc::new(AtomicUsize::new(0));

@@ -735,3 +735,5 @@ Plan revision note (2026-08-24): aligned the empty-lock boundary of `ResolveLock
 Plan revision note (2026-08-24): added a direct source-derived Prewrite shard regression: construction records the full mutation count and `Shardable::apply_shard` replaces it with the physical request's count, proving the TxnSize input used by lite lock resolution. The focused regression and full 400-test pinned-nightly library suite pass.
 
 Plan revision note (2026-08-24): added the paired resolver regression: a transaction one below the configured lite threshold emits ResolveLock with exactly the observed key. The focused regression and full 401-test pinned-nightly library suite pass.
+
+Plan revision note (2026-08-24): added the source lite-primary regression: a small primary lock with a final CheckTxnStatus result dispatches no ResolveLock request. The focused regression and full 402-test pinned-nightly library suite pass.
