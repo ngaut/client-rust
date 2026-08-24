@@ -145,9 +145,9 @@ impl Config {
 
     /// Set the timeout for clients.
     ///
-    /// The timeout is used for all requests when using or connecting to a TiKV cluster (including
-    /// PD nodes). If the request does not complete within timeout, the request is cancelled and
-    /// an error returned to the user.
+    /// The timeout is used for RPC requests and PD connection setup. If an operation does not
+    /// complete within the timeout, it is cancelled and an error is returned to the user. TiKV
+    /// transport dialing uses client-go's separate fixed five-second deadline.
     ///
     /// The default timeout is two seconds.
     ///

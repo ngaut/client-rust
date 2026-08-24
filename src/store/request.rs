@@ -1367,6 +1367,75 @@ impl Request for mpp::DispatchTaskRequest {
 mod tests {
     use super::*;
 
+    #[test]
+    fn source_call_rpc_command_matrix_has_typed_request_implementations() {
+        let requests: Vec<Box<dyn Request>> = vec![
+            Box::new(kvrpcpb::GetRequest::default()),
+            Box::new(kvrpcpb::ScanRequest::default()),
+            Box::new(kvrpcpb::PrewriteRequest::default()),
+            Box::new(kvrpcpb::PessimisticLockRequest::default()),
+            Box::new(kvrpcpb::PessimisticRollbackRequest::default()),
+            Box::new(kvrpcpb::CommitRequest::default()),
+            Box::new(kvrpcpb::CleanupRequest::default()),
+            Box::new(kvrpcpb::BatchGetRequest::default()),
+            Box::new(kvrpcpb::BatchRollbackRequest::default()),
+            Box::new(kvrpcpb::ScanLockRequest::default()),
+            Box::new(kvrpcpb::ResolveLockRequest::default()),
+            Box::new(kvrpcpb::GcRequest::default()),
+            Box::new(kvrpcpb::DeleteRangeRequest::default()),
+            Box::new(kvrpcpb::RawGetRequest::default()),
+            Box::new(kvrpcpb::RawBatchGetRequest::default()),
+            Box::new(kvrpcpb::RawPutRequest::default()),
+            Box::new(kvrpcpb::RawBatchPutRequest::default()),
+            Box::new(kvrpcpb::RawDeleteRequest::default()),
+            Box::new(kvrpcpb::RawBatchDeleteRequest::default()),
+            Box::new(kvrpcpb::RawDeleteRangeRequest::default()),
+            Box::new(kvrpcpb::RawScanRequest::default()),
+            Box::new(kvrpcpb::UnsafeDestroyRangeRequest::default()),
+            Box::new(kvrpcpb::RawGetKeyTtlRequest::default()),
+            Box::new(kvrpcpb::RawCasRequest::default()),
+            Box::new(kvrpcpb::RawChecksumRequest::default()),
+            Box::new(kvrpcpb::RegisterLockObserverRequest::default()),
+            Box::new(kvrpcpb::CheckLockObserverRequest::default()),
+            Box::new(kvrpcpb::RemoveLockObserverRequest::default()),
+            Box::new(kvrpcpb::PhysicalScanLockRequest::default()),
+            Box::new(coprocessor::Request::default()),
+            Box::new(mpp::DispatchTaskRequest::default()),
+            Box::new(mpp::IsAliveRequest::default()),
+            Box::new(MppStreamRequest(
+                mpp::EstablishMppConnectionRequest::default(),
+            )),
+            Box::new(mpp::CancelTaskRequest::default()),
+            Box::new(CoprocessorStreamRequest::new(
+                coprocessor::Request::default(),
+            )),
+            Box::new(BatchCoprocessorStreamRequest::new(
+                coprocessor::BatchRequest::default(),
+            )),
+            Box::new(kvrpcpb::MvccGetByKeyRequest::default()),
+            Box::new(kvrpcpb::MvccGetByStartTsRequest::default()),
+            Box::new(kvrpcpb::SplitRegionRequest::default()),
+            Box::new(tikvpb::BatchCommandsEmptyRequest::default()),
+            Box::new(kvrpcpb::CheckTxnStatusRequest::default()),
+            Box::new(kvrpcpb::CheckSecondaryLocksRequest::default()),
+            Box::new(kvrpcpb::TxnHeartBeatRequest::default()),
+            Box::new(kvrpcpb::StoreSafeTsRequest::default()),
+            Box::new(kvrpcpb::GetLockWaitInfoRequest::default()),
+            Box::new(kvrpcpb::CompactRequest::default()),
+            Box::new(kvrpcpb::FlashbackToVersionRequest::default()),
+            Box::new(kvrpcpb::PrepareFlashbackToVersionRequest::default()),
+            Box::new(kvrpcpb::TiFlashSystemTableRequest::default()),
+            Box::new(kvrpcpb::FlushRequest::default()),
+            Box::new(kvrpcpb::BufferBatchGetRequest::default()),
+            Box::new(kvrpcpb::GetHealthFeedbackRequest::default()),
+            Box::new(kvrpcpb::BroadcastTxnStatusRequest::default()),
+            Box::new(debugpb::GetRegionPropertiesRequest::default()),
+        ];
+
+        assert_eq!(requests.len(), 54);
+        assert!(requests.iter().all(|request| !request.label().is_empty()));
+    }
+
     fn assert_context_metadata(request: &mut dyn Request) {
         request.set_api_version(kvrpcpb::ApiVersion::V2);
         request.set_keyspace_id(Some(42));

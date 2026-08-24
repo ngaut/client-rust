@@ -1515,7 +1515,11 @@ pub mod test {
 
         client.kv_client("store-a").await.unwrap();
         client.kv_client("store-b").await.unwrap();
-        client.close().await;
+        let store_a_version = client.kv_client_cache.read().await["store-a"].version;
+        tokio::join!(
+            client.close(),
+            client.close_cached_kv_client_addr_ver("store-a", store_a_version)
+        );
         client.close().await;
 
         assert_eq!(connects.load(Ordering::SeqCst), 2);
