@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 
@@ -11,13 +12,14 @@ use fail::fail_point;
 use log::debug;
 use log::error;
 use log::warn;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::sleep;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
 use crate::config::get_global_config;
+use crate::config::NEXT_GEN;
 use crate::interceptor::RpcInterceptorChain;
 use crate::kv::HexRepr;
 use crate::pd::PdClient;
@@ -53,6 +55,10 @@ pub(crate) fn format_key_for_log(key: &[u8]) -> String {
 const RESOLVED_CACHE_SIZE: usize = 2048;
 /// client-go `internal/client.MaxWriteExecutionTime`.
 const LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION: Duration = Duration::from_secs(20);
+/// client-go's process-wide `AsyncResolveLockSemaphoreLimit`.
+const ASYNC_READ_RESOLVE_LOCK_LIMIT: usize = 10_000;
+static ASYNC_READ_RESOLVE_LOCKS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(ASYNC_READ_RESOLVE_LOCK_LIMIT)));
 
 #[derive(Default)]
 struct ResolvedStatusCache {
@@ -301,6 +307,15 @@ async fn resolve_locks_with_context_inner(
                             .await;
 
                         if let Some(read_lock_context) = read_lock_context {
+                            schedule_read_lock_cleanup(
+                                &lock,
+                                commit_version,
+                                pd_client.clone(),
+                                keyspace,
+                                keyspace_name,
+                                &lock_resolver.ctx,
+                            )
+                            .await;
                             record_read_lock_status(
                                 read_lock_context,
                                 lock.lock_version,
@@ -380,6 +395,15 @@ async fn resolve_locks_with_context_inner(
                     TransactionStatusKind::Committed(ts) => {
                         let commit_version = ts.version();
                         if let Some(read_lock_context) = read_lock_context {
+                            schedule_read_lock_cleanup(
+                                &lock,
+                                commit_version,
+                                pd_client.clone(),
+                                keyspace,
+                                keyspace_name,
+                                &lock_resolver.ctx,
+                            )
+                            .await;
                             record_read_lock_status(
                                 read_lock_context,
                                 lock.lock_version,
@@ -394,6 +418,15 @@ async fn resolve_locks_with_context_inner(
                     }
                     TransactionStatusKind::RolledBack => {
                         if let Some(read_lock_context) = read_lock_context {
+                            schedule_read_lock_cleanup(
+                                &lock,
+                                0,
+                                pd_client.clone(),
+                                keyspace,
+                                keyspace_name,
+                                &lock_resolver.ctx,
+                            )
+                            .await;
                             read_lock_context.add_resolved(lock.lock_version);
                             continue;
                         }
@@ -416,6 +449,15 @@ async fn resolve_locks_with_context_inner(
 
         if let Some(commit_version) = commit_version {
             if let Some(read_lock_context) = read_lock_context {
+                schedule_read_lock_cleanup(
+                    &lock,
+                    commit_version,
+                    pd_client.clone(),
+                    keyspace,
+                    keyspace_name,
+                    &lock_resolver.ctx,
+                )
+                .await;
                 record_read_lock_status(
                     read_lock_context,
                     lock.lock_version,
@@ -474,6 +516,61 @@ fn record_read_lock_status(
     }
 }
 
+/// Client-go schedules read cleanup outside the caller's context. A full
+/// semaphore runs it detached; saturation falls back to inline cleanup but
+/// deliberately ignores cleanup failure so the already-classified read can
+/// still retry with its TiKV lock hints.
+#[allow(clippy::too_many_arguments)]
+async fn schedule_read_lock_cleanup(
+    lock: &kvrpcpb::LockInfo,
+    commit_version: u64,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: &ResolveLocksContext,
+) {
+    let key = lock.key.clone();
+    let start_version = lock.lock_version;
+    let is_txn_file = lock.is_txn_file;
+    let txn_size = lock.txn_size;
+    let keyspace_name = keyspace_name.map(ToOwned::to_owned);
+    let rpc_interceptor = context.rpc_interceptor.clone();
+    let resource_group_name = context.resource_group_name.clone();
+    let resource_control = context.resource_control.clone();
+    let ru_details = context.ru_details.clone();
+    let resolve = async move {
+        let _ = resolve_lock_with_retry_for_read_cleanup(
+            &key,
+            start_version,
+            commit_version,
+            is_txn_file,
+            txn_size,
+            pd_client,
+            keyspace,
+            keyspace_name.as_deref(),
+            rpc_interceptor,
+            resource_group_name.as_deref(),
+            resource_control,
+            ru_details,
+            // The native attempt-based backoff has the source 40,000-ms
+            // async-cleanup budget when its 2-ms exponential prefix and
+            // 500-ms cap are allowed to make 87 attempts.
+            Backoff::no_jitter_backoff(2, 500, 87),
+        )
+        .await;
+    };
+
+    match ASYNC_READ_RESOLVE_LOCKS.clone().try_acquire_owned() {
+        Ok(permit) => {
+            tokio::spawn(async move {
+                let _permit = permit;
+                resolve.await;
+            });
+        }
+        Err(_) => resolve.await,
+    }
+}
+
 async fn resolve_lock_with_retry(
     #[allow(clippy::ptr_arg)] key: &Vec<u8>,
     start_version: u64,
@@ -487,7 +584,78 @@ async fn resolve_lock_with_retry(
     resource_group_name: Option<&str>,
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
+    backoff: Backoff,
+) -> Result<RegionVerId> {
+    resolve_lock_with_retry_inner(
+        key,
+        start_version,
+        commit_version,
+        is_txn_file,
+        txn_size,
+        pd_client,
+        keyspace,
+        keyspace_name,
+        rpc_interceptor,
+        resource_group_name,
+        resource_control,
+        ru_details,
+        backoff,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_lock_with_retry_for_read_cleanup(
+    key: &Vec<u8>,
+    start_version: u64,
+    commit_version: u64,
+    is_txn_file: bool,
+    txn_size: u64,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<&str>,
+    resource_control: Option<ResourceGroupControllerHandle>,
+    ru_details: Option<Arc<crate::RuDetails>>,
+    backoff: Backoff,
+) -> Result<RegionVerId> {
+    resolve_lock_with_retry_inner(
+        key,
+        start_version,
+        commit_version,
+        is_txn_file,
+        txn_size,
+        pd_client,
+        keyspace,
+        keyspace_name,
+        rpc_interceptor,
+        resource_group_name,
+        resource_control,
+        ru_details,
+        backoff,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_lock_with_retry_inner(
+    #[allow(clippy::ptr_arg)] key: &Vec<u8>,
+    start_version: u64,
+    commit_version: u64,
+    is_txn_file: bool,
+    txn_size: u64,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<&str>,
+    resource_control: Option<ResourceGroupControllerHandle>,
+    ru_details: Option<Arc<crate::RuDetails>>,
     mut backoff: Backoff,
+    server_side_async: bool,
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
     let mut attempt = 0;
@@ -501,6 +669,8 @@ async fn resolve_lock_with_retry(
         let resolve_lite = txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold;
         if resolve_lite {
             request.keys = vec![key.clone()];
+        } else if server_side_async && NEXT_GEN {
+            request.is_async = true;
         }
         let plan_builder =
             match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
@@ -1587,7 +1757,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_read_resolution_reads_through_committed_locks_without_cleanup() {
+    async fn source_read_resolution_reads_through_committed_locks_without_waiting_for_cleanup() {
         let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |req: &dyn Any| {
                 if req
@@ -1599,7 +1769,9 @@ mod tests {
                         ..Default::default()
                     }) as Box<dyn Any>);
                 }
-                assert!(req.downcast_ref::<kvrpcpb::ResolveLockRequest>().is_none());
+                if req.downcast_ref::<kvrpcpb::ResolveLockRequest>().is_some() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
                 panic!("unexpected request type: {:?}", req.type_id());
             },
         )));
@@ -1626,6 +1798,56 @@ mod tests {
         let (resolved, committed) = read_locks.snapshot();
         assert!(resolved.is_empty());
         assert_eq!(committed, [1]);
+    }
+
+    #[tokio::test]
+    async fn source_read_cleanup_is_detached_and_nextgen_uses_tikv_async_resolve() {
+        let cleanup_sent = Arc::new(tokio::sync::Notify::new());
+        let cleanup_sent_by_hook = Arc::clone(&cleanup_sent);
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |req: &dyn Any| {
+                if req
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .is_some()
+                {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
+                    assert_eq!(req.is_async, NEXT_GEN);
+                    assert!(req.keys.is_empty());
+                    cleanup_sent_by_hook.notify_one();
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type: {:?}", req.type_id());
+            },
+        )));
+        let read_locks = ReadLockContext::default();
+        let lock = kvrpcpb::LockInfo {
+            key: vec![1],
+            primary_lock: vec![1],
+            lock_version: 1,
+            txn_size: u64::MAX,
+            ..Default::default()
+        };
+
+        assert!(resolve_locks_for_read_with_context(
+            vec![lock],
+            Timestamp::from_version(3),
+            client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+            &read_locks,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        tokio::time::timeout(Duration::from_secs(1), cleanup_sent.notified())
+            .await
+            .expect("detached read cleanup should send ResolveLock");
     }
 
     #[test]

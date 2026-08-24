@@ -732,6 +732,8 @@ Plan revision note (2026-08-24): added the source `ResolveLocksForRead` retry bo
 
 Plan revision note (2026-08-24): corrected client-go `Lock.IsPessimistic` parity. A `SharedLock` or `shared_lock_infos` wrapper remains invalid direct resolver input, but a concrete `SharedPessimisticLock` is now accepted and uses the existing PessimisticRollback protocol. The focused wrapper and rollback regressions pass; full suite validation follows with this txnlock seed.
 
+Plan revision note (2026-08-24): read lock cleanup now follows the source's detached execution boundary. A process-wide 10,000-permit semaphore schedules final ordinary read locks outside the caller task; saturation runs the same cleanup inline but ignores its failure, preserving the resolved/committed retry hints. The native exponential schedule spans client-go's 40,000-ms async-cleanup budget. On `nextgen`, non-lite cleanup sets TiKV `ResolveLockRequest.is_async`; lite cleanup remains key-scoped. Focused default/nextgen regressions and both full 408-test library suites pass. Multi-key lite batching, async-commit whole-transaction cleanup, observability metrics, and owner shutdown remain open.
+
 Plan revision note (2026-08-24): corrected lite-region bookkeeping: a key-scoped ResolveLock no longer marks the whole region clean, while async-commit secondary recovery bypasses the ordinary lite decision so its multi-key region cleanup cannot be suppressed after the first key. Lock-module and full 399-test pinned-nightly suites pass.
 
 Plan revision note (2026-08-24): aligned the empty-lock boundary of `ResolveLocksWithOpts`: Rust now returns before requesting a PD timestamp when the input lock list is empty. The full 399-test pinned-nightly suite passes.
