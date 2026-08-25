@@ -8,7 +8,7 @@ use tikv_client::proto::{kvrpcpb, metapb};
 
 #[test]
 fn downstream_crates_can_name_and_use_generated_protocol_types() {
-    let context = kvrpcpb::Context {
+    let shared_context = tikv_client_kvproto::kvrpcpb::Context {
         region_id: 42,
         peer: Some(metapb::Peer {
             id: 7,
@@ -17,6 +17,7 @@ fn downstream_crates_can_name_and_use_generated_protocol_types() {
         }),
         ..Default::default()
     };
+    let context: kvrpcpb::Context = shared_context;
 
     let encoded = context.encode_to_vec();
     let decoded = kvrpcpb::Context::decode(encoded.as_slice()).unwrap();
