@@ -275,9 +275,26 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                         &selected.resource_group_name,
                         selected.request,
                         response_info,
-                    )?;
-                    if let Some(ru_details) = &self.ru_details {
-                        ru_details.update(&settlement.consumption, settlement.wait_duration);
+                    );
+                    match settlement {
+                        Ok(settlement) => {
+                            if let Some(ru_details) = &self.ru_details {
+                                ru_details
+                                    .update(&settlement.consumption, settlement.wait_duration);
+                            }
+                        }
+                        Err(error)
+                            if request
+                                .as_any()
+                                .downcast_ref::<kvrpcpb::CommitRequest>()
+                                .is_some_and(|request| request.is_txn_file) =>
+                        {
+                            log::warn!(
+                                "txn file: resource control accounting failed after commit: {}",
+                                error
+                            );
+                        }
+                        Err(error) => return Err(error),
                     }
                 }
                 Ok(response)
@@ -341,7 +358,7 @@ impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
     }
 }
 
-const MULTI_REGION_CONCURRENCY: usize = 16;
+pub(crate) const MULTI_REGION_CONCURRENCY: usize = 16;
 const MULTI_STORES_CONCURRENCY: usize = 16;
 
 pub(crate) fn is_grpc_error(e: &Error) -> bool {
@@ -664,6 +681,8 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient, R: RegionRetryState = Ba
     /// If true, return Ok and preserve all regions' results, even if some of them are Err.
     /// Otherwise, return the first Err if there is any.
     pub preserve_region_results: bool,
+    /// Maximum number of region shards dispatched concurrently.
+    pub concurrency: usize,
 }
 
 #[allow(private_bounds)]
@@ -1672,6 +1691,7 @@ impl<P: Plan, PdC: PdClient, R: RegionRetryState> Clone for RetryableMultiRegion
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
             preserve_region_results: self.preserve_region_results,
+            concurrency: self.concurrency,
         }
     }
 }
@@ -1689,7 +1709,7 @@ where
         // Limit the maximum concurrency of multi-region request. If there are
         // too many concurrent requests, TiKV is more likely to return a "TiKV
         // is busy" error
-        let concurrency_permits = Arc::new(Semaphore::new(MULTI_REGION_CONCURRENCY));
+        let concurrency_permits = Arc::new(Semaphore::new(self.concurrency.max(1)));
         Self::single_plan_handler(
             self.pd_client.clone(),
             self.inner.clone(),
@@ -1903,6 +1923,22 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub(crate) snapshot_lock_backoff: Option<SnapshotLockBackoff>,
     /// Leave pair-level locks in the response for scanner-owned point reads.
     pub(crate) response_locks_only: bool,
+    /// Prewrite-specific early-conflict behavior from client-go. Normal lock
+    /// resolution plans leave this unset.
+    pub(crate) prewrite_lock_conflict: Option<PrewriteLockConflict>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PrewriteLockConflict {
+    pub(crate) caller_start_ts: u64,
+    pub(crate) no_resolve: bool,
+    pub(crate) optimistic: bool,
+}
+
+impl PrewriteLockConflict {
+    fn rejects(self, lock: &kvrpcpb::LockInfo) -> bool {
+        self.no_resolve || (self.optimistic && lock.lock_version > self.caller_start_ts)
+    }
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1923,6 +1959,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             snapshot_runtime_stats: self.snapshot_runtime_stats.clone(),
             snapshot_lock_backoff: self.snapshot_lock_backoff.clone(),
             response_locks_only: self.response_locks_only,
+            prewrite_lock_conflict: self.prewrite_lock_conflict,
         }
     }
 }
@@ -1946,6 +1983,22 @@ where
             };
             if locks.is_empty() {
                 return Ok(result);
+            }
+
+            if let Some((policy, lock)) = self.prewrite_lock_conflict.and_then(|policy| {
+                locks
+                    .iter()
+                    .find(|lock| policy.rejects(lock))
+                    .map(|lock| (policy, lock))
+            }) {
+                return Err(crate::error::new_write_conflict_with_args(
+                    policy.caller_start_ts,
+                    lock.lock_version,
+                    0,
+                    lock.key.clone(),
+                    kvrpcpb::write_conflict::Reason::Optimistic,
+                )
+                .into());
             }
 
             if self.backoff.is_none() {
@@ -3544,10 +3597,12 @@ mod test {
                 snapshot_runtime_stats: None,
                 snapshot_lock_backoff: None,
                 response_locks_only: false,
+                prewrite_lock_conflict: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),
             preserve_region_results: false,
+            concurrency: MULTI_REGION_CONCURRENCY,
         };
         assert!(plan.execute().await.is_err())
     }
@@ -3582,6 +3637,7 @@ mod test {
             pd_client: Arc::new(MockPdClient::default()),
             backoff: retry,
             preserve_region_results: false,
+            concurrency: MULTI_REGION_CONCURRENCY,
         };
 
         assert_eq!(plan.execute().await.unwrap().len(), 2);
@@ -3604,6 +3660,7 @@ mod test {
                 cancellation_seen: cancellation_seen.clone(),
             },
             preserve_region_results: false,
+            concurrency: MULTI_REGION_CONCURRENCY,
         };
 
         assert!(plan.execute().await.is_err());

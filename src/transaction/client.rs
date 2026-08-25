@@ -327,6 +327,7 @@ impl Client {
     /// ```
     pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
         let timestamp = self.current_timestamp().await?;
+        options.validate()?;
         debug!("began transaction, start_ts: {}", timestamp.version());
         Ok(self.new_transaction(timestamp, options))
     }
