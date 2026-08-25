@@ -7,6 +7,7 @@
 
 pub(crate) mod cluster;
 pub(crate) mod deadlock;
+pub mod mocktikv;
 
 use std::any::Any;
 use std::sync::Arc;
@@ -77,6 +78,8 @@ pub struct MockKvConnect;
 
 pub struct MockCluster;
 
+type BucketUpdates = Arc<Mutex<Vec<(RegionVerId, u64, Vec<Vec<u8>>)>>>;
+
 #[derive(new)]
 pub struct MockPdClient {
     client: MockKvClient,
@@ -89,7 +92,7 @@ pub struct MockPdClient {
     #[new(default)]
     closed_client_addresses: Arc<Mutex<Vec<String>>>,
     #[new(default)]
-    bucket_updates: Arc<Mutex<Vec<(RegionVerId, u64, Vec<Vec<u8>>)>>>,
+    bucket_updates: BucketUpdates,
     #[new(default)]
     keyspace_meta: Arc<Mutex<Option<keyspacepb::KeyspaceMeta>>>,
     #[new(default)]

@@ -6,6 +6,13 @@
 //! is TiDB's `pkg/store/mockstore/unistore`; protocol/RPC adapters are added
 //! here as their source packages are ported.
 
+mod mock;
 mod mvcc;
 
+pub use mock::{
+    Action, Assertion, AssertionLevel, IsolationLevel, LockInfo, LockRecord, MockEngine, MockError,
+    MvccInfo, MvccValue, MvccWrite, Op, Pair, PessimisticAction, PessimisticLockKeyResult,
+    PessimisticLockKeyResultType, PessimisticLockRequest, PessimisticWakeUpMode, PrewriteRequest,
+    TxnMutation, WriteRecord, WriteType,
+};
 pub use mvcc::{Mutation, MvccError, MvccStore, Timestamp, VersionedValue};
