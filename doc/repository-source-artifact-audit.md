@@ -216,10 +216,12 @@ boundary, not an implementation leak: downstream crates must be able to name
 the request and response types exposed by public traits and test-support APIs.
 `tests/public_proto_tests.rs` compiles as a downstream crate, round-trips a
 generated context with ordinary features, and implements
-`mocktikv::CoprocessorHandler` with `internal-tests` enabled.
-Both focused modes pass; clean generation, all-target/all-feature compilation
-and strict Clippy/rustdoc, 742 no-default workspace tests, 736 all-feature
-library tests, and 51 doctests also pass on the pinned nightly toolchain. The
+`testutils::CoprRpcHandler` without enabling `internal-tests`. The ordinary
+`testutils` factory gate also commits and reads a transaction over mocktikv.
+All four no-feature external tests pass; clean generation,
+all-target/all-feature compilation and strict Clippy/rustdoc, 760 no-default
+workspace tests, 750 all-feature library tests, and 51 doctests also pass on
+the pinned nightly toolchain. The
 three additional source-derived request tests protect common multi-region
 terminal resharding, nested cleanup-error propagation, and immediate
 NotLeader-hint adoption.

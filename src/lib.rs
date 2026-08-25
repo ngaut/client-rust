@@ -170,13 +170,10 @@ mod store;
 mod timestamp;
 pub mod util;
 
-#[cfg(any(test, feature = "internal-tests"))]
 #[doc(hidden)]
 pub mod mock;
 #[cfg(test)]
 mod proptests;
-#[cfg(any(test, feature = "internal-tests"))]
-#[doc(hidden)]
 pub mod testutils;
 
 #[doc(inline)]
