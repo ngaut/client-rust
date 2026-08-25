@@ -74,7 +74,7 @@ Exact source matching finds nine direct external Go consumers:
 - `rawkv/rawkv_test.go` and `tikv/kv_test.go` test fixtures;
 - `testutils/mockstore.go`, the public test-support alias/factory facade.
 
-The completed locate, RawKV, and root TiKV receipts already own their production algorithms and consume equivalent native cluster/transport boundaries. `testutils` remains a separate seed until its complete alias/factory inventory is mapped; this receipt supplies its concrete mock dependency but does not promote it. Additional integration suites consume mocktikv indirectly through that facade and remain assigned to their own package/live-differential gates.
+The completed locate, RawKV, and root TiKV receipts already own their production algorithms and consume equivalent native cluster/transport boundaries. `testutils` is completed by its separate alias/factory receipt; this receipt supplies its concrete mock dependency but does not promote it. Additional integration suites consume mocktikv indirectly through that facade and remain assigned to their own package/live-differential gates.
 
 ## Validation contract
 

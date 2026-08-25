@@ -141,6 +141,9 @@ pub mod util;
 pub mod mock;
 #[cfg(test)]
 mod proptests;
+#[cfg(any(test, feature = "internal-tests"))]
+#[doc(hidden)]
+pub mod testutils;
 
 #[doc(inline)]
 pub use common::security::SecurityManager;
