@@ -9456,6 +9456,82 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn source_pipelined_flush_owns_resolving_lock_observer_until_retry_finishes() {
+        let status_sent = Arc::new(tokio::sync::Notify::new());
+        let status_sent_by_hook = status_sent.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::FlushRequest>() {
+                    return Ok(Box::new(kvrpcpb::FlushResponse {
+                        errors: vec![kvrpcpb::KeyError {
+                            locked: Some(kvrpcpb::LockInfo {
+                                key: b"a".to_vec(),
+                                primary_lock: b"primary".to_vec(),
+                                lock_version: 1,
+                                lock_ttl: 60_000,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    status_sent_by_hook.notify_one();
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 60_000,
+                        lock_info: Some(kvrpcpb::LockInfo {
+                            key: b"primary".to_vec(),
+                            primary_lock: b"primary".to_vec(),
+                            lock_version: 1,
+                            lock_ttl: 60_000,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected pipelined-flush resolver request");
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        transaction
+            .put("a".to_owned(), b"value".to_vec())
+            .await
+            .unwrap();
+        let context = transaction.lock_resolver_context.clone();
+        let task = tokio::spawn(async move { transaction.maybe_flush_pipelined(true).await });
+
+        tokio::time::timeout(Duration::from_secs(1), status_sent.notified())
+            .await
+            .expect("pipelined flush should enter lock resolution");
+        assert_eq!(
+            context.resolving_locks().await,
+            vec![crate::transaction::ResolvingLock {
+                txn_id: 1,
+                lock_txn_id: 1,
+                key: b"a".to_vec(),
+                primary: b"primary".to_vec(),
+            }]
+        );
+
+        task.abort();
+        let _ = task.await;
+        assert!(context.resolving_locks().await.is_empty());
+    }
+
     #[test]
     #[serial_test::serial]
     fn source_txn_file_admission_exclusions() {

@@ -154,6 +154,17 @@ impl Client {
         Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
+    /// Close the client-owned lock resolver and transport workers.
+    ///
+    /// The resolver is shared by cloned clients and transactions. Closing any
+    /// owner therefore cancels and joins its detached lock-cleanup tasks before
+    /// retiring the shared TiKV/PD transport, matching client-go `KVStore.Close`.
+    pub async fn close(self) -> Result<()> {
+        self.lock_resolver_context.close().await;
+        self.pd.close().await;
+        Ok(())
+    }
+
     /// Create a transactional [`Client`] with a custom configuration, and connect to the TiKV cluster.
     ///
     /// Because TiKV is managed by a [PD](https://github.com/pingcap/pd/) cluster, the endpoints for

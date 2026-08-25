@@ -1892,6 +1892,33 @@ pub struct ProcessResponse<P: Plan, Pr: Process<P::Result>> {
     pub processor: Pr,
 }
 
+/// Increment one lock-resolver action immediately before each physical shard
+/// attempt. Keeping this inside the shardable plan preserves client-go's
+/// pre-send metric timing across region regrouping and retries.
+pub(crate) struct CountLockResolverAction<P: Plan> {
+    pub(crate) inner: P,
+    pub(crate) action: &'static str,
+}
+
+impl<P: Plan> Clone for CountLockResolverAction<P> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            action: self.action,
+        }
+    }
+}
+
+#[async_trait]
+impl<P: Plan> Plan for CountLockResolverAction<P> {
+    type Result = P::Result;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        crate::stats::increment_lock_resolver_action(self.action);
+        self.inner.execute().await
+    }
+}
+
 #[async_trait]
 impl<P: Plan, Pr: Process<P::Result>> Plan for ProcessResponse<P, Pr> {
     type Result = Pr::Out;

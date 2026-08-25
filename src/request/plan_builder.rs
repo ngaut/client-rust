@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::plan::CountLockResolverAction;
 use super::plan::PreserveShard;
 use super::Keyspace;
 use crate::backoff::Backoff;
@@ -586,6 +587,28 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             plan: ProcessResponse {
                 inner: self.plan,
                 processor,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
+    pub(crate) fn count_lock_resolver_action(
+        self,
+        action: &'static str,
+    ) -> PlanBuilder<PdC, CountLockResolverAction<P>, Ph>
+    where
+        P: Plan,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: CountLockResolverAction {
+                inner: self.plan,
+                action,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,

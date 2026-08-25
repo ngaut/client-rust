@@ -1229,6 +1229,33 @@ pub struct SecondaryLocksStatus {
 }
 
 impl SecondaryLocksStatus {
+    pub(crate) fn empty() -> Self {
+        Self {
+            locks: Vec::new(),
+            missing_lock: false,
+            missing_commit_ts: 0,
+            fallback_2pc: false,
+        }
+    }
+
+    pub(crate) fn merge_from(&mut self, mut other: Self) -> Result<()> {
+        if other.missing_lock {
+            if self.missing_lock && self.missing_commit_ts != other.missing_commit_ts {
+                return Err(Error::InternalError {
+                    message: format!(
+                        "commit TS mismatch in async commit recovery: {} and {}",
+                        self.missing_commit_ts, other.missing_commit_ts
+                    ),
+                });
+            }
+            self.missing_lock = true;
+            self.missing_commit_ts = other.missing_commit_ts;
+        }
+        self.fallback_2pc |= other.fallback_2pc;
+        self.locks.append(&mut other.locks);
+        Ok(())
+    }
+
     /// Returns `None` when a returned secondary is not an async-commit lock,
     /// in which case client-go retries CheckTxnStatus in forced 2PC mode.
     pub fn determine_commit_ts(
