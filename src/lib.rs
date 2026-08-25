@@ -117,6 +117,7 @@ pub mod trace;
 pub mod traffic;
 #[doc(hidden)]
 pub mod transaction;
+pub mod txnkv;
 
 mod common;
 mod compat;
