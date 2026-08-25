@@ -65,6 +65,7 @@ use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::SnapshotRuntimeStats;
 use crate::transaction::SnapshotVisibilityValidator;
+pub use crate::util::RequestSource;
 use crate::BoundRange;
 
 /// Result returned by a transaction binlog prewrite.
@@ -85,42 +86,6 @@ pub trait BinlogExecutor: Send + Sync {
     async fn commit(&self, cancellation: crate::async_util::Cancellation, commit_timestamp: i64);
 
     fn skip(&self);
-}
-
-/// Source request identity used by resource control and txn-file admission.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RequestSource {
-    pub internal: bool,
-    pub source_type: String,
-    pub explicit_source_type: String,
-}
-
-impl RequestSource {
-    pub fn context_value(&self) -> String {
-        if self.source_type.is_empty() && self.explicit_source_type.is_empty() {
-            return "unknown".to_owned();
-        }
-        let origin = if self.internal {
-            "internal"
-        } else {
-            "external"
-        };
-        let source = if self.source_type.is_empty() {
-            "unknown"
-        } else {
-            self.source_type.as_str()
-        };
-        let mut value = format!("{origin}_{source}");
-        if !self.explicit_source_type.is_empty() && self.explicit_source_type != self.source_type {
-            value.push('_');
-            value.push_str(&self.explicit_source_type);
-        }
-        value
-    }
-
-    pub fn is_internal(&self) -> bool {
-        self.context_value().starts_with("internal")
-    }
 }
 
 /// Options for client-go's pipelined transaction path.

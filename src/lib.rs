@@ -293,6 +293,7 @@ pub use crate::transaction::{extract_lock_from_key_error, extract_locks_from_key
 pub use crate::transaction::{
     BinlogExecutor, BinlogWriteResult, KvFilter, LifecycleHooks, MutationAssertion, MutationFlags,
     MutationOptions, PipelinedTxnOptions, PrewriteEncounterLockPolicy, RelatedSchemaChange,
-    RequestSource, SchemaLeaseChecker, SchemaVersion,
+    SchemaLeaseChecker, SchemaVersion,
 };
 pub use crate::transaction::{DEFAULT_SCAN_BATCH_SIZE, GET_MAX_BACKOFF_MS};
+pub use crate::util::RequestSource;
