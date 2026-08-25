@@ -18,11 +18,11 @@ jobs:
     name: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@v3
         with:
-          version: '3.x'
+          version: '35.1'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -41,11 +41,11 @@ jobs:
       NEXTEST_PROFILE: ci
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@v3
         with:
-          version: '3.x'
+          version: '35.1'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -67,11 +67,11 @@ jobs:
       RUST_LOG: info
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@v3
         with:
-          version: '3.x'
+          version: '35.1'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -83,7 +83,7 @@ jobs:
           ~/.tiup/bin/tiup playground ${{ env.TIKV_VERSION }} --mode tikv-slim --kv 3 --tag cluster --without-monitor --kv.config config/tikv.toml --pd.config config/pd.toml &
           for attempt in $(seq 1 180); do
             echo "waiting cluster to be ready"
-            if python3 -c 'import json, urllib.request; stores = json.load(urllib.request.urlopen("http://127.0.0.1:2379/pd/api/v1/stores")); regions = json.load(urllib.request.urlopen("http://127.0.0.1:2379/pd/api/v1/regions")); assert stores.get("count", 0) >= 3 and regions.get("count", 0) >= 3'; then
+            if python3 -c 'import json, urllib.request; stores = json.load(urllib.request.urlopen("http://127.0.0.1:2379/pd/api/v1/stores")); regions = json.load(urllib.request.urlopen("http://127.0.0.1:2379/pd/api/v1/regions")); assert stores.get("count", 0) >= 3 and regions.get("count", 0) >= 3' 2>/dev/null; then
               exit 0
             fi
             if [[ "${attempt}" -eq 180 ]]; then

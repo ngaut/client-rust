@@ -156,7 +156,11 @@ pub mod kv;
 mod locate;
 pub mod oracle;
 mod pd;
-mod proto;
+// client-go consumes kvproto as a separate public module. Keep the generated
+// namespace public as well: public mock/test-support APIs expose these wire
+// types, and downstream crates must be able to name them to implement traits
+// such as `CoprocessorHandler`.
+pub mod proto;
 mod region;
 mod region_cache;
 mod region_request;

@@ -5,12 +5,15 @@ use std::{
     ffi::{OsStr, OsString},
     fs, io,
     path::Path,
+    process::Command,
 };
 
 const GENERATED_DIR: &str = "src/generated";
 const DESCRIPTOR_FILE: &str = "file_descriptor_set.bin";
+const PROTOC_VERSION: &str = "libprotoc 35.1";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    verify_protoc_version()?;
     let staging = tempfile::Builder::new()
         .prefix(".generated-")
         .tempdir_in("src")?;
@@ -31,6 +34,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     install_generated_output(staging.path(), Path::new(GENERATED_DIR))?;
     Ok(())
+}
+
+fn verify_protoc_version() -> io::Result<()> {
+    let output = Command::new("protoc").arg("--version").output()?;
+    let actual = String::from_utf8_lossy(&output.stdout);
+    if output.status.success() && protoc_version_is_supported(&actual) {
+        return Ok(());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "protocol generation requires {PROTOC_VERSION}; found {}",
+            actual.trim()
+        ),
+    ))
+}
+
+fn protoc_version_is_supported(version: &str) -> bool {
+    version.trim() == PROTOC_VERSION
 }
 
 fn install_generated_output(staging: &Path, destination: &Path) -> io::Result<()> {
@@ -75,6 +98,13 @@ fn is_generated_output(name: &OsStr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protoc_version_is_pinned_for_cross_platform_descriptors() {
+        assert!(protoc_version_is_supported("libprotoc 35.1\n"));
+        assert!(!protoc_version_is_supported("libprotoc 3.20.3\n"));
+        assert!(!protoc_version_is_supported("libprotoc 35.2\n"));
+    }
 
     #[test]
     fn installation_replaces_expected_and_removes_stale_generated_files() {

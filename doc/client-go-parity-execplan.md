@@ -50,7 +50,9 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-25) Ran the final live matrix: 62 Rust tests passed against one PD plus three TiKV v8.5.5 nodes and 114 API-v2 regions; the committed pinned client-go harness and its Rust counterpart produced identical raw/transaction results against matching v9 API-v1 and API-v2 clusters.
 - [x] (2026-08-25) Closed the complete 74-artifact/19,306-line non-package source inventory, all 38 pinned kvproto inputs and reproducible outputs, and the final full test, strict Clippy/rustdoc, rustfmt, examples, doctest, generated, source-identity, and diff gates.
 - [x] (2026-08-25) Executed the complete pinned client-go integration workflow: both Go packages passed local and race suites, the transactional package passed against matching v9 API V1, and the raw package passed both real-cluster V1TTL and V2 matrix cases.
-- [x] (2026-08-25) Revalidated the complete proto-build crate and generated-root boundary: generation now stages a sorted clean output, deletes stale generated artifacts, removes the orphaned `span.rs`, reconciles the 41-module/977-name/1,029-descriptor inventory, and CI checks all Cargo features, strict rustdoc/doctests, plus actual PD store/region readiness. Final local gates pass 736 no-default workspace tests, 732 all-feature library tests, and 51 doctests.
+- [x] (2026-08-25) Revalidated the complete proto-build crate and generated-root boundary: protoc 35.1 generation now stages a sorted clean output, deletes stale generated artifacts, removes the orphaned `span.rs`, reconciles the 41-module/977-name/1,029-descriptor inventory, and CI checks all Cargo features, strict rustdoc/doctests, plus actual PD store/region readiness. Final local gates pass 736 no-default workspace tests, 732 all-feature library tests, and 51 doctests.
+- [x] (2026-08-25) Repaired the first hosted-CI findings: require protoc 35.1 on every platform, preserve region-index coherence across exact-version replacement, and publish the complete generated protocol namespace with an external `CoprocessorHandler` implementation test. Local gates pass 739 no-default workspace tests, 733 all-feature library tests, strict all-target Clippy/rustdoc, and 51 doctests.
+- [ ] (2026-08-25) Rerun hosted CI and verify clean generation plus all three previously failing transactional cleanup/failpoint cases on the three-node cluster.
 
 ## Surprises & Discoveries
 
@@ -122,6 +124,12 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 
 - Observation: direct use of the pinned 2026 client-go against PD v8.5.5 fails at the newer `QueryRegion` router RPC before data operations. Matching PD/TiKV v9 binaries are required for an unmodified cross-client differential; API-v1 transactional testing additionally requires TTL disabled because V1 plus TTL selects the distinct V1TTL storage mode.
   Evidence: the recorded failed compatibility probes and passing v9 API-v1/API-v2 runs in `doc/repository-source-artifact-audit.md`.
+
+- Observation: client-go's sorted range index stores complete `Region` pointers, while Rust's start-key map stores `RegionVerId` references into a separate version map. Replacing an exact version with corrected boundaries could retain its prior start-key alias, so a later epoch replacement removed the canonical version and made that alias panic on dereference; cleanup retries could then overflow their stack.
+  Evidence: hosted CI run 32861366968 failed three cleanup tests at `src/region_cache.rs` during live `EpochNotMatch`; source `SortedRegions` entries remain directly readable, while the native exact-version regression reproduces and prevents the split-map orphan.
+
+- Observation: `CoprocessorHandler` was declared public while every generated type in its signature lived below private `mod proto`. The same inaccessible types appeared throughout the public mock cluster, PD, session, and RPC surfaces, so selective trait re-exports could not make the test-support API usable by TiDB or any other downstream crate.
+  Evidence: `src/mock/mocktikv/{cluster,pd,rpc,session}.rs` public signatures and the pre-repair `src/lib.rs:mod proto`; `tests/public_proto_tests.rs` is compiled as an external crate and now implements the handler through `tikv_client::proto`.
 
 ## Decision Log
 
@@ -219,6 +227,14 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 
 - Decision: generate protocols into a temporary staging directory and synchronize only after successful compilation, removing stale generated Rust and descriptor files while preserving unrelated files.
   Rationale: in-place generation cannot detect outputs from deleted schemas, while deleting the destination before compilation risks losing the last valid checked-in output when protoc fails. The staged install gives CI a clean-generation invariant and makes the generated manifest an honest closure of current inputs.
+  Date/Author: 2026-08-25 / Codex
+
+- Decision: require protoc 35.1 in both the generator and hosted workflow.
+  Rationale: Rust modules were stable between protoc 3.20.3 and 35.1, but the binary descriptor set was not. An explicit tool version turns the checked-in descriptor and its documented manifest into a cross-platform reproducibility contract instead of accepting whichever compiler happens to be installed.
+  Date/Author: 2026-08-25 / Codex
+
+- Decision: expose the complete generated protocol namespace as the documented public `tikv_client::proto` module.
+  Rationale: client-go uses the shared public `kvproto` module, and Rust public APIs already expose many of the same wire types. Publishing only selected aliases would leave other mock/test-support signatures inaccessible and create an unstable second naming scheme; one complete namespace makes the existing API genuinely implementable downstream.
   Date/Author: 2026-08-25 / Codex
 
 ## Outcomes & Retrospective
