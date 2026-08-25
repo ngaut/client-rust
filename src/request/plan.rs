@@ -448,12 +448,12 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
     /// per-shard behavior.
     fn update_using_forked(&mut self, forked: &Self);
 
-    /// RawKV owns an outer source retry loop: after `RegionRequestSender`
-    /// returns a terminal region error, RawKV charges `BoRegionMiss`, locates
-    /// again, and resends. Ordinary request plans leave that error visible to
-    /// their callers.
+    /// Multi-region source owners regroup their remaining keys after
+    /// `RegionRequestSender` returns a terminal region error. A one-region
+    /// sender still returns the error; [`RetryableMultiRegion`] consumes this
+    /// flag at the outer sharding boundary.
     fn retries_terminal_region_errors(&self) -> bool {
-        false
+        true
     }
 
     /// Whether the source request context was cancelled. Implementations
@@ -486,46 +486,6 @@ impl RegionRetryState for Backoff {
     }
 
     fn update_using_forked(&mut self, _forked: &Self) {}
-}
-
-/// Retry state for source loops that explicitly relocate and reshard after a
-/// terminal region response. client-go's scan-lock loop owns this retry above
-/// `RegionRequestSender`; ordinary one-region request plans do not.
-#[derive(Clone)]
-pub(crate) struct ReshardOnRegionError<R>(R);
-
-impl<R> ReshardOnRegionError<R> {
-    pub(crate) fn new(inner: R) -> Self {
-        Self(inner)
-    }
-}
-
-#[async_trait]
-impl<R: RegionRetryState> RegionRetryState for ReshardOnRegionError<R> {
-    async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool> {
-        self.0.backoff(config, reason).await
-    }
-
-    fn fork(&self) -> (Self, Cancellation) {
-        let (inner, cancellation) = self.0.fork();
-        (Self(inner), cancellation)
-    }
-
-    fn update_using_forked(&mut self, forked: &Self) {
-        self.0.update_using_forked(&forked.0);
-    }
-
-    fn retries_terminal_region_errors(&self) -> bool {
-        true
-    }
-
-    fn is_cancelled(&self) -> bool {
-        self.0.is_cancelled()
-    }
-
-    fn snapshot_retry_owner(&self) -> Option<Arc<Mutex<RetryBackoffer>>> {
-        self.0.snapshot_retry_owner()
-    }
 }
 
 /// client-go's `getMaxBackoff`, `batchGetMaxBackoff`, and scanner retry
@@ -2568,17 +2528,9 @@ where
                 Ok(()) => {
                     result.resolved_locks += lock_size;
                 }
-                Err(Error::ExtractedErrors(mut errors)) => {
-                    // Propagate errors to `retry_multi_region` for retry.
-                    if let Error::RegionError(e) = errors.pop().unwrap() {
-                        result.region_error = Some(*e);
-                    } else {
-                        result.key_error = Some(errors);
-                    }
+                Err(error) => {
+                    propagate_cleanup_locks_error(&mut result, error)?;
                     return Ok(result);
-                }
-                Err(e) => {
-                    return Err(e);
                 }
             }
 
@@ -2590,6 +2542,34 @@ where
 
         Ok(result)
     }
+}
+
+fn propagate_cleanup_locks_error(result: &mut CleanupLocksResult, error: Error) -> Result<()> {
+    // BatchResolveLocks returns `false` for a region change in client-go, then
+    // the GC owner relocates the first lock and either retries this region or
+    // rescans. Preserve that owner boundary for direct and grouped nested
+    // resolver errors; non-region errors remain key/terminal errors.
+    let errors = match error {
+        Error::RegionError(error) => {
+            result.region_error = Some(*error);
+            return Ok(());
+        }
+        Error::ExtractedErrors(errors) | Error::MultipleKeyErrors(errors) => errors,
+        error => return Err(error),
+    };
+    let mut key_errors = Vec::new();
+    for error in errors {
+        match error {
+            Error::RegionError(error) if result.region_error.is_none() => {
+                result.region_error = Some(*error);
+            }
+            error => key_errors.push(error),
+        }
+    }
+    if result.region_error.is_none() {
+        result.key_error = Some(key_errors);
+    }
+    Ok(())
 }
 
 /// When executed, the plan extracts errors from its inner plan, and returns an
@@ -2708,14 +2688,33 @@ mod test {
     use super::*;
 
     #[test]
-    fn source_scan_lock_retry_reshards_terminal_region_errors() {
-        let ordinary = Backoff::no_backoff();
-        assert!(!ordinary.retries_terminal_region_errors());
-
-        let retry = ReshardOnRegionError::new(ordinary);
+    fn source_multi_region_retry_reshards_terminal_region_errors() {
+        let retry = Backoff::no_backoff();
         assert!(retry.retries_terminal_region_errors());
         let (forked, _) = retry.fork();
         assert!(forked.retries_terminal_region_errors());
+    }
+
+    #[test]
+    fn source_cleanup_promotes_nested_region_errors_to_the_scan_owner() {
+        let epoch = errorpb::Error {
+            epoch_not_match: Some(Default::default()),
+            ..Default::default()
+        };
+        let mut direct = CleanupLocksResult::default();
+        propagate_cleanup_locks_error(&mut direct, Error::RegionError(Box::new(epoch.clone())))
+            .unwrap();
+        assert_eq!(direct.region_error, Some(epoch.clone()));
+        assert!(direct.key_error.is_none());
+
+        let mut grouped = CleanupLocksResult::default();
+        propagate_cleanup_locks_error(
+            &mut grouped,
+            Error::ExtractedErrors(vec![Error::RegionError(Box::new(epoch.clone()))]),
+        )
+        .unwrap();
+        assert_eq!(grouped.region_error, Some(epoch));
+        assert!(grouped.key_error.is_none());
     }
 
     #[test]
