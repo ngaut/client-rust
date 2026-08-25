@@ -176,17 +176,21 @@ under `proto/`. The only additional top-level input is
 vendored imports under `proto/include/` complete the generator dependency
 closure, for 56 `.proto` inputs total.
 
-Generation produces 42 protocol Rust modules, `src/generated/mod.rs`, and the
+Generation produces 41 protocol Rust modules, `src/generated/mod.rs`, and the
 728,127-byte `src/generated/file_descriptor_set.bin`. The four previously
 missing kvproto families are now present and generated:
 `db9_coprocessor`, `externalworkloadpb`, `keyspace_encryptionpb`, and
 `routerpb`. Updated scheduling, TSO, CDC, auto-ID, and resource-manager fields
 are protected by descriptor/tag tests.
 
-Two consecutive generator runs yielded the same SHA-256 output manifest:
+The proto-build crate generates into a staging directory before updating the
+checked-in output, sorts its root inputs, and removes stale generated Rust or
+descriptor files. This removed the unreferenced `span.rs` left by the deleted
+`span.proto` input. Two consecutive clean generator runs yielded the same
+SHA-256 output manifest:
 
 ```text
-f88ce01c8e2695560620e4015db06abd4f2ff9537a348bfcb9f00b72595a579c
+b77f2aa05bc26eedd23c6b8ba1896edae9f5c72b7c5a090f1e5809999e31d8fa
 ```
 
 The manifest hashes sorted `shasum -a 256` lines for every file below
