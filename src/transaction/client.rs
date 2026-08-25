@@ -438,7 +438,7 @@ impl Client {
         let plan = self
             .plan(req)
             .cleanup_locks(ctx.clone(), options, backoff, self.keyspace)
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .retry_multi_region_reshard_on_region_error(DEFAULT_REGION_BACKOFF)
             .extract_error()
             .merge(crate::request::Collect)
             .plan();

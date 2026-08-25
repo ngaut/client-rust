@@ -488,6 +488,46 @@ impl RegionRetryState for Backoff {
     fn update_using_forked(&mut self, _forked: &Self) {}
 }
 
+/// Retry state for source loops that explicitly relocate and reshard after a
+/// terminal region response. client-go's scan-lock loop owns this retry above
+/// `RegionRequestSender`; ordinary one-region request plans do not.
+#[derive(Clone)]
+pub(crate) struct ReshardOnRegionError<R>(R);
+
+impl<R> ReshardOnRegionError<R> {
+    pub(crate) fn new(inner: R) -> Self {
+        Self(inner)
+    }
+}
+
+#[async_trait]
+impl<R: RegionRetryState> RegionRetryState for ReshardOnRegionError<R> {
+    async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool> {
+        self.0.backoff(config, reason).await
+    }
+
+    fn fork(&self) -> (Self, Cancellation) {
+        let (inner, cancellation) = self.0.fork();
+        (Self(inner), cancellation)
+    }
+
+    fn update_using_forked(&mut self, forked: &Self) {
+        self.0.update_using_forked(&forked.0);
+    }
+
+    fn retries_terminal_region_errors(&self) -> bool {
+        true
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+
+    fn snapshot_retry_owner(&self) -> Option<Arc<Mutex<RetryBackoffer>>> {
+        self.0.snapshot_retry_owner()
+    }
+}
+
 /// client-go's `getMaxBackoff`, `batchGetMaxBackoff`, and scanner retry
 /// budget. `RetryBackoffer` applies the configured backoff weight.
 const SNAPSHOT_MAX_BACKOFF_MS: u64 = crate::transaction::GET_MAX_BACKOFF_MS;
@@ -1158,6 +1198,10 @@ where
                     plan.mark_replica_deadline_exceeded(peer.id);
                 }
             }
+            // Source `updateLeader` changes the Region object retained by the
+            // selector. Rust routes own a snapshot, so carry the hint into the
+            // immediate retry as well as updating the shared cache.
+            let retry_region = region_for_immediate_retry(&region_store.region_with_leader, &e);
             let region_error_action = if retry_flashback_through_leader {
                 Ok(RegionErrorRetry::Immediate)
             } else if retry_region_not_found_at_leader {
@@ -1221,10 +1265,14 @@ where
                     // already terminal and are rebuilt by their owning
                     // caller path.
                     plan.mark_retry_request();
+                    // `async_recursion` still polls an immediately-ready child
+                    // on the current stack. Source loops are iterative, so
+                    // force a scheduler boundary before a zero-delay retry.
+                    tokio::task::yield_now().await;
                     return Self::single_shard_handler(
                         pd_client,
                         plan,
-                        region_store.region_with_leader,
+                        retry_region,
                         backoff,
                         permits,
                         preserve_region_results,
@@ -1371,6 +1419,21 @@ where
             Err(error) => (Err(error), backoff),
         }
     }
+}
+
+fn region_for_immediate_retry(
+    region: &RegionWithLeader,
+    error: &errorpb::Error,
+) -> RegionWithLeader {
+    let mut retry_region = region.clone();
+    if let Some(leader) = error
+        .not_leader
+        .as_ref()
+        .and_then(|not_leader| not_leader.leader.clone())
+    {
+        retry_region.leader = Some(leader);
+    }
+    retry_region
 }
 
 /// The source selector performs a zero-delay retry through another eligible
@@ -2643,6 +2706,40 @@ mod test {
     use tokio::sync::Barrier;
 
     use super::*;
+
+    #[test]
+    fn source_scan_lock_retry_reshards_terminal_region_errors() {
+        let ordinary = Backoff::no_backoff();
+        assert!(!ordinary.retries_terminal_region_errors());
+
+        let retry = ReshardOnRegionError::new(ordinary);
+        assert!(retry.retries_terminal_region_errors());
+        let (forked, _) = retry.fork();
+        assert!(forked.retries_terminal_region_errors());
+    }
+
+    #[test]
+    fn source_not_leader_immediate_retry_uses_the_hinted_leader() {
+        let region = MockPdClient::region1();
+        let hinted = crate::proto::metapb::Peer {
+            id: 99,
+            store_id: 9,
+            ..Default::default()
+        };
+        let retry = region_for_immediate_retry(
+            &region,
+            &errorpb::Error {
+                not_leader: Some(errorpb::NotLeader {
+                    region_id: region.id(),
+                    leader: Some(hinted.clone()),
+                }),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(retry.leader, Some(hinted));
+        assert_eq!(region.leader, MockPdClient::region1().leader);
+    }
 
     #[test]
     fn source_async_batch_get_result_labels_match_callback_branch() {

@@ -682,6 +682,22 @@ where
         self.make_retry_multi_region(backoff, false)
     }
 
+    /// Retry above the region sender when the source owner explicitly
+    /// relocates and reshards terminal region responses.
+    pub(crate) fn retry_multi_region_reshard_on_region_error(
+        self,
+        backoff: Backoff,
+    ) -> PlanBuilder<
+        PdC,
+        RetryableMultiRegion<P, PdC, crate::request::plan::ReshardOnRegionError<Backoff>>,
+        Targetted,
+    > {
+        self.make_retry_multi_region(
+            crate::request::plan::ReshardOnRegionError::new(backoff),
+            false,
+        )
+    }
+
     /// Preserve all results, even some of them are Err.
     /// To pass all responses to merge, and handle partial successful results correctly.
     pub fn retry_multi_region_preserve_results(
