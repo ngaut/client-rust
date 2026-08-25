@@ -7,6 +7,16 @@ pub struct Status {
     #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Status {
+    const NAME: &'static str = "Status";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.Status".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.Status".into()
+    }
+}
 /// The version is used to tell the configuration which can be shared
 /// or not apart.
 /// Global version represents the version of these configuration
@@ -21,17 +31,47 @@ pub struct Version {
     #[prost(uint64, tag = "2")]
     pub global: u64,
 }
+impl ::prost::Name for Version {
+    const NAME: &'static str = "Version";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.Version".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.Version".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Local {
     #[prost(string, tag = "1")]
     pub component_id: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Local {
+    const NAME: &'static str = "Local";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.Local".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.Local".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Global {
     #[prost(string, tag = "1")]
     pub component: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Global {
+    const NAME: &'static str = "Global";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.Global".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.Global".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -50,6 +90,16 @@ pub mod config_kind {
         Global(super::Global),
     }
 }
+impl ::prost::Name for ConfigKind {
+    const NAME: &'static str = "ConfigKind";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.ConfigKind".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.ConfigKind".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConfigEntry {
@@ -57,6 +107,16 @@ pub struct ConfigEntry {
     pub name: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub value: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ConfigEntry {
+    const NAME: &'static str = "ConfigEntry";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.ConfigEntry".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.ConfigEntry".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -70,11 +130,31 @@ pub struct LocalConfig {
     #[prost(string, tag = "4")]
     pub config: ::prost::alloc::string::String,
 }
+impl ::prost::Name for LocalConfig {
+    const NAME: &'static str = "LocalConfig";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.LocalConfig".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.LocalConfig".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Header {
     #[prost(uint64, tag = "1")]
     pub cluster_id: u64,
+}
+impl ::prost::Name for Header {
+    const NAME: &'static str = "Header";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.Header".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.Header".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -90,6 +170,16 @@ pub struct CreateRequest {
     #[prost(string, tag = "5")]
     pub config: ::prost::alloc::string::String,
 }
+impl ::prost::Name for CreateRequest {
+    const NAME: &'static str = "CreateRequest";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.CreateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.CreateRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateResponse {
@@ -102,11 +192,31 @@ pub struct CreateResponse {
     #[prost(string, tag = "4")]
     pub config: ::prost::alloc::string::String,
 }
+impl ::prost::Name for CreateResponse {
+    const NAME: &'static str = "CreateResponse";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.CreateResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.CreateResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetAllRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<Header>,
+}
+impl ::prost::Name for GetAllRequest {
+    const NAME: &'static str = "GetAllRequest";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.GetAllRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.GetAllRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -117,6 +227,16 @@ pub struct GetAllResponse {
     pub status: ::core::option::Option<Status>,
     #[prost(message, repeated, tag = "3")]
     pub local_configs: ::prost::alloc::vec::Vec<LocalConfig>,
+}
+impl ::prost::Name for GetAllResponse {
+    const NAME: &'static str = "GetAllResponse";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.GetAllResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.GetAllResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -130,6 +250,16 @@ pub struct GetRequest {
     #[prost(string, tag = "4")]
     pub component_id: ::prost::alloc::string::String,
 }
+impl ::prost::Name for GetRequest {
+    const NAME: &'static str = "GetRequest";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.GetRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.GetRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetResponse {
@@ -141,6 +271,16 @@ pub struct GetResponse {
     pub version: ::core::option::Option<Version>,
     #[prost(string, tag = "4")]
     pub config: ::prost::alloc::string::String,
+}
+impl ::prost::Name for GetResponse {
+    const NAME: &'static str = "GetResponse";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.GetResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.GetResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -154,6 +294,16 @@ pub struct UpdateRequest {
     #[prost(message, repeated, tag = "4")]
     pub entries: ::prost::alloc::vec::Vec<ConfigEntry>,
 }
+impl ::prost::Name for UpdateRequest {
+    const NAME: &'static str = "UpdateRequest";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.UpdateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.UpdateRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateResponse {
@@ -166,6 +316,16 @@ pub struct UpdateResponse {
     #[prost(string, tag = "4")]
     pub config: ::prost::alloc::string::String,
 }
+impl ::prost::Name for UpdateResponse {
+    const NAME: &'static str = "UpdateResponse";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.UpdateResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.UpdateResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteRequest {
@@ -176,6 +336,16 @@ pub struct DeleteRequest {
     #[prost(message, optional, tag = "3")]
     pub kind: ::core::option::Option<ConfigKind>,
 }
+impl ::prost::Name for DeleteRequest {
+    const NAME: &'static str = "DeleteRequest";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.DeleteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.DeleteRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteResponse {
@@ -185,6 +355,16 @@ pub struct DeleteResponse {
     pub status: ::core::option::Option<Status>,
     #[prost(message, optional, tag = "3")]
     pub version: ::core::option::Option<Version>,
+}
+impl ::prost::Name for DeleteResponse {
+    const NAME: &'static str = "DeleteResponse";
+    const PACKAGE: &'static str = "configpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "configpb.DeleteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/configpb.DeleteResponse".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

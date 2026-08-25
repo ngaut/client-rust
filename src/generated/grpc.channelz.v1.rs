@@ -26,6 +26,16 @@ pub struct Channel {
     #[prost(message, repeated, tag = "5")]
     pub socket_ref: ::prost::alloc::vec::Vec<SocketRef>,
 }
+impl ::prost::Name for Channel {
+    const NAME: &'static str = "Channel";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.Channel".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.Channel".into()
+    }
+}
 /// Subchannel is a logical grouping of channels, subchannels, and sockets.
 /// A subchannel is load balanced over by its ancestor
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -53,6 +63,16 @@ pub struct Subchannel {
     /// There are no ordering guarantees on the order of sockets.
     #[prost(message, repeated, tag = "5")]
     pub socket_ref: ::prost::alloc::vec::Vec<SocketRef>,
+}
+impl ::prost::Name for Subchannel {
+    const NAME: &'static str = "Subchannel";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.Subchannel".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.Subchannel".into()
+    }
 }
 /// These come from the specified states in this document:
 /// <https://github.com/grpc/grpc/blob/master/doc/connectivity-semantics-and-api.md>
@@ -113,6 +133,16 @@ pub mod channel_connectivity_state {
         }
     }
 }
+impl ::prost::Name for ChannelConnectivityState {
+    const NAME: &'static str = "ChannelConnectivityState";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.ChannelConnectivityState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.ChannelConnectivityState".into()
+    }
+}
 /// Channel data is data related to a specific Channel or Subchannel.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -142,6 +172,16 @@ pub struct ChannelData {
     /// Populated for subchannels only.
     #[prost(uint32, tag = "8")]
     pub max_connections_per_subchannel: u32,
+}
+impl ::prost::Name for ChannelData {
+    const NAME: &'static str = "ChannelData";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.ChannelData".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.ChannelData".into()
+    }
 }
 /// A trace event is an interesting thing that happened to a channel or
 /// subchannel, such as creation, address resolution, subchannel creation, etc.
@@ -222,6 +262,16 @@ pub mod channel_trace_event {
         SubchannelRef(super::SubchannelRef),
     }
 }
+impl ::prost::Name for ChannelTraceEvent {
+    const NAME: &'static str = "ChannelTraceEvent";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.ChannelTraceEvent".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.ChannelTraceEvent".into()
+    }
+}
 /// ChannelTrace represents the recent events that have occurred on the channel.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -238,6 +288,16 @@ pub struct ChannelTrace {
     #[prost(message, repeated, tag = "3")]
     pub events: ::prost::alloc::vec::Vec<ChannelTraceEvent>,
 }
+impl ::prost::Name for ChannelTrace {
+    const NAME: &'static str = "ChannelTrace";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.ChannelTrace".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.ChannelTrace".into()
+    }
+}
 /// ChannelRef is a reference to a Channel.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -248,6 +308,16 @@ pub struct ChannelRef {
     /// An optional name associated with the channel.
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ChannelRef {
+    const NAME: &'static str = "ChannelRef";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.ChannelRef".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.ChannelRef".into()
+    }
 }
 /// SubchannelRef is a reference to a Subchannel.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -260,6 +330,16 @@ pub struct SubchannelRef {
     #[prost(string, tag = "8")]
     pub name: ::prost::alloc::string::String,
 }
+impl ::prost::Name for SubchannelRef {
+    const NAME: &'static str = "SubchannelRef";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.SubchannelRef".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.SubchannelRef".into()
+    }
+}
 /// SocketRef is a reference to a Socket.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -271,6 +351,16 @@ pub struct SocketRef {
     #[prost(string, tag = "4")]
     pub name: ::prost::alloc::string::String,
 }
+impl ::prost::Name for SocketRef {
+    const NAME: &'static str = "SocketRef";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.SocketRef".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.SocketRef".into()
+    }
+}
 /// ServerRef is a reference to a Server.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -281,6 +371,16 @@ pub struct ServerRef {
     /// An optional name associated with the server.
     #[prost(string, tag = "6")]
     pub name: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ServerRef {
+    const NAME: &'static str = "ServerRef";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.ServerRef".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.ServerRef".into()
+    }
 }
 /// Server represents a single server.  There may be multiple servers in a single
 /// program.
@@ -297,6 +397,16 @@ pub struct Server {
     /// guarantees.  This may be absent.
     #[prost(message, repeated, tag = "3")]
     pub listen_socket: ::prost::alloc::vec::Vec<SocketRef>,
+}
+impl ::prost::Name for Server {
+    const NAME: &'static str = "Server";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.Server".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.Server".into()
+    }
 }
 /// ServerData is data for a specific Server.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -317,6 +427,16 @@ pub struct ServerData {
     /// The last time a call was started on the server.
     #[prost(message, optional, tag = "5")]
     pub last_call_started_timestamp: ::core::option::Option<::prost_types::Timestamp>,
+}
+impl ::prost::Name for ServerData {
+    const NAME: &'static str = "ServerData";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.ServerData".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.ServerData".into()
+    }
 }
 /// Information about an actual connection.  Pronounced "sock-ay".
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -342,6 +462,16 @@ pub struct Socket {
     /// the original target name.
     #[prost(string, tag = "6")]
     pub remote_name: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Socket {
+    const NAME: &'static str = "Socket";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.Socket".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.Socket".into()
+    }
 }
 /// SocketData is data associated for a specific Socket.  The fields present
 /// are specific to the implementation, so there may be minor differences in
@@ -415,6 +545,16 @@ pub struct SocketData {
     #[prost(uint32, tag = "15")]
     pub peer_max_concurrent_streams: u32,
 }
+impl ::prost::Name for SocketData {
+    const NAME: &'static str = "SocketData";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.SocketData".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.SocketData".into()
+    }
+}
 /// Address represents the address used to create the socket.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -435,12 +575,32 @@ pub mod address {
         #[prost(int32, tag = "2")]
         pub port: i32,
     }
+    impl ::prost::Name for TcpIpAddress {
+        const NAME: &'static str = "TcpIpAddress";
+        const PACKAGE: &'static str = "grpc.channelz.v1";
+        fn full_name() -> ::prost::alloc::string::String {
+            "grpc.channelz.v1.Address.TcpIpAddress".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/grpc.channelz.v1.Address.TcpIpAddress".into()
+        }
+    }
     /// A Unix Domain Socket address.
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct UdsAddress {
         #[prost(string, tag = "1")]
         pub filename: ::prost::alloc::string::String,
+    }
+    impl ::prost::Name for UdsAddress {
+        const NAME: &'static str = "UdsAddress";
+        const PACKAGE: &'static str = "grpc.channelz.v1";
+        fn full_name() -> ::prost::alloc::string::String {
+            "grpc.channelz.v1.Address.UdsAddress".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/grpc.channelz.v1.Address.UdsAddress".into()
+        }
     }
     /// An address type not included above.
     #[allow(clippy::derive_partial_eq_without_eq)]
@@ -453,6 +613,16 @@ pub mod address {
         #[prost(message, optional, tag = "2")]
         pub value: ::core::option::Option<::prost_types::Any>,
     }
+    impl ::prost::Name for OtherAddress {
+        const NAME: &'static str = "OtherAddress";
+        const PACKAGE: &'static str = "grpc.channelz.v1";
+        fn full_name() -> ::prost::alloc::string::String {
+            "grpc.channelz.v1.Address.OtherAddress".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/grpc.channelz.v1.Address.OtherAddress".into()
+        }
+    }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Address {
@@ -462,6 +632,16 @@ pub mod address {
         UdsAddress(UdsAddress),
         #[prost(message, tag = "3")]
         OtherAddress(OtherAddress),
+    }
+}
+impl ::prost::Name for Address {
+    const NAME: &'static str = "Address";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.Address".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.Address".into()
     }
 }
 /// Security represents details about how secure the socket is.
@@ -500,6 +680,16 @@ pub mod security {
             OtherName(::prost::alloc::string::String),
         }
     }
+    impl ::prost::Name for Tls {
+        const NAME: &'static str = "Tls";
+        const PACKAGE: &'static str = "grpc.channelz.v1";
+        fn full_name() -> ::prost::alloc::string::String {
+            "grpc.channelz.v1.Security.Tls".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/grpc.channelz.v1.Security.Tls".into()
+        }
+    }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct OtherSecurity {
@@ -510,6 +700,16 @@ pub mod security {
         #[prost(message, optional, tag = "2")]
         pub value: ::core::option::Option<::prost_types::Any>,
     }
+    impl ::prost::Name for OtherSecurity {
+        const NAME: &'static str = "OtherSecurity";
+        const PACKAGE: &'static str = "grpc.channelz.v1";
+        fn full_name() -> ::prost::alloc::string::String {
+            "grpc.channelz.v1.Security.OtherSecurity".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/grpc.channelz.v1.Security.OtherSecurity".into()
+        }
+    }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Model {
@@ -517,6 +717,16 @@ pub mod security {
         Tls(Tls),
         #[prost(message, tag = "2")]
         Other(OtherSecurity),
+    }
+}
+impl ::prost::Name for Security {
+    const NAME: &'static str = "Security";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.Security".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.Security".into()
     }
 }
 /// SocketOption represents socket options for a socket.  Specifically, these
@@ -537,6 +747,16 @@ pub struct SocketOption {
     #[prost(message, optional, tag = "3")]
     pub additional: ::core::option::Option<::prost_types::Any>,
 }
+impl ::prost::Name for SocketOption {
+    const NAME: &'static str = "SocketOption";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.SocketOption".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.SocketOption".into()
+    }
+}
 /// For use with SocketOption's additional field.  This is primarily used for
 /// SO_RCVTIMEO and SO_SNDTIMEO
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -544,6 +764,16 @@ pub struct SocketOption {
 pub struct SocketOptionTimeout {
     #[prost(message, optional, tag = "1")]
     pub duration: ::core::option::Option<::prost_types::Duration>,
+}
+impl ::prost::Name for SocketOptionTimeout {
+    const NAME: &'static str = "SocketOptionTimeout";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.SocketOptionTimeout".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.SocketOptionTimeout".into()
+    }
 }
 /// For use with SocketOption's additional field.  This is primarily used for
 /// SO_LINGER.
@@ -556,6 +786,16 @@ pub struct SocketOptionLinger {
     /// duration maps to `struct linger.l_linger`
     #[prost(message, optional, tag = "2")]
     pub duration: ::core::option::Option<::prost_types::Duration>,
+}
+impl ::prost::Name for SocketOptionLinger {
+    const NAME: &'static str = "SocketOptionLinger";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.SocketOptionLinger".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.SocketOptionLinger".into()
+    }
 }
 /// For use with SocketOption's additional field.  Tcp info for
 /// SOL_TCP and TCP_INFO.
@@ -621,6 +861,16 @@ pub struct SocketOptionTcpInfo {
     #[prost(uint32, tag = "29")]
     pub tcpi_reordering: u32,
 }
+impl ::prost::Name for SocketOptionTcpInfo {
+    const NAME: &'static str = "SocketOptionTcpInfo";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.SocketOptionTcpInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.SocketOptionTcpInfo".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetTopChannelsRequest {
@@ -637,6 +887,16 @@ pub struct GetTopChannelsRequest {
     #[prost(int64, tag = "2")]
     pub max_results: i64,
 }
+impl ::prost::Name for GetTopChannelsRequest {
+    const NAME: &'static str = "GetTopChannelsRequest";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetTopChannelsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetTopChannelsRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetTopChannelsResponse {
@@ -650,6 +910,16 @@ pub struct GetTopChannelsResponse {
     /// completes.
     #[prost(bool, tag = "2")]
     pub end: bool,
+}
+impl ::prost::Name for GetTopChannelsResponse {
+    const NAME: &'static str = "GetTopChannelsResponse";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetTopChannelsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetTopChannelsResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -667,6 +937,16 @@ pub struct GetServersRequest {
     #[prost(int64, tag = "2")]
     pub max_results: i64,
 }
+impl ::prost::Name for GetServersRequest {
+    const NAME: &'static str = "GetServersRequest";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetServersRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetServersRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetServersResponse {
@@ -681,12 +961,32 @@ pub struct GetServersResponse {
     #[prost(bool, tag = "2")]
     pub end: bool,
 }
+impl ::prost::Name for GetServersResponse {
+    const NAME: &'static str = "GetServersResponse";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetServersResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetServersResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetServerRequest {
     /// server_id is the identifier of the specific server to get.
     #[prost(int64, tag = "1")]
     pub server_id: i64,
+}
+impl ::prost::Name for GetServerRequest {
+    const NAME: &'static str = "GetServerRequest";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetServerRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetServerRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -695,6 +995,16 @@ pub struct GetServerResponse {
     /// should be set.
     #[prost(message, optional, tag = "1")]
     pub server: ::core::option::Option<Server>,
+}
+impl ::prost::Name for GetServerResponse {
+    const NAME: &'static str = "GetServerResponse";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetServerResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetServerResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -714,6 +1024,16 @@ pub struct GetServerSocketsRequest {
     #[prost(int64, tag = "3")]
     pub max_results: i64,
 }
+impl ::prost::Name for GetServerSocketsRequest {
+    const NAME: &'static str = "GetServerSocketsRequest";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetServerSocketsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetServerSocketsRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetServerSocketsResponse {
@@ -728,12 +1048,32 @@ pub struct GetServerSocketsResponse {
     #[prost(bool, tag = "2")]
     pub end: bool,
 }
+impl ::prost::Name for GetServerSocketsResponse {
+    const NAME: &'static str = "GetServerSocketsResponse";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetServerSocketsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetServerSocketsResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetChannelRequest {
     /// channel_id is the identifier of the specific channel to get.
     #[prost(int64, tag = "1")]
     pub channel_id: i64,
+}
+impl ::prost::Name for GetChannelRequest {
+    const NAME: &'static str = "GetChannelRequest";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetChannelRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetChannelRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -743,12 +1083,32 @@ pub struct GetChannelResponse {
     #[prost(message, optional, tag = "1")]
     pub channel: ::core::option::Option<Channel>,
 }
+impl ::prost::Name for GetChannelResponse {
+    const NAME: &'static str = "GetChannelResponse";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetChannelResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetChannelResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetSubchannelRequest {
     /// subchannel_id is the identifier of the specific subchannel to get.
     #[prost(int64, tag = "1")]
     pub subchannel_id: i64,
+}
+impl ::prost::Name for GetSubchannelRequest {
+    const NAME: &'static str = "GetSubchannelRequest";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetSubchannelRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetSubchannelRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -757,6 +1117,16 @@ pub struct GetSubchannelResponse {
     /// field should be set.
     #[prost(message, optional, tag = "1")]
     pub subchannel: ::core::option::Option<Subchannel>,
+}
+impl ::prost::Name for GetSubchannelResponse {
+    const NAME: &'static str = "GetSubchannelResponse";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetSubchannelResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetSubchannelResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -770,6 +1140,16 @@ pub struct GetSocketRequest {
     #[prost(bool, tag = "2")]
     pub summary: bool,
 }
+impl ::prost::Name for GetSocketRequest {
+    const NAME: &'static str = "GetSocketRequest";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetSocketRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetSocketRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetSocketResponse {
@@ -777,6 +1157,16 @@ pub struct GetSocketResponse {
     /// should be set.
     #[prost(message, optional, tag = "1")]
     pub socket: ::core::option::Option<Socket>,
+}
+impl ::prost::Name for GetSocketResponse {
+    const NAME: &'static str = "GetSocketResponse";
+    const PACKAGE: &'static str = "grpc.channelz.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "grpc.channelz.v1.GetSocketResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/grpc.channelz.v1.GetSocketResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod channelz_client {

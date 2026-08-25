@@ -7,6 +7,16 @@ pub struct Error {
     #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.Error".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RequestHeader {
@@ -16,6 +26,16 @@ pub struct RequestHeader {
     /// source is the source of the request.
     #[prost(string, tag = "2")]
     pub source: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RequestHeader {
+    const NAME: &'static str = "RequestHeader";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.RequestHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.RequestHeader".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -27,6 +47,16 @@ pub struct ResponseHeader {
     pub error: ::core::option::Option<Error>,
     #[prost(int64, tag = "3")]
     pub revision: i64,
+}
+impl ::prost::Name for ResponseHeader {
+    const NAME: &'static str = "ResponseHeader";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.ResponseHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.ResponseHeader".into()
+    }
 }
 /// copied part of <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -43,6 +73,16 @@ pub struct WatchRequest {
     #[prost(bool, tag = "5")]
     pub prev_kv: bool,
 }
+impl ::prost::Name for WatchRequest {
+    const NAME: &'static str = "WatchRequest";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.WatchRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.WatchRequest".into()
+    }
+}
 /// copied part of <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -53,6 +93,16 @@ pub struct WatchResponse {
     pub compact_revision: i64,
     #[prost(message, repeated, tag = "3")]
     pub events: ::prost::alloc::vec::Vec<Event>,
+}
+impl ::prost::Name for WatchResponse {
+    const NAME: &'static str = "WatchResponse";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.WatchResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.WatchResponse".into()
+    }
 }
 /// copied part of <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -69,6 +119,16 @@ pub struct GetRequest {
     #[prost(int64, tag = "5")]
     pub revision: i64,
 }
+impl ::prost::Name for GetRequest {
+    const NAME: &'static str = "GetRequest";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.GetRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.GetRequest".into()
+    }
+}
 /// copied part of <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -81,6 +141,16 @@ pub struct GetResponse {
     pub more: bool,
     #[prost(int64, tag = "4")]
     pub count: i64,
+}
+impl ::prost::Name for GetResponse {
+    const NAME: &'static str = "GetResponse";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.GetResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.GetResponse".into()
+    }
 }
 /// copied part of <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -97,6 +167,16 @@ pub struct PutRequest {
     #[prost(bool, tag = "5")]
     pub prev_kv: bool,
 }
+impl ::prost::Name for PutRequest {
+    const NAME: &'static str = "PutRequest";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.PutRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.PutRequest".into()
+    }
+}
 /// copied part of <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -105,6 +185,16 @@ pub struct PutResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub prev_kv: ::core::option::Option<KeyValue>,
+}
+impl ::prost::Name for PutResponse {
+    const NAME: &'static str = "PutResponse";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.PutResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.PutResponse".into()
+    }
 }
 /// copied from etcd <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/mvccpb/kv.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -126,6 +216,16 @@ pub struct DeleteRequest {
     #[prost(bool, tag = "4")]
     pub prev_kv: bool,
 }
+impl ::prost::Name for DeleteRequest {
+    const NAME: &'static str = "DeleteRequest";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.DeleteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.DeleteRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteResponse {
@@ -136,6 +236,16 @@ pub struct DeleteResponse {
     pub deleted: i64,
     #[prost(message, repeated, tag = "3")]
     pub prev_kvs: ::prost::alloc::vec::Vec<KeyValue>,
+}
+impl ::prost::Name for DeleteResponse {
+    const NAME: &'static str = "DeleteResponse";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.DeleteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.DeleteResponse".into()
+    }
 }
 /// copied from etcd <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/mvccpb/kv.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -163,6 +273,16 @@ pub struct KeyValue {
     /// If lease is 0, then no lease is attached to the key.
     #[prost(int64, tag = "6")]
     pub lease: i64,
+}
+impl ::prost::Name for KeyValue {
+    const NAME: &'static str = "KeyValue";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.KeyValue".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.KeyValue".into()
+    }
 }
 /// copied from etcd <https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/mvccpb/kv.proto>
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -221,6 +341,16 @@ pub mod event {
                 _ => None,
             }
         }
+    }
+}
+impl ::prost::Name for Event {
+    const NAME: &'static str = "Event";
+    const PACKAGE: &'static str = "meta_storagepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "meta_storagepb.Event".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/meta_storagepb.Event".into()
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]

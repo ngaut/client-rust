@@ -10,6 +10,16 @@ pub struct EncryptionMeta {
     #[prost(bytes = "vec", tag = "2")]
     pub iv: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for EncryptionMeta {
+    const NAME: &'static str = "EncryptionMeta";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.EncryptionMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.EncryptionMeta".into()
+    }
+}
 /// Information about an encrypted file.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -24,12 +34,32 @@ pub struct FileInfo {
     #[prost(enumeration = "EncryptionMethod", tag = "3")]
     pub method: i32,
 }
+impl ::prost::Name for FileInfo {
+    const NAME: &'static str = "FileInfo";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.FileInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.FileInfo".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FileDictionary {
     /// A map of file name to file info.
     #[prost(map = "string, message", tag = "1")]
     pub files: ::std::collections::HashMap<::prost::alloc::string::String, FileInfo>,
+}
+impl ::prost::Name for FileDictionary {
+    const NAME: &'static str = "FileDictionary";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.FileDictionary".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.FileDictionary".into()
+    }
 }
 /// The key used to encrypt the user data.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -48,6 +78,16 @@ pub struct DataKey {
     #[prost(bool, tag = "4")]
     pub was_exposed: bool,
 }
+impl ::prost::Name for DataKey {
+    const NAME: &'static str = "DataKey";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.DataKey".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.DataKey".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyDictionary {
@@ -57,6 +97,16 @@ pub struct KeyDictionary {
     /// ID of a key currently in use.
     #[prost(uint64, tag = "2")]
     pub current_key_id: u64,
+}
+impl ::prost::Name for KeyDictionary {
+    const NAME: &'static str = "KeyDictionary";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.KeyDictionary".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.KeyDictionary".into()
+    }
 }
 /// Master key config.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -78,10 +128,30 @@ pub mod master_key {
         Kms(super::MasterKeyKms),
     }
 }
+impl ::prost::Name for MasterKey {
+    const NAME: &'static str = "MasterKey";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.MasterKey".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.MasterKey".into()
+    }
+}
 /// MasterKeyPlaintext indicates content is stored as plaintext.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MasterKeyPlaintext {}
+impl ::prost::Name for MasterKeyPlaintext {
+    const NAME: &'static str = "MasterKeyPlaintext";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.MasterKeyPlaintext".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.MasterKeyPlaintext".into()
+    }
+}
 /// MasterKeyFile is a master key backed by a file containing encryption key in human-readable
 /// hex format.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -90,6 +160,16 @@ pub struct MasterKeyFile {
     /// Local file path.
     #[prost(string, tag = "1")]
     pub path: ::prost::alloc::string::String,
+}
+impl ::prost::Name for MasterKeyFile {
+    const NAME: &'static str = "MasterKeyFile";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.MasterKeyFile".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.MasterKeyFile".into()
+    }
 }
 /// MasterKeyKms is a master key backed by KMS service that manages the encryption key,
 /// and provide API to encrypt and decrypt a data key, which is used to encrypt the content.
@@ -118,6 +198,16 @@ pub struct MasterKeyKms {
     #[prost(message, optional, tag = "7")]
     pub aws_kms: ::core::option::Option<AwsKms>,
 }
+impl ::prost::Name for MasterKeyKms {
+    const NAME: &'static str = "MasterKeyKms";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.MasterKeyKms".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.MasterKeyKms".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AzureKms {
@@ -142,11 +232,31 @@ pub struct AzureKms {
     #[prost(string, tag = "9")]
     pub client_certificate_password: ::prost::alloc::string::String,
 }
+impl ::prost::Name for AzureKms {
+    const NAME: &'static str = "AzureKms";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.AzureKms".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.AzureKms".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GcpKms {
     #[prost(string, tag = "1")]
     pub credential: ::prost::alloc::string::String,
+}
+impl ::prost::Name for GcpKms {
+    const NAME: &'static str = "GcpKms";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.GcpKms".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.GcpKms".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -155,6 +265,16 @@ pub struct AwsKms {
     pub access_key: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub secret_access_key: ::prost::alloc::string::String,
+}
+impl ::prost::Name for AwsKms {
+    const NAME: &'static str = "AwsKms";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.AwsKms".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.AwsKms".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -180,6 +300,16 @@ pub struct EncryptedContent {
     /// Valid only when KMS is used.
     #[prost(bytes = "vec", tag = "5")]
     pub ciphertext_key: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for EncryptedContent {
+    const NAME: &'static str = "EncryptedContent";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.EncryptedContent".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.EncryptedContent".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -207,17 +337,47 @@ pub mod file_encryption_info {
         MasterKeyBased(super::MasterKeyBased),
     }
 }
+impl ::prost::Name for FileEncryptionInfo {
+    const NAME: &'static str = "FileEncryptionInfo";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.FileEncryptionInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.FileEncryptionInfo".into()
+    }
+}
 /// not recommended in production.
 /// user needs to pass back the same data key for restore.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PlainTextDataKey {}
+impl ::prost::Name for PlainTextDataKey {
+    const NAME: &'static str = "PlainTextDataKey";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.PlainTextDataKey".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.PlainTextDataKey".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MasterKeyBased {
     /// encrypted data key with metadata
     #[prost(message, repeated, tag = "1")]
     pub data_key_encrypted_content: ::prost::alloc::vec::Vec<EncryptedContent>,
+}
+impl ::prost::Name for MasterKeyBased {
+    const NAME: &'static str = "MasterKeyBased";
+    const PACKAGE: &'static str = "encryptionpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "encryptionpb.MasterKeyBased".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/encryptionpb.MasterKeyBased".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

@@ -2,9 +2,29 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceMeteringRequest {}
+impl ::prost::Name for ResourceMeteringRequest {
+    const NAME: &'static str = "ResourceMeteringRequest";
+    const PACKAGE: &'static str = "resource_usage_agent";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_usage_agent.ResourceMeteringRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_usage_agent.ResourceMeteringRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EmptyResponse {}
+impl ::prost::Name for EmptyResponse {
+    const NAME: &'static str = "EmptyResponse";
+    const PACKAGE: &'static str = "resource_usage_agent";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_usage_agent.EmptyResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_usage_agent.EmptyResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceUsageRecord {
@@ -22,6 +42,16 @@ pub mod resource_usage_record {
         RegionRecord(super::RegionRecord),
     }
 }
+impl ::prost::Name for ResourceUsageRecord {
+    const NAME: &'static str = "ResourceUsageRecord";
+    const PACKAGE: &'static str = "resource_usage_agent";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_usage_agent.ResourceUsageRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_usage_agent.ResourceUsageRecord".into()
+    }
+}
 /// GroupTagRecord is a set of resource usage data grouped by resource_group_tag.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -30,6 +60,16 @@ pub struct GroupTagRecord {
     pub resource_group_tag: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, repeated, tag = "2")]
     pub items: ::prost::alloc::vec::Vec<GroupTagRecordItem>,
+}
+impl ::prost::Name for GroupTagRecord {
+    const NAME: &'static str = "GroupTagRecord";
+    const PACKAGE: &'static str = "resource_usage_agent";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_usage_agent.GroupTagRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_usage_agent.GroupTagRecord".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -51,6 +91,16 @@ pub struct GroupTagRecordItem {
     #[prost(uint64, tag = "8")]
     pub logical_write_bytes: u64,
 }
+impl ::prost::Name for GroupTagRecordItem {
+    const NAME: &'static str = "GroupTagRecordItem";
+    const PACKAGE: &'static str = "resource_usage_agent";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_usage_agent.GroupTagRecordItem".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_usage_agent.GroupTagRecordItem".into()
+    }
+}
 /// RegionRecord is a set of resource usage data grouped by region.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -59,6 +109,16 @@ pub struct RegionRecord {
     pub region_id: u64,
     #[prost(message, repeated, tag = "2")]
     pub items: ::prost::alloc::vec::Vec<GroupTagRecordItem>,
+}
+impl ::prost::Name for RegionRecord {
+    const NAME: &'static str = "RegionRecord";
+    const PACKAGE: &'static str = "resource_usage_agent";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_usage_agent.RegionRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_usage_agent.RegionRecord".into()
+    }
 }
 /// Generated client implementations.
 pub mod resource_usage_agent_client {

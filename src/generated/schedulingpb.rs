@@ -9,6 +9,16 @@ pub struct RequestHeader {
     #[prost(uint64, tag = "2")]
     pub sender_id: u64,
 }
+impl ::prost::Name for RequestHeader {
+    const NAME: &'static str = "RequestHeader";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.RequestHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.RequestHeader".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResponseHeader {
@@ -18,6 +28,16 @@ pub struct ResponseHeader {
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<Error>,
 }
+impl ::prost::Name for ResponseHeader {
+    const NAME: &'static str = "ResponseHeader";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.ResponseHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.ResponseHeader".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Error {
@@ -25,6 +45,16 @@ pub struct Error {
     pub r#type: i32,
     #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.Error".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -40,6 +70,16 @@ pub struct Participant {
     #[prost(string, repeated, tag = "3")]
     pub listen_urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for Participant {
+    const NAME: &'static str = "Participant";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.Participant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.Participant".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreHeartbeatRequest {
@@ -48,6 +88,16 @@ pub struct StoreHeartbeatRequest {
     #[prost(message, optional, tag = "2")]
     pub stats: ::core::option::Option<super::pdpb::StoreStats>,
 }
+impl ::prost::Name for StoreHeartbeatRequest {
+    const NAME: &'static str = "StoreHeartbeatRequest";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.StoreHeartbeatRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.StoreHeartbeatRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreHeartbeatResponse {
@@ -55,6 +105,16 @@ pub struct StoreHeartbeatResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(string, tag = "2")]
     pub cluster_version: ::prost::alloc::string::String,
+}
+impl ::prost::Name for StoreHeartbeatResponse {
+    const NAME: &'static str = "StoreHeartbeatResponse";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.StoreHeartbeatResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.StoreHeartbeatResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -101,6 +161,16 @@ pub struct RegionHeartbeatRequest {
     /// BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
     #[prost(message, optional, tag = "15")]
     pub bucket_meta: ::core::option::Option<super::metapb::BucketMeta>,
+}
+impl ::prost::Name for RegionHeartbeatRequest {
+    const NAME: &'static str = "RegionHeartbeatRequest";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.RegionHeartbeatRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.RegionHeartbeatRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -153,6 +223,16 @@ pub struct RegionHeartbeatResponse {
     #[prost(message, optional, tag = "11")]
     pub change_split: ::core::option::Option<super::pdpb::ChangeSplit>,
 }
+impl ::prost::Name for RegionHeartbeatResponse {
+    const NAME: &'static str = "RegionHeartbeatResponse";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.RegionHeartbeatResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.RegionHeartbeatResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ScatterRegionsRequest {
@@ -170,6 +250,16 @@ pub struct ScatterRegionsRequest {
     #[prost(bool, tag = "5")]
     pub skip_store_limit: bool,
 }
+impl ::prost::Name for ScatterRegionsRequest {
+    const NAME: &'static str = "ScatterRegionsRequest";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.ScatterRegionsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.ScatterRegionsRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ScatterRegionsResponse {
@@ -179,6 +269,16 @@ pub struct ScatterRegionsResponse {
     pub finished_percentage: u64,
     #[prost(uint64, repeated, tag = "3")]
     pub failed_regions_id: ::prost::alloc::vec::Vec<u64>,
+}
+impl ::prost::Name for ScatterRegionsResponse {
+    const NAME: &'static str = "ScatterRegionsResponse";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.ScatterRegionsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.ScatterRegionsResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -190,6 +290,16 @@ pub struct SplitRegionsRequest {
     #[prost(uint64, tag = "3")]
     pub retry_limit: u64,
 }
+impl ::prost::Name for SplitRegionsRequest {
+    const NAME: &'static str = "SplitRegionsRequest";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.SplitRegionsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.SplitRegionsRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SplitRegionsResponse {
@@ -200,6 +310,16 @@ pub struct SplitRegionsResponse {
     #[prost(uint64, repeated, tag = "3")]
     pub regions_id: ::prost::alloc::vec::Vec<u64>,
 }
+impl ::prost::Name for SplitRegionsResponse {
+    const NAME: &'static str = "SplitRegionsResponse";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.SplitRegionsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.SplitRegionsResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetOperatorRequest {
@@ -207,6 +327,16 @@ pub struct GetOperatorRequest {
     pub header: ::core::option::Option<RequestHeader>,
     #[prost(uint64, tag = "2")]
     pub region_id: u64,
+}
+impl ::prost::Name for GetOperatorRequest {
+    const NAME: &'static str = "GetOperatorRequest";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.GetOperatorRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.GetOperatorRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -222,6 +352,16 @@ pub struct GetOperatorResponse {
     #[prost(bytes = "vec", tag = "5")]
     pub kind: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for GetOperatorResponse {
+    const NAME: &'static str = "GetOperatorResponse";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.GetOperatorResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.GetOperatorResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AskBatchSplitRequest {
@@ -234,6 +374,16 @@ pub struct AskBatchSplitRequest {
     #[prost(enumeration = "super::pdpb::SplitReason", tag = "4")]
     pub reason: i32,
 }
+impl ::prost::Name for AskBatchSplitRequest {
+    const NAME: &'static str = "AskBatchSplitRequest";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.AskBatchSplitRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.AskBatchSplitRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AskBatchSplitResponse {
@@ -241,6 +391,16 @@ pub struct AskBatchSplitResponse {
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(message, repeated, tag = "2")]
     pub ids: ::prost::alloc::vec::Vec<super::pdpb::SplitId>,
+}
+impl ::prost::Name for AskBatchSplitResponse {
+    const NAME: &'static str = "AskBatchSplitResponse";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.AskBatchSplitResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.AskBatchSplitResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -252,11 +412,31 @@ pub struct RegionBucketsRequest {
     #[prost(message, optional, tag = "3")]
     pub buckets: ::core::option::Option<super::metapb::Buckets>,
 }
+impl ::prost::Name for RegionBucketsRequest {
+    const NAME: &'static str = "RegionBucketsRequest";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.RegionBucketsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.RegionBucketsRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionBucketsResponse {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<ResponseHeader>,
+}
+impl ::prost::Name for RegionBucketsResponse {
+    const NAME: &'static str = "RegionBucketsResponse";
+    const PACKAGE: &'static str = "schedulingpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "schedulingpb.RegionBucketsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/schedulingpb.RegionBucketsResponse".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

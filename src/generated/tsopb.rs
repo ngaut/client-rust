@@ -21,6 +21,16 @@ pub struct RequestHeader {
     #[prost(string, tag = "5")]
     pub callee_id: ::prost::alloc::string::String,
 }
+impl ::prost::Name for RequestHeader {
+    const NAME: &'static str = "RequestHeader";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.RequestHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.RequestHeader".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResponseHeader {
@@ -36,6 +46,16 @@ pub struct ResponseHeader {
     #[prost(uint32, tag = "4")]
     pub keyspace_group_id: u32,
 }
+impl ::prost::Name for ResponseHeader {
+    const NAME: &'static str = "ResponseHeader";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.ResponseHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.ResponseHeader".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Error {
@@ -43,6 +63,16 @@ pub struct Error {
     pub r#type: i32,
     #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.Error".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -54,6 +84,16 @@ pub struct TsoRequest {
     #[prost(string, tag = "3")]
     pub dc_location: ::prost::alloc::string::String,
 }
+impl ::prost::Name for TsoRequest {
+    const NAME: &'static str = "TsoRequest";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.TsoRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.TsoRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TsoResponse {
@@ -63,6 +103,16 @@ pub struct TsoResponse {
     pub count: u32,
     #[prost(message, optional, tag = "3")]
     pub timestamp: ::core::option::Option<super::pdpb::Timestamp>,
+}
+impl ::prost::Name for TsoResponse {
+    const NAME: &'static str = "TsoResponse";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.TsoResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.TsoResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -78,6 +128,16 @@ pub struct Participant {
     #[prost(string, repeated, tag = "3")]
     pub listen_urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for Participant {
+    const NAME: &'static str = "Participant";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.Participant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.Participant".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyspaceGroupMember {
@@ -86,11 +146,31 @@ pub struct KeyspaceGroupMember {
     #[prost(bool, tag = "2")]
     pub is_primary: bool,
 }
+impl ::prost::Name for KeyspaceGroupMember {
+    const NAME: &'static str = "KeyspaceGroupMember";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.KeyspaceGroupMember".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.KeyspaceGroupMember".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SplitState {
     #[prost(uint32, tag = "1")]
     pub split_source: u32,
+}
+impl ::prost::Name for SplitState {
+    const NAME: &'static str = "SplitState";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.SplitState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.SplitState".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -104,6 +184,16 @@ pub struct KeyspaceGroup {
     #[prost(message, repeated, tag = "4")]
     pub members: ::prost::alloc::vec::Vec<KeyspaceGroupMember>,
 }
+impl ::prost::Name for KeyspaceGroup {
+    const NAME: &'static str = "KeyspaceGroup";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.KeyspaceGroup".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.KeyspaceGroup".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FindGroupByKeyspaceIdRequest {
@@ -113,6 +203,16 @@ pub struct FindGroupByKeyspaceIdRequest {
     pub keyspace_id: u32,
     #[prost(uint64, tag = "3")]
     pub mod_revision: u64,
+}
+impl ::prost::Name for FindGroupByKeyspaceIdRequest {
+    const NAME: &'static str = "FindGroupByKeyspaceIDRequest";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.FindGroupByKeyspaceIDRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.FindGroupByKeyspaceIDRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -124,6 +224,16 @@ pub struct FindGroupByKeyspaceIdResponse {
     #[prost(uint64, tag = "3")]
     pub mod_revision: u64,
 }
+impl ::prost::Name for FindGroupByKeyspaceIdResponse {
+    const NAME: &'static str = "FindGroupByKeyspaceIDResponse";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.FindGroupByKeyspaceIDResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.FindGroupByKeyspaceIDResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetMinTsRequest {
@@ -131,6 +241,16 @@ pub struct GetMinTsRequest {
     pub header: ::core::option::Option<RequestHeader>,
     #[prost(string, tag = "2")]
     pub dc_location: ::prost::alloc::string::String,
+}
+impl ::prost::Name for GetMinTsRequest {
+    const NAME: &'static str = "GetMinTSRequest";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.GetMinTSRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.GetMinTSRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -145,6 +265,16 @@ pub struct GetMinTsResponse {
     /// the total count of keyspace groups
     #[prost(uint32, tag = "4")]
     pub keyspace_groups_total: u32,
+}
+impl ::prost::Name for GetMinTsResponse {
+    const NAME: &'static str = "GetMinTSResponse";
+    const PACKAGE: &'static str = "tsopb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tsopb.GetMinTSResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tsopb.GetMinTSResponse".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

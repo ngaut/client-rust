@@ -67,9 +67,29 @@ pub mod task_meta {
         KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
     }
 }
+impl ::prost::Name for TaskMeta {
+    const NAME: &'static str = "TaskMeta";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.TaskMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.TaskMeta".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IsAliveRequest {}
+impl ::prost::Name for IsAliveRequest {
+    const NAME: &'static str = "IsAliveRequest";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.IsAliveRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.IsAliveRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IsAliveResponse {
@@ -77,6 +97,16 @@ pub struct IsAliveResponse {
     pub available: bool,
     #[prost(int64, tag = "2")]
     pub mpp_version: i64,
+}
+impl ::prost::Name for IsAliveResponse {
+    const NAME: &'static str = "IsAliveResponse";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.IsAliveResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.IsAliveResponse".into()
+    }
 }
 /// Dipsatch the task request to different tiflash servers.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -100,6 +130,16 @@ pub struct DispatchTaskRequest {
     #[prost(message, repeated, tag = "7")]
     pub table_shard_infos: ::prost::alloc::vec::Vec<super::coprocessor::TableShardInfos>,
 }
+impl ::prost::Name for DispatchTaskRequest {
+    const NAME: &'static str = "DispatchTaskRequest";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.DispatchTaskRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.DispatchTaskRequest".into()
+    }
+}
 /// Get response of DispatchTaskRequest.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -108,6 +148,16 @@ pub struct DispatchTaskResponse {
     pub error: ::core::option::Option<Error>,
     #[prost(message, repeated, tag = "2")]
     pub retry_regions: ::prost::alloc::vec::Vec<super::metapb::Region>,
+}
+impl ::prost::Name for DispatchTaskResponse {
+    const NAME: &'static str = "DispatchTaskResponse";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.DispatchTaskResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.DispatchTaskResponse".into()
+    }
 }
 /// CancelTaskRequest closes the execution of a task.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -118,11 +168,31 @@ pub struct CancelTaskRequest {
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<Error>,
 }
+impl ::prost::Name for CancelTaskRequest {
+    const NAME: &'static str = "CancelTaskRequest";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.CancelTaskRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.CancelTaskRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CancelTaskResponse {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<Error>,
+}
+impl ::prost::Name for CancelTaskResponse {
+    const NAME: &'static str = "CancelTaskResponse";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.CancelTaskResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.CancelTaskResponse".into()
+    }
 }
 /// ReportTaskStatus reports the execution status of a task.
 /// when TiFlash reports status to TiDB, ReportTaskStatusRequest serialize tipb.TiFlashExecutionInfo into data;
@@ -136,11 +206,31 @@ pub struct ReportTaskStatusRequest {
     #[prost(message, optional, tag = "3")]
     pub error: ::core::option::Option<Error>,
 }
+impl ::prost::Name for ReportTaskStatusRequest {
+    const NAME: &'static str = "ReportTaskStatusRequest";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.ReportTaskStatusRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.ReportTaskStatusRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReportTaskStatusResponse {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<Error>,
+}
+impl ::prost::Name for ReportTaskStatusResponse {
+    const NAME: &'static str = "ReportTaskStatusResponse";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.ReportTaskStatusResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.ReportTaskStatusResponse".into()
+    }
 }
 /// build connection between different tasks. Data is sent by the tasks that are closer to the data sources.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -152,6 +242,16 @@ pub struct EstablishMppConnectionRequest {
     /// node closer to the tidb mpp gather.
     #[prost(message, optional, tag = "2")]
     pub receiver_meta: ::core::option::Option<TaskMeta>,
+}
+impl ::prost::Name for EstablishMppConnectionRequest {
+    const NAME: &'static str = "EstablishMPPConnectionRequest";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.EstablishMPPConnectionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.EstablishMPPConnectionRequest".into()
+    }
 }
 /// when TiFlash sends data to TiDB, Data packets wrap tipb.SelectResponse, i.e., serialize tipb.SelectResponse into data;
 /// when TiFlash sends data to TiFlash, data blocks are serialized into chunks, and the execution_summaries in tipb.SelectResponse are serialized into data only for the last packet.
@@ -170,6 +270,16 @@ pub struct MppDataPacket {
     #[prost(int64, tag = "5")]
     pub version: i64,
 }
+impl ::prost::Name for MppDataPacket {
+    const NAME: &'static str = "MPPDataPacket";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.MPPDataPacket".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.MPPDataPacket".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Error {
@@ -179,4 +289,14 @@ pub struct Error {
     pub msg: ::prost::alloc::string::String,
     #[prost(int64, tag = "3")]
     pub mpp_version: i64,
+}
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "mpp";
+    fn full_name() -> ::prost::alloc::string::String {
+        "mpp.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/mpp.Error".into()
+    }
 }

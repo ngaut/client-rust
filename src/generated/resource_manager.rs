@@ -7,6 +7,16 @@ pub struct KeyspaceIdValue {
     #[prost(uint32, tag = "1")]
     pub value: u32,
 }
+impl ::prost::Name for KeyspaceIdValue {
+    const NAME: &'static str = "KeyspaceIDValue";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.KeyspaceIDValue".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.KeyspaceIDValue".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListResourceGroupsRequest {
@@ -21,6 +31,16 @@ pub struct ListResourceGroupsRequest {
     #[prost(message, optional, tag = "2")]
     pub keyspace_id: ::core::option::Option<KeyspaceIdValue>,
 }
+impl ::prost::Name for ListResourceGroupsRequest {
+    const NAME: &'static str = "ListResourceGroupsRequest";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.ListResourceGroupsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.ListResourceGroupsRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListResourceGroupsResponse {
@@ -28,6 +48,16 @@ pub struct ListResourceGroupsResponse {
     pub error: ::core::option::Option<Error>,
     #[prost(message, repeated, tag = "2")]
     pub groups: ::prost::alloc::vec::Vec<ResourceGroup>,
+}
+impl ::prost::Name for ListResourceGroupsResponse {
+    const NAME: &'static str = "ListResourceGroupsResponse";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.ListResourceGroupsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.ListResourceGroupsResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -45,6 +75,16 @@ pub struct GetResourceGroupRequest {
     #[prost(message, optional, tag = "3")]
     pub keyspace_id: ::core::option::Option<KeyspaceIdValue>,
 }
+impl ::prost::Name for GetResourceGroupRequest {
+    const NAME: &'static str = "GetResourceGroupRequest";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.GetResourceGroupRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.GetResourceGroupRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetResourceGroupResponse {
@@ -52,6 +92,16 @@ pub struct GetResourceGroupResponse {
     pub error: ::core::option::Option<Error>,
     #[prost(message, optional, tag = "2")]
     pub group: ::core::option::Option<ResourceGroup>,
+}
+impl ::prost::Name for GetResourceGroupResponse {
+    const NAME: &'static str = "GetResourceGroupResponse";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.GetResourceGroupResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.GetResourceGroupResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -67,6 +117,16 @@ pub struct DeleteResourceGroupRequest {
     #[prost(message, optional, tag = "2")]
     pub keyspace_id: ::core::option::Option<KeyspaceIdValue>,
 }
+impl ::prost::Name for DeleteResourceGroupRequest {
+    const NAME: &'static str = "DeleteResourceGroupRequest";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.DeleteResourceGroupRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.DeleteResourceGroupRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteResourceGroupResponse {
@@ -75,11 +135,31 @@ pub struct DeleteResourceGroupResponse {
     #[prost(string, tag = "2")]
     pub body: ::prost::alloc::string::String,
 }
+impl ::prost::Name for DeleteResourceGroupResponse {
+    const NAME: &'static str = "DeleteResourceGroupResponse";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.DeleteResourceGroupResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.DeleteResourceGroupResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PutResourceGroupRequest {
     #[prost(message, optional, tag = "1")]
     pub group: ::core::option::Option<ResourceGroup>,
+}
+impl ::prost::Name for PutResourceGroupRequest {
+    const NAME: &'static str = "PutResourceGroupRequest";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.PutResourceGroupRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.PutResourceGroupRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -88,6 +168,16 @@ pub struct PutResourceGroupResponse {
     pub error: ::core::option::Option<Error>,
     #[prost(string, tag = "2")]
     pub body: ::prost::alloc::string::String,
+}
+impl ::prost::Name for PutResourceGroupResponse {
+    const NAME: &'static str = "PutResourceGroupResponse";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.PutResourceGroupResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.PutResourceGroupResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -98,6 +188,16 @@ pub struct TokenBucketsRequest {
     pub target_request_period_ms: u64,
     #[prost(uint64, tag = "3")]
     pub client_unique_id: u64,
+}
+impl ::prost::Name for TokenBucketsRequest {
+    const NAME: &'static str = "TokenBucketsRequest";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.TokenBucketsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.TokenBucketsRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -131,11 +231,31 @@ pub mod token_bucket_request {
         #[prost(message, repeated, tag = "1")]
         pub request_r_u: ::prost::alloc::vec::Vec<super::RequestUnitItem>,
     }
+    impl ::prost::Name for RequestRu {
+        const NAME: &'static str = "RequestRU";
+        const PACKAGE: &'static str = "resource_manager";
+        fn full_name() -> ::prost::alloc::string::String {
+            "resource_manager.TokenBucketRequest.RequestRU".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/resource_manager.TokenBucketRequest.RequestRU".into()
+        }
+    }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct RequestRawResource {
         #[prost(message, repeated, tag = "1")]
         pub request_raw_resource: ::prost::alloc::vec::Vec<super::RawResourceItem>,
+    }
+    impl ::prost::Name for RequestRawResource {
+        const NAME: &'static str = "RequestRawResource";
+        const PACKAGE: &'static str = "resource_manager";
+        fn full_name() -> ::prost::alloc::string::String {
+            "resource_manager.TokenBucketRequest.RequestRawResource".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/resource_manager.TokenBucketRequest.RequestRawResource".into()
+        }
     }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
@@ -148,6 +268,16 @@ pub mod token_bucket_request {
         RawResourceItems(RequestRawResource),
     }
 }
+impl ::prost::Name for TokenBucketRequest {
+    const NAME: &'static str = "TokenBucketRequest";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.TokenBucketRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.TokenBucketRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TokenBucketsResponse {
@@ -155,6 +285,16 @@ pub struct TokenBucketsResponse {
     pub error: ::core::option::Option<Error>,
     #[prost(message, repeated, tag = "2")]
     pub responses: ::prost::alloc::vec::Vec<TokenBucketResponse>,
+}
+impl ::prost::Name for TokenBucketsResponse {
+    const NAME: &'static str = "TokenBucketsResponse";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.TokenBucketsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.TokenBucketsResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -176,6 +316,16 @@ pub struct TokenBucketResponse {
     #[prost(message, optional, tag = "4")]
     pub keyspace_id: ::core::option::Option<KeyspaceIdValue>,
 }
+impl ::prost::Name for TokenBucketResponse {
+    const NAME: &'static str = "TokenBucketResponse";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.TokenBucketResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.TokenBucketResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GrantedRuTokenBucket {
@@ -186,6 +336,16 @@ pub struct GrantedRuTokenBucket {
     #[prost(int64, tag = "3")]
     pub trickle_time_ms: i64,
 }
+impl ::prost::Name for GrantedRuTokenBucket {
+    const NAME: &'static str = "GrantedRUTokenBucket";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.GrantedRUTokenBucket".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.GrantedRUTokenBucket".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GrantedRawResourceTokenBucket {
@@ -195,6 +355,16 @@ pub struct GrantedRawResourceTokenBucket {
     pub granted_tokens: ::core::option::Option<TokenBucket>,
     #[prost(int64, tag = "3")]
     pub trickle_time_ms: i64,
+}
+impl ::prost::Name for GrantedRawResourceTokenBucket {
+    const NAME: &'static str = "GrantedRawResourceTokenBucket";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.GrantedRawResourceTokenBucket".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.GrantedRawResourceTokenBucket".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -229,6 +399,16 @@ pub struct Consumption {
     #[prost(double, tag = "13")]
     pub tiflash_r_u_v2: f64,
 }
+impl ::prost::Name for Consumption {
+    const NAME: &'static str = "Consumption";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.Consumption".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.Consumption".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RequestUnitItem {
@@ -237,6 +417,16 @@ pub struct RequestUnitItem {
     #[prost(double, tag = "2")]
     pub value: f64,
 }
+impl ::prost::Name for RequestUnitItem {
+    const NAME: &'static str = "RequestUnitItem";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.RequestUnitItem".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.RequestUnitItem".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawResourceItem {
@@ -244,6 +434,16 @@ pub struct RawResourceItem {
     pub r#type: i32,
     #[prost(double, tag = "2")]
     pub value: f64,
+}
+impl ::prost::Name for RawResourceItem {
+    const NAME: &'static str = "RawResourceItem";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.RawResourceItem".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.RawResourceItem".into()
+    }
 }
 /// ResourceGroup the settings definitions.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -280,11 +480,31 @@ pub struct ResourceGroup {
     #[prost(message, optional, tag = "9")]
     pub keyspace_id: ::core::option::Option<KeyspaceIdValue>,
 }
+impl ::prost::Name for ResourceGroup {
+    const NAME: &'static str = "ResourceGroup";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.ResourceGroup".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.ResourceGroup".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GroupRequestUnitSettings {
     #[prost(message, optional, tag = "1")]
     pub r_u: ::core::option::Option<TokenBucket>,
+}
+impl ::prost::Name for GroupRequestUnitSettings {
+    const NAME: &'static str = "GroupRequestUnitSettings";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.GroupRequestUnitSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.GroupRequestUnitSettings".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -296,6 +516,16 @@ pub struct GroupRawResourceSettings {
     #[prost(message, optional, tag = "3")]
     pub io_write: ::core::option::Option<TokenBucket>,
 }
+impl ::prost::Name for GroupRawResourceSettings {
+    const NAME: &'static str = "GroupRawResourceSettings";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.GroupRawResourceSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.GroupRawResourceSettings".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TokenBucket {
@@ -304,6 +534,16 @@ pub struct TokenBucket {
     /// Once used to reconfigure, the tokens is delta tokens.
     #[prost(double, tag = "2")]
     pub tokens: f64,
+}
+impl ::prost::Name for TokenBucket {
+    const NAME: &'static str = "TokenBucket";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.TokenBucket".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.TokenBucket".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -315,11 +555,31 @@ pub struct TokenLimitSettings {
     #[prost(double, tag = "3")]
     pub max_tokens: f64,
 }
+impl ::prost::Name for TokenLimitSettings {
+    const NAME: &'static str = "TokenLimitSettings";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.TokenLimitSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.TokenLimitSettings".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Error {
     #[prost(string, tag = "1")]
     pub message: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.Error".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -331,6 +591,16 @@ pub struct RunawayRule {
     #[prost(int64, tag = "3")]
     pub request_unit: i64,
 }
+impl ::prost::Name for RunawayRule {
+    const NAME: &'static str = "RunawayRule";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.RunawayRule".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.RunawayRule".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RunawayWatch {
@@ -339,6 +609,16 @@ pub struct RunawayWatch {
     pub lasting_duration_ms: i64,
     #[prost(enumeration = "RunawayWatchType", tag = "2")]
     pub r#type: i32,
+}
+impl ::prost::Name for RunawayWatch {
+    const NAME: &'static str = "RunawayWatch";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.RunawayWatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.RunawayWatch".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -354,6 +634,16 @@ pub struct RunawaySettings {
     #[prost(string, tag = "4")]
     pub switch_group_name: ::prost::alloc::string::String,
 }
+impl ::prost::Name for RunawaySettings {
+    const NAME: &'static str = "RunawaySettings";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.RunawaySettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.RunawaySettings".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BackgroundSettings {
@@ -363,6 +653,16 @@ pub struct BackgroundSettings {
     /// the percentage limit of total resource(cpu/io) that background tasks can use.
     #[prost(uint64, tag = "2")]
     pub utilization_limit: u64,
+}
+impl ::prost::Name for BackgroundSettings {
+    const NAME: &'static str = "BackgroundSettings";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.BackgroundSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.BackgroundSettings".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -377,6 +677,16 @@ pub struct Participant {
     /// listen_urls\[0\] is primary service endpoint.
     #[prost(string, repeated, tag = "3")]
     pub listen_urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+impl ::prost::Name for Participant {
+    const NAME: &'static str = "Participant";
+    const PACKAGE: &'static str = "resource_manager";
+    fn full_name() -> ::prost::alloc::string::String {
+        "resource_manager.Participant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/resource_manager.Participant".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

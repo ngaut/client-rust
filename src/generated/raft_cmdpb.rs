@@ -7,11 +7,31 @@ pub struct GetRequest {
     #[prost(bytes = "vec", tag = "2")]
     pub key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for GetRequest {
+    const NAME: &'static str = "GetRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.GetRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.GetRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub value: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for GetResponse {
+    const NAME: &'static str = "GetResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.GetResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.GetResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -23,9 +43,29 @@ pub struct PutRequest {
     #[prost(bytes = "vec", tag = "3")]
     pub value: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for PutRequest {
+    const NAME: &'static str = "PutRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.PutRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.PutRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PutResponse {}
+impl ::prost::Name for PutResponse {
+    const NAME: &'static str = "PutResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.PutResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.PutResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteRequest {
@@ -34,9 +74,29 @@ pub struct DeleteRequest {
     #[prost(bytes = "vec", tag = "2")]
     pub key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for DeleteRequest {
+    const NAME: &'static str = "DeleteRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.DeleteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.DeleteRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteResponse {}
+impl ::prost::Name for DeleteResponse {
+    const NAME: &'static str = "DeleteResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.DeleteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.DeleteResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteRangeRequest {
@@ -49,17 +109,57 @@ pub struct DeleteRangeRequest {
     #[prost(bool, tag = "4")]
     pub notify_only: bool,
 }
+impl ::prost::Name for DeleteRangeRequest {
+    const NAME: &'static str = "DeleteRangeRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.DeleteRangeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.DeleteRangeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteRangeResponse {}
+impl ::prost::Name for DeleteRangeResponse {
+    const NAME: &'static str = "DeleteRangeResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.DeleteRangeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.DeleteRangeResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SnapRequest {}
+impl ::prost::Name for SnapRequest {
+    const NAME: &'static str = "SnapRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.SnapRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.SnapRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SnapResponse {
     #[prost(message, optional, tag = "1")]
     pub region: ::core::option::Option<super::metapb::Region>,
+}
+impl ::prost::Name for SnapResponse {
+    const NAME: &'static str = "SnapResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.SnapResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.SnapResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -71,18 +171,58 @@ pub struct PrewriteRequest {
     #[prost(bytes = "vec", tag = "3")]
     pub lock: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for PrewriteRequest {
+    const NAME: &'static str = "PrewriteRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.PrewriteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.PrewriteRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrewriteResponse {}
+impl ::prost::Name for PrewriteResponse {
+    const NAME: &'static str = "PrewriteResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.PrewriteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.PrewriteResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IngestSstRequest {
     #[prost(message, optional, tag = "1")]
     pub sst: ::core::option::Option<super::import_sstpb::SstMeta>,
 }
+impl ::prost::Name for IngestSstRequest {
+    const NAME: &'static str = "IngestSSTRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.IngestSSTRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.IngestSSTRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IngestSstResponse {}
+impl ::prost::Name for IngestSstResponse {
+    const NAME: &'static str = "IngestSSTResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.IngestSSTResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.IngestSSTResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReadIndexRequest {
@@ -92,6 +232,16 @@ pub struct ReadIndexRequest {
     #[prost(message, repeated, tag = "2")]
     pub key_ranges: ::prost::alloc::vec::Vec<super::kvrpcpb::KeyRange>,
 }
+impl ::prost::Name for ReadIndexRequest {
+    const NAME: &'static str = "ReadIndexRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.ReadIndexRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.ReadIndexRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReadIndexResponse {
@@ -100,6 +250,16 @@ pub struct ReadIndexResponse {
     /// The memory lock blocking this read at the leader
     #[prost(message, optional, tag = "2")]
     pub locked: ::core::option::Option<super::kvrpcpb::LockInfo>,
+}
+impl ::prost::Name for ReadIndexResponse {
+    const NAME: &'static str = "ReadIndexResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.ReadIndexResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.ReadIndexResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -123,6 +283,16 @@ pub struct Request {
     #[prost(message, optional, tag = "10")]
     pub read_index: ::core::option::Option<ReadIndexRequest>,
 }
+impl ::prost::Name for Request {
+    const NAME: &'static str = "Request";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.Request".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.Request".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Response {
@@ -145,6 +315,16 @@ pub struct Response {
     #[prost(message, optional, tag = "10")]
     pub read_index: ::core::option::Option<ReadIndexResponse>,
 }
+impl ::prost::Name for Response {
+    const NAME: &'static str = "Response";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.Response".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.Response".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ChangePeerRequest {
@@ -154,11 +334,31 @@ pub struct ChangePeerRequest {
     #[prost(message, optional, tag = "2")]
     pub peer: ::core::option::Option<super::metapb::Peer>,
 }
+impl ::prost::Name for ChangePeerRequest {
+    const NAME: &'static str = "ChangePeerRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.ChangePeerRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.ChangePeerRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ChangePeerResponse {
     #[prost(message, optional, tag = "1")]
     pub region: ::core::option::Option<super::metapb::Region>,
+}
+impl ::prost::Name for ChangePeerResponse {
+    const NAME: &'static str = "ChangePeerResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.ChangePeerResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.ChangePeerResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -166,11 +366,31 @@ pub struct ChangePeerV2Request {
     #[prost(message, repeated, tag = "1")]
     pub changes: ::prost::alloc::vec::Vec<ChangePeerRequest>,
 }
+impl ::prost::Name for ChangePeerV2Request {
+    const NAME: &'static str = "ChangePeerV2Request";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.ChangePeerV2Request".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.ChangePeerV2Request".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ChangePeerV2Response {
     #[prost(message, optional, tag = "1")]
     pub region: ::core::option::Option<super::metapb::Region>,
+}
+impl ::prost::Name for ChangePeerV2Response {
+    const NAME: &'static str = "ChangePeerV2Response";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.ChangePeerV2Response".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.ChangePeerV2Response".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -200,6 +420,16 @@ pub struct SplitRequest {
     #[prost(bool, tag = "5")]
     pub share_source_region_size: bool,
 }
+impl ::prost::Name for SplitRequest {
+    const NAME: &'static str = "SplitRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.SplitRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.SplitRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SplitResponse {
@@ -207,6 +437,16 @@ pub struct SplitResponse {
     pub left: ::core::option::Option<super::metapb::Region>,
     #[prost(message, optional, tag = "2")]
     pub right: ::core::option::Option<super::metapb::Region>,
+}
+impl ::prost::Name for SplitResponse {
+    const NAME: &'static str = "SplitResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.SplitResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.SplitResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -224,11 +464,31 @@ pub struct BatchSplitRequest {
     #[prost(bool, tag = "3")]
     pub share_source_region_size: bool,
 }
+impl ::prost::Name for BatchSplitRequest {
+    const NAME: &'static str = "BatchSplitRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.BatchSplitRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.BatchSplitRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchSplitResponse {
     #[prost(message, repeated, tag = "1")]
     pub regions: ::prost::alloc::vec::Vec<super::metapb::Region>,
+}
+impl ::prost::Name for BatchSplitResponse {
+    const NAME: &'static str = "BatchSplitResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.BatchSplitResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.BatchSplitResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -240,9 +500,29 @@ pub struct CompactLogRequest {
     #[prost(uint64, tag = "3")]
     pub voter_replicated_index: u64,
 }
+impl ::prost::Name for CompactLogRequest {
+    const NAME: &'static str = "CompactLogRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.CompactLogRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.CompactLogRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactLogResponse {}
+impl ::prost::Name for CompactLogResponse {
+    const NAME: &'static str = "CompactLogResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.CompactLogResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.CompactLogResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TransferLeaderRequest {
@@ -251,14 +531,44 @@ pub struct TransferLeaderRequest {
     #[prost(message, repeated, tag = "2")]
     pub peers: ::prost::alloc::vec::Vec<super::metapb::Peer>,
 }
+impl ::prost::Name for TransferLeaderRequest {
+    const NAME: &'static str = "TransferLeaderRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.TransferLeaderRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.TransferLeaderRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TransferLeaderResponse {}
+impl ::prost::Name for TransferLeaderResponse {
+    const NAME: &'static str = "TransferLeaderResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.TransferLeaderResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.TransferLeaderResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ComputeHashRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub context: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for ComputeHashRequest {
+    const NAME: &'static str = "ComputeHashRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.ComputeHashRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.ComputeHashRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -270,9 +580,29 @@ pub struct VerifyHashRequest {
     #[prost(bytes = "vec", tag = "3")]
     pub context: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for VerifyHashRequest {
+    const NAME: &'static str = "VerifyHashRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.VerifyHashRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.VerifyHashRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VerifyHashResponse {}
+impl ::prost::Name for VerifyHashResponse {
+    const NAME: &'static str = "VerifyHashResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.VerifyHashResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.VerifyHashResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrepareMergeRequest {
@@ -281,9 +611,29 @@ pub struct PrepareMergeRequest {
     #[prost(message, optional, tag = "2")]
     pub target: ::core::option::Option<super::metapb::Region>,
 }
+impl ::prost::Name for PrepareMergeRequest {
+    const NAME: &'static str = "PrepareMergeRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.PrepareMergeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.PrepareMergeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrepareMergeResponse {}
+impl ::prost::Name for PrepareMergeResponse {
+    const NAME: &'static str = "PrepareMergeResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.PrepareMergeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.PrepareMergeResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrepareFlashbackRequest {
@@ -291,15 +641,55 @@ pub struct PrepareFlashbackRequest {
     #[prost(uint64, tag = "1")]
     pub start_ts: u64,
 }
+impl ::prost::Name for PrepareFlashbackRequest {
+    const NAME: &'static str = "PrepareFlashbackRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.PrepareFlashbackRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.PrepareFlashbackRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrepareFlashbackResponse {}
+impl ::prost::Name for PrepareFlashbackResponse {
+    const NAME: &'static str = "PrepareFlashbackResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.PrepareFlashbackResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.PrepareFlashbackResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FinishFlashbackRequest {}
+impl ::prost::Name for FinishFlashbackRequest {
+    const NAME: &'static str = "FinishFlashbackRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.FinishFlashbackRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.FinishFlashbackRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FinishFlashbackResponse {}
+impl ::prost::Name for FinishFlashbackResponse {
+    const NAME: &'static str = "FinishFlashbackResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.FinishFlashbackResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.FinishFlashbackResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitMergeRequest {
@@ -315,18 +705,58 @@ pub struct CommitMergeRequest {
     #[prost(bytes = "vec", tag = "100")]
     pub source_meta: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for CommitMergeRequest {
+    const NAME: &'static str = "CommitMergeRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.CommitMergeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.CommitMergeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitMergeResponse {}
+impl ::prost::Name for CommitMergeResponse {
+    const NAME: &'static str = "CommitMergeResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.CommitMergeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.CommitMergeResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RollbackMergeRequest {
     #[prost(uint64, tag = "1")]
     pub commit: u64,
 }
+impl ::prost::Name for RollbackMergeRequest {
+    const NAME: &'static str = "RollbackMergeRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RollbackMergeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RollbackMergeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RollbackMergeResponse {}
+impl ::prost::Name for RollbackMergeResponse {
+    const NAME: &'static str = "RollbackMergeResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RollbackMergeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RollbackMergeResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SwitchWitnessRequest {
@@ -335,20 +765,60 @@ pub struct SwitchWitnessRequest {
     #[prost(bool, tag = "2")]
     pub is_witness: bool,
 }
+impl ::prost::Name for SwitchWitnessRequest {
+    const NAME: &'static str = "SwitchWitnessRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.SwitchWitnessRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.SwitchWitnessRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchSwitchWitnessRequest {
     #[prost(message, repeated, tag = "1")]
     pub switch_witnesses: ::prost::alloc::vec::Vec<SwitchWitnessRequest>,
 }
+impl ::prost::Name for BatchSwitchWitnessRequest {
+    const NAME: &'static str = "BatchSwitchWitnessRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.BatchSwitchWitnessRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.BatchSwitchWitnessRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchSwitchWitnessResponse {}
+impl ::prost::Name for BatchSwitchWitnessResponse {
+    const NAME: &'static str = "BatchSwitchWitnessResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.BatchSwitchWitnessResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.BatchSwitchWitnessResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateGcPeerRequest {
     #[prost(uint64, repeated, tag = "1")]
     pub peer_id: ::prost::alloc::vec::Vec<u64>,
+}
+impl ::prost::Name for UpdateGcPeerRequest {
+    const NAME: &'static str = "UpdateGcPeerRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.UpdateGcPeerRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.UpdateGcPeerRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -387,6 +857,16 @@ pub struct AdminRequest {
     #[prost(message, optional, tag = "16")]
     pub update_gc_peers: ::core::option::Option<UpdateGcPeerRequest>,
 }
+impl ::prost::Name for AdminRequest {
+    const NAME: &'static str = "AdminRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.AdminRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.AdminRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdminResponse {
@@ -421,15 +901,45 @@ pub struct AdminResponse {
     #[prost(message, optional, tag = "14")]
     pub switch_witnesses: ::core::option::Option<BatchSwitchWitnessResponse>,
 }
+impl ::prost::Name for AdminResponse {
+    const NAME: &'static str = "AdminResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.AdminResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.AdminResponse".into()
+    }
+}
 /// For get the leader of the region.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionLeaderRequest {}
+impl ::prost::Name for RegionLeaderRequest {
+    const NAME: &'static str = "RegionLeaderRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RegionLeaderRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RegionLeaderRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionLeaderResponse {
     #[prost(message, optional, tag = "1")]
     pub leader: ::core::option::Option<super::metapb::Peer>,
+}
+impl ::prost::Name for RegionLeaderResponse {
+    const NAME: &'static str = "RegionLeaderResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RegionLeaderResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RegionLeaderResponse".into()
+    }
 }
 /// For getting more information of the region.
 /// We add some admin operations (ChangePeer, Split...) into the pb job list,
@@ -443,6 +953,16 @@ pub struct RegionLeaderResponse {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionDetailRequest {}
+impl ::prost::Name for RegionDetailRequest {
+    const NAME: &'static str = "RegionDetailRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RegionDetailRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RegionDetailRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionDetailResponse {
@@ -450,6 +970,16 @@ pub struct RegionDetailResponse {
     pub region: ::core::option::Option<super::metapb::Region>,
     #[prost(message, optional, tag = "2")]
     pub leader: ::core::option::Option<super::metapb::Peer>,
+}
+impl ::prost::Name for RegionDetailResponse {
+    const NAME: &'static str = "RegionDetailResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RegionDetailResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RegionDetailResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -461,6 +991,16 @@ pub struct StatusRequest {
     #[prost(message, optional, tag = "3")]
     pub region_detail: ::core::option::Option<RegionDetailRequest>,
 }
+impl ::prost::Name for StatusRequest {
+    const NAME: &'static str = "StatusRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.StatusRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.StatusRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatusResponse {
@@ -470,6 +1010,16 @@ pub struct StatusResponse {
     pub region_leader: ::core::option::Option<RegionLeaderResponse>,
     #[prost(message, optional, tag = "3")]
     pub region_detail: ::core::option::Option<RegionDetailResponse>,
+}
+impl ::prost::Name for StatusResponse {
+    const NAME: &'static str = "StatusResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.StatusResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.StatusResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -505,6 +1055,16 @@ pub struct RaftRequestHeader {
     #[prost(string, tag = "13")]
     pub resource_group_name: ::prost::alloc::string::String,
 }
+impl ::prost::Name for RaftRequestHeader {
+    const NAME: &'static str = "RaftRequestHeader";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RaftRequestHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RaftRequestHeader".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RaftResponseHeader {
@@ -515,11 +1075,31 @@ pub struct RaftResponseHeader {
     #[prost(uint64, tag = "3")]
     pub current_term: u64,
 }
+impl ::prost::Name for RaftResponseHeader {
+    const NAME: &'static str = "RaftResponseHeader";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RaftResponseHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RaftResponseHeader".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CustomRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for CustomRequest {
+    const NAME: &'static str = "CustomRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.CustomRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.CustomRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -537,6 +1117,16 @@ pub struct RaftCmdRequest {
     #[prost(message, optional, tag = "5")]
     pub custom_request: ::core::option::Option<CustomRequest>,
 }
+impl ::prost::Name for RaftCmdRequest {
+    const NAME: &'static str = "RaftCmdRequest";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RaftCmdRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RaftCmdRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RaftCmdResponse {
@@ -548,6 +1138,16 @@ pub struct RaftCmdResponse {
     pub admin_response: ::core::option::Option<AdminResponse>,
     #[prost(message, optional, tag = "4")]
     pub status_response: ::core::option::Option<StatusResponse>,
+}
+impl ::prost::Name for RaftCmdResponse {
+    const NAME: &'static str = "RaftCmdResponse";
+    const PACKAGE: &'static str = "raft_cmdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_cmdpb.RaftCmdResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_cmdpb.RaftCmdResponse".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

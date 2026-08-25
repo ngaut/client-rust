@@ -14,12 +14,32 @@ pub struct SuspendImportRpcRequest {
     #[prost(string, tag = "3")]
     pub caller: ::prost::alloc::string::String,
 }
+impl ::prost::Name for SuspendImportRpcRequest {
+    const NAME: &'static str = "SuspendImportRPCRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.SuspendImportRPCRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.SuspendImportRPCRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SuspendImportRpcResponse {
     /// The last state before this RPC.
     #[prost(bool, tag = "1")]
     pub already_suspended: bool,
+}
+impl ::prost::Name for SuspendImportRpcResponse {
+    const NAME: &'static str = "SuspendImportRPCResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.SuspendImportRPCResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.SuspendImportRPCResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -29,17 +49,57 @@ pub struct SwitchModeRequest {
     #[prost(message, repeated, tag = "2")]
     pub ranges: ::prost::alloc::vec::Vec<Range>,
 }
+impl ::prost::Name for SwitchModeRequest {
+    const NAME: &'static str = "SwitchModeRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.SwitchModeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.SwitchModeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SwitchModeResponse {}
+impl ::prost::Name for SwitchModeResponse {
+    const NAME: &'static str = "SwitchModeResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.SwitchModeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.SwitchModeResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetModeRequest {}
+impl ::prost::Name for GetModeRequest {
+    const NAME: &'static str = "GetModeRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.GetModeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.GetModeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetModeResponse {
     #[prost(enumeration = "SwitchMode", tag = "1")]
     pub mode: i32,
+}
+impl ::prost::Name for GetModeResponse {
+    const NAME: &'static str = "GetModeResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.GetModeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.GetModeResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -48,6 +108,16 @@ pub struct Range {
     pub start: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub end: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for Range {
+    const NAME: &'static str = "Range";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.Range".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.Range".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -81,6 +151,16 @@ pub struct SstMeta {
     #[prost(bytes = "vec", tag = "12")]
     pub cipher_iv: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for SstMeta {
+    const NAME: &'static str = "SSTMeta";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.SSTMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.SSTMeta".into()
+    }
+}
 /// A rewrite rule is applied on the *encoded* keys (the internal storage
 /// representation).
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -100,6 +180,16 @@ pub struct RewriteRule {
     #[prost(uint64, tag = "5")]
     pub ignore_before_timestamp: u64,
 }
+impl ::prost::Name for RewriteRule {
+    const NAME: &'static str = "RewriteRule";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.RewriteRule".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.RewriteRule".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UploadRequest {
@@ -117,9 +207,29 @@ pub mod upload_request {
         Data(::prost::alloc::vec::Vec<u8>),
     }
 }
+impl ::prost::Name for UploadRequest {
+    const NAME: &'static str = "UploadRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.UploadRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.UploadRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UploadResponse {}
+impl ::prost::Name for UploadResponse {
+    const NAME: &'static str = "UploadResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.UploadResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.UploadResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IngestRequest {
@@ -127,6 +237,16 @@ pub struct IngestRequest {
     pub context: ::core::option::Option<super::kvrpcpb::Context>,
     #[prost(message, optional, tag = "2")]
     pub sst: ::core::option::Option<SstMeta>,
+}
+impl ::prost::Name for IngestRequest {
+    const NAME: &'static str = "IngestRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.IngestRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.IngestRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -136,11 +256,31 @@ pub struct MultiIngestRequest {
     #[prost(message, repeated, tag = "2")]
     pub ssts: ::prost::alloc::vec::Vec<SstMeta>,
 }
+impl ::prost::Name for MultiIngestRequest {
+    const NAME: &'static str = "MultiIngestRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.MultiIngestRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.MultiIngestRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IngestResponse {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<super::errorpb::Error>,
+}
+impl ::prost::Name for IngestResponse {
+    const NAME: &'static str = "IngestResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.IngestResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.IngestResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -155,9 +295,29 @@ pub struct CompactRequest {
     #[prost(message, optional, tag = "3")]
     pub context: ::core::option::Option<super::kvrpcpb::Context>,
 }
+impl ::prost::Name for CompactRequest {
+    const NAME: &'static str = "CompactRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.CompactRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.CompactRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactResponse {}
+impl ::prost::Name for CompactResponse {
+    const NAME: &'static str = "CompactResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.CompactResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.CompactResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DownloadRequest {
@@ -212,6 +372,16 @@ pub struct DownloadRequest {
     #[prost(message, optional, tag = "19")]
     pub context: ::core::option::Option<super::kvrpcpb::Context>,
 }
+impl ::prost::Name for DownloadRequest {
+    const NAME: &'static str = "DownloadRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.DownloadRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.DownloadRequest".into()
+    }
+}
 /// For now it is just used for distinguishing the error of the request with the error
 /// of gRPC, add more concrete types if it is necessary later.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -222,6 +392,16 @@ pub struct Error {
     /// We meet some internal errors of the store.
     #[prost(message, optional, tag = "2")]
     pub store_error: ::core::option::Option<super::errorpb::Error>,
+}
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.Error".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -249,6 +429,16 @@ pub struct DownloadResponse {
     #[prost(message, repeated, tag = "6")]
     pub ssts: ::prost::alloc::vec::Vec<SstMeta>,
 }
+impl ::prost::Name for DownloadResponse {
+    const NAME: &'static str = "DownloadResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.DownloadResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.DownloadResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SetDownloadSpeedLimitRequest {
@@ -262,9 +452,29 @@ pub struct SetDownloadSpeedLimitRequest {
     #[prost(uint64, tag = "3")]
     pub ttl_seconds: u64,
 }
+impl ::prost::Name for SetDownloadSpeedLimitRequest {
+    const NAME: &'static str = "SetDownloadSpeedLimitRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.SetDownloadSpeedLimitRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.SetDownloadSpeedLimitRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SetDownloadSpeedLimitResponse {}
+impl ::prost::Name for SetDownloadSpeedLimitResponse {
+    const NAME: &'static str = "SetDownloadSpeedLimitResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.SetDownloadSpeedLimitResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.SetDownloadSpeedLimitResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Pair {
@@ -314,6 +524,16 @@ pub mod pair {
         }
     }
 }
+impl ::prost::Name for Pair {
+    const NAME: &'static str = "Pair";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.Pair".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.Pair".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WriteBatch {
@@ -321,6 +541,16 @@ pub struct WriteBatch {
     pub commit_ts: u64,
     #[prost(message, repeated, tag = "2")]
     pub pairs: ::prost::alloc::vec::Vec<Pair>,
+}
+impl ::prost::Name for WriteBatch {
+    const NAME: &'static str = "WriteBatch";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.WriteBatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.WriteBatch".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -341,6 +571,16 @@ pub mod write_request {
         Batch(super::WriteBatch),
     }
 }
+impl ::prost::Name for WriteRequest {
+    const NAME: &'static str = "WriteRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.WriteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.WriteRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WriteResponse {
@@ -348,6 +588,16 @@ pub struct WriteResponse {
     pub error: ::core::option::Option<Error>,
     #[prost(message, repeated, tag = "2")]
     pub metas: ::prost::alloc::vec::Vec<SstMeta>,
+}
+impl ::prost::Name for WriteResponse {
+    const NAME: &'static str = "WriteResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.WriteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.WriteResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -363,6 +613,16 @@ pub struct RawWriteBatch {
     /// for other features like MVCC over RawKV.
     #[prost(uint64, tag = "3")]
     pub ts: u64,
+}
+impl ::prost::Name for RawWriteBatch {
+    const NAME: &'static str = "RawWriteBatch";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.RawWriteBatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.RawWriteBatch".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -383,6 +643,16 @@ pub mod raw_write_request {
         Batch(super::RawWriteBatch),
     }
 }
+impl ::prost::Name for RawWriteRequest {
+    const NAME: &'static str = "RawWriteRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.RawWriteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.RawWriteRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawWriteResponse {
@@ -390,6 +660,16 @@ pub struct RawWriteResponse {
     pub error: ::core::option::Option<Error>,
     #[prost(message, repeated, tag = "2")]
     pub metas: ::prost::alloc::vec::Vec<SstMeta>,
+}
+impl ::prost::Name for RawWriteResponse {
+    const NAME: &'static str = "RawWriteResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.RawWriteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.RawWriteResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -407,6 +687,16 @@ pub struct DuplicateDetectRequest {
     #[prost(uint64, tag = "5")]
     pub min_commit_ts: u64,
 }
+impl ::prost::Name for DuplicateDetectRequest {
+    const NAME: &'static str = "DuplicateDetectRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.DuplicateDetectRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.DuplicateDetectRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KvPair {
@@ -416,6 +706,16 @@ pub struct KvPair {
     pub value: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "3")]
     pub commit_ts: u64,
+}
+impl ::prost::Name for KvPair {
+    const NAME: &'static str = "KvPair";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.KvPair".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.KvPair".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -436,6 +736,16 @@ pub struct DuplicateDetectResponse {
     /// \]
     #[prost(message, repeated, tag = "3")]
     pub pairs: ::prost::alloc::vec::Vec<KvPair>,
+}
+impl ::prost::Name for DuplicateDetectResponse {
+    const NAME: &'static str = "DuplicateDetectResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.DuplicateDetectResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.DuplicateDetectResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -485,6 +795,16 @@ pub struct KvMeta {
         super::encryptionpb::FileEncryptionInfo,
     >,
 }
+impl ::prost::Name for KvMeta {
+    const NAME: &'static str = "KVMeta";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.KVMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.KVMeta".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ApplyRequest {
@@ -525,6 +845,16 @@ pub struct ApplyRequest {
     #[prost(message, repeated, tag = "14")]
     pub master_keys: ::prost::alloc::vec::Vec<super::encryptionpb::MasterKey>,
 }
+impl ::prost::Name for ApplyRequest {
+    const NAME: &'static str = "ApplyRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.ApplyRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.ApplyRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ApplyResponse {
@@ -535,6 +865,16 @@ pub struct ApplyResponse {
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<Error>,
 }
+impl ::prost::Name for ApplyResponse {
+    const NAME: &'static str = "ApplyResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.ApplyResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.ApplyResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClearRequest {
@@ -542,11 +882,31 @@ pub struct ClearRequest {
     #[prost(string, tag = "1")]
     pub prefix: ::prost::alloc::string::String,
 }
+impl ::prost::Name for ClearRequest {
+    const NAME: &'static str = "ClearRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.ClearRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.ClearRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClearResponse {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<Error>,
+}
+impl ::prost::Name for ClearResponse {
+    const NAME: &'static str = "ClearResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.ClearResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.ClearResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -561,18 +921,58 @@ pub struct AddPartitionRangeRequest {
     #[prost(uint64, tag = "2")]
     pub ttl_seconds: u64,
 }
+impl ::prost::Name for AddPartitionRangeRequest {
+    const NAME: &'static str = "AddPartitionRangeRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.AddPartitionRangeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.AddPartitionRangeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddPartitionRangeResponse {}
+impl ::prost::Name for AddPartitionRangeResponse {
+    const NAME: &'static str = "AddPartitionRangeResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.AddPartitionRangeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.AddPartitionRangeResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemovePartitionRangeRequest {
     #[prost(message, optional, tag = "1")]
     pub range: ::core::option::Option<Range>,
 }
+impl ::prost::Name for RemovePartitionRangeRequest {
+    const NAME: &'static str = "RemovePartitionRangeRequest";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.RemovePartitionRangeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.RemovePartitionRangeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemovePartitionRangeResponse {}
+impl ::prost::Name for RemovePartitionRangeResponse {
+    const NAME: &'static str = "RemovePartitionRangeResponse";
+    const PACKAGE: &'static str = "import_sstpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_sstpb.RemovePartitionRangeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_sstpb.RemovePartitionRangeResponse".into()
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum SwitchMode {

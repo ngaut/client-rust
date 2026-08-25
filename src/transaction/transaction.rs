@@ -5612,6 +5612,11 @@ impl<PdC: PdClient> Committer<PdC> {
                 return Ok(false);
             };
             if let Some(expired) = key_error.commit_ts_expired.as_ref() {
+                info!(
+                    "2PC commitTS rejected by TiKV, retry with a newer commitTS, txnStartTS: {}, info: {}",
+                    self.start_version.version(),
+                    crate::logutil::hex(expired)
+                );
                 let primary = self.primary_key.as_ref().ok_or(Error::NoPrimaryKey)?;
                 if !batch.is_primary || expired.key.as_slice() != <&[u8]>::from(primary) {
                     return Err(Error::StringError(
@@ -6094,8 +6099,11 @@ impl<PdC: PdClient> Committer<PdC> {
                     Some(Error::KeyError(key_err)) => {
                         if let Some(expired) = key_err.commit_ts_expired {
                             // Ref: https://github.com/tikv/client-go/blob/tidb-8.5/txnkv/transaction/commit.go
-                            info!("2PC commit_ts rejected by TiKV, retry with a newer commit_ts, start_ts: {}",
-                                self.start_version.version());
+                            info!(
+                                "2PC commit_ts rejected by TiKV, retry with a newer commit_ts, start_ts: {}, info: {}",
+                                self.start_version.version(),
+                                crate::logutil::hex(&expired)
+                            );
 
                             let primary_key = self.primary_key.as_ref().unwrap();
                             if primary_key != expired.key.as_ref() {

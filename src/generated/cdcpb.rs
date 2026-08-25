@@ -7,17 +7,47 @@ pub struct Header {
     #[prost(string, tag = "2")]
     pub ticdc_version: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Header {
+    const NAME: &'static str = "Header";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.Header".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.Header".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DuplicateRequest {
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
 }
+impl ::prost::Name for DuplicateRequest {
+    const NAME: &'static str = "DuplicateRequest";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.DuplicateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.DuplicateRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Compatibility {
     #[prost(string, tag = "1")]
     pub required_version: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Compatibility {
+    const NAME: &'static str = "Compatibility";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.Compatibility".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.Compatibility".into()
+    }
 }
 /// ClusterIDMismatch is an error variable that
 /// tells people that the cluster ID of the request does not match the TiKV cluster ID.
@@ -31,6 +61,16 @@ pub struct ClusterIdMismatch {
     #[prost(uint64, tag = "2")]
     pub request: u64,
 }
+impl ::prost::Name for ClusterIdMismatch {
+    const NAME: &'static str = "ClusterIDMismatch";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.ClusterIDMismatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.ClusterIDMismatch".into()
+    }
+}
 /// Congested is an error variable that
 /// tells people that the TiKV-CDC is congested.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -39,6 +79,16 @@ pub struct Congested {
     /// The region ID that triggers the congestion.
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
+}
+impl ::prost::Name for Congested {
+    const NAME: &'static str = "Congested";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.Congested".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.Congested".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -60,6 +110,16 @@ pub struct Error {
     #[prost(message, optional, tag = "8")]
     pub congested: ::core::option::Option<Congested>,
 }
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.Error".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TxnInfo {
@@ -67,6 +127,16 @@ pub struct TxnInfo {
     pub start_ts: u64,
     #[prost(bytes = "vec", tag = "2")]
     pub primary: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for TxnInfo {
+    const NAME: &'static str = "TxnInfo";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.TxnInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.TxnInfo".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -79,6 +149,16 @@ pub struct TxnStatus {
     pub commit_ts: u64,
     #[prost(bool, tag = "4")]
     pub is_rolled_back: bool,
+}
+impl ::prost::Name for TxnStatus {
+    const NAME: &'static str = "TxnStatus";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.TxnStatus".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.TxnStatus".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -165,11 +245,31 @@ pub mod event {
             }
         }
     }
+    impl ::prost::Name for Row {
+        const NAME: &'static str = "Row";
+        const PACKAGE: &'static str = "cdcpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cdcpb.Event.Row".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cdcpb.Event.Row".into()
+        }
+    }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Entries {
         #[prost(message, repeated, tag = "1")]
         pub entries: ::prost::alloc::vec::Vec<Row>,
+    }
+    impl ::prost::Name for Entries {
+        const NAME: &'static str = "Entries";
+        const PACKAGE: &'static str = "cdcpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cdcpb.Event.Entries".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cdcpb.Event.Entries".into()
+        }
     }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
@@ -183,11 +283,31 @@ pub mod event {
             super::super::raft_cmdpb::AdminResponse,
         >,
     }
+    impl ::prost::Name for Admin {
+        const NAME: &'static str = "Admin";
+        const PACKAGE: &'static str = "cdcpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cdcpb.Event.Admin".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cdcpb.Event.Admin".into()
+        }
+    }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct LongTxn {
         #[prost(message, repeated, tag = "1")]
         pub txn_info: ::prost::alloc::vec::Vec<super::TxnInfo>,
+    }
+    impl ::prost::Name for LongTxn {
+        const NAME: &'static str = "LongTxn";
+        const PACKAGE: &'static str = "cdcpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cdcpb.Event.LongTxn".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cdcpb.Event.LongTxn".into()
+        }
     }
     #[derive(
         Clone,
@@ -255,6 +375,16 @@ pub mod event {
         LongTxn(LongTxn),
     }
 }
+impl ::prost::Name for Event {
+    const NAME: &'static str = "Event";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.Event".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.Event".into()
+    }
+}
 /// NOTE: events and resolved_ts won't appear simultaneously in one ChangeDataEvent.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -265,6 +395,16 @@ pub struct ChangeDataEvent {
     #[prost(message, optional, tag = "2")]
     pub resolved_ts: ::core::option::Option<ResolvedTs>,
 }
+impl ::prost::Name for ChangeDataEvent {
+    const NAME: &'static str = "ChangeDataEvent";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.ChangeDataEvent".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.ChangeDataEvent".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResolvedTs {
@@ -274,6 +414,16 @@ pub struct ResolvedTs {
     pub ts: u64,
     #[prost(uint64, tag = "3")]
     pub request_id: u64,
+}
+impl ::prost::Name for ResolvedTs {
+    const NAME: &'static str = "ResolvedTs";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.ResolvedTs".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.ResolvedTs".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -310,14 +460,44 @@ pub mod change_data_request {
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Register {}
+    impl ::prost::Name for Register {
+        const NAME: &'static str = "Register";
+        const PACKAGE: &'static str = "cdcpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cdcpb.ChangeDataRequest.Register".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cdcpb.ChangeDataRequest.Register".into()
+        }
+    }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Deregister {}
+    impl ::prost::Name for Deregister {
+        const NAME: &'static str = "Deregister";
+        const PACKAGE: &'static str = "cdcpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cdcpb.ChangeDataRequest.Deregister".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cdcpb.ChangeDataRequest.Deregister".into()
+        }
+    }
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct NotifyTxnStatus {
         #[prost(message, repeated, tag = "1")]
         pub txn_status: ::prost::alloc::vec::Vec<super::TxnStatus>,
+    }
+    impl ::prost::Name for NotifyTxnStatus {
+        const NAME: &'static str = "NotifyTxnStatus";
+        const PACKAGE: &'static str = "cdcpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cdcpb.ChangeDataRequest.NotifyTxnStatus".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cdcpb.ChangeDataRequest.NotifyTxnStatus".into()
+        }
     }
     /// KvAPI specifies to capture data written by different KV API.
     /// See more details in <https://github.com/tikv/rfcs/blob/master/text/0069-api-v2.md.>
@@ -372,6 +552,16 @@ pub mod change_data_request {
         NotifyTxnStatus(NotifyTxnStatus),
         #[prost(message, tag = "13")]
         Deregister(Deregister),
+    }
+}
+impl ::prost::Name for ChangeDataRequest {
+    const NAME: &'static str = "ChangeDataRequest";
+    const PACKAGE: &'static str = "cdcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cdcpb.ChangeDataRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cdcpb.ChangeDataRequest".into()
     }
 }
 /// Generated client implementations.

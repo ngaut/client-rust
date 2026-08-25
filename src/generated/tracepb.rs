@@ -2,6 +2,16 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraceRecordRequest {}
+impl ::prost::Name for TraceRecordRequest {
+    const NAME: &'static str = "TraceRecordRequest";
+    const PACKAGE: &'static str = "tracepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tracepb.TraceRecordRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tracepb.TraceRecordRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraceRecord {
@@ -19,6 +29,16 @@ pub mod trace_record {
         NotifyCollect(super::NotifyCollect),
     }
 }
+impl ::prost::Name for TraceRecord {
+    const NAME: &'static str = "TraceRecord";
+    const PACKAGE: &'static str = "tracepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tracepb.TraceRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tracepb.TraceRecord".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemoteParentSpan {
@@ -28,6 +48,16 @@ pub struct RemoteParentSpan {
     /// The span of remote caller that is awaiting the request.
     #[prost(uint64, tag = "2")]
     pub span_id: u64,
+}
+impl ::prost::Name for RemoteParentSpan {
+    const NAME: &'static str = "RemoteParentSpan";
+    const PACKAGE: &'static str = "tracepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tracepb.RemoteParentSpan".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tracepb.RemoteParentSpan".into()
+    }
 }
 /// The context of the request to be traced.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -39,6 +69,16 @@ pub struct TraceContext {
     #[prost(uint32, tag = "2")]
     pub duration_threshold_ms: u32,
 }
+impl ::prost::Name for TraceContext {
+    const NAME: &'static str = "TraceContext";
+    const PACKAGE: &'static str = "tracepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tracepb.TraceContext".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tracepb.TraceContext".into()
+    }
+}
 /// Report the spans collected when handling a request on a service.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -48,12 +88,32 @@ pub struct Report {
     #[prost(message, repeated, tag = "2")]
     pub spans: ::prost::alloc::vec::Vec<Span>,
 }
+impl ::prost::Name for Report {
+    const NAME: &'static str = "Report";
+    const PACKAGE: &'static str = "tracepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tracepb.Report".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tracepb.Report".into()
+    }
+}
 /// Notify the subscriber to persis the spans of the trace.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NotifyCollect {
     #[prost(uint64, tag = "1")]
     pub trace_id: u64,
+}
+impl ::prost::Name for NotifyCollect {
+    const NAME: &'static str = "NotifyCollect";
+    const PACKAGE: &'static str = "tracepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tracepb.NotifyCollect".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tracepb.NotifyCollect".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -73,6 +133,16 @@ pub struct Span {
     #[prost(message, repeated, tag = "6")]
     pub properties: ::prost::alloc::vec::Vec<Property>,
 }
+impl ::prost::Name for Span {
+    const NAME: &'static str = "Span";
+    const PACKAGE: &'static str = "tracepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tracepb.Span".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tracepb.Span".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Property {
@@ -80,6 +150,16 @@ pub struct Property {
     pub key: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub value: ::prost::alloc::string::String,
+}
+impl ::prost::Name for Property {
+    const NAME: &'static str = "Property";
+    const PACKAGE: &'static str = "tracepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tracepb.Property".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tracepb.Property".into()
+    }
 }
 /// Generated client implementations.
 pub mod trace_record_pub_sub_client {

@@ -9,6 +9,16 @@ pub struct RegionIdentity {
     #[prost(uint64, tag = "2")]
     pub epoch_version: u64,
 }
+impl ::prost::Name for RegionIdentity {
+    const NAME: &'static str = "RegionIdentity";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.RegionIdentity".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.RegionIdentity".into()
+    }
+}
 /// The last flush ts with region information.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -20,11 +30,31 @@ pub struct RegionCheckpoint {
     #[prost(uint64, tag = "3")]
     pub checkpoint: u64,
 }
+impl ::prost::Name for RegionCheckpoint {
+    const NAME: &'static str = "RegionCheckpoint";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.RegionCheckpoint".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.RegionCheckpoint".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetLastFlushTsOfRegionRequest {
     #[prost(message, repeated, tag = "1")]
     pub regions: ::prost::alloc::vec::Vec<RegionIdentity>,
+}
+impl ::prost::Name for GetLastFlushTsOfRegionRequest {
+    const NAME: &'static str = "GetLastFlushTSOfRegionRequest";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.GetLastFlushTSOfRegionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.GetLastFlushTSOfRegionRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -32,17 +62,47 @@ pub struct GetLastFlushTsOfRegionResponse {
     #[prost(message, repeated, tag = "1")]
     pub checkpoints: ::prost::alloc::vec::Vec<RegionCheckpoint>,
 }
+impl ::prost::Name for GetLastFlushTsOfRegionResponse {
+    const NAME: &'static str = "GetLastFlushTSOfRegionResponse";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.GetLastFlushTSOfRegionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.GetLastFlushTSOfRegionResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubscribeFlushEventRequest {
     #[prost(string, tag = "1")]
     pub client_id: ::prost::alloc::string::String,
 }
+impl ::prost::Name for SubscribeFlushEventRequest {
+    const NAME: &'static str = "SubscribeFlushEventRequest";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.SubscribeFlushEventRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.SubscribeFlushEventRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubscribeFlushEventResponse {
     #[prost(message, repeated, tag = "1")]
     pub events: ::prost::alloc::vec::Vec<FlushEvent>,
+}
+impl ::prost::Name for SubscribeFlushEventResponse {
+    const NAME: &'static str = "SubscribeFlushEventResponse";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.SubscribeFlushEventResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.SubscribeFlushEventResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -54,14 +114,44 @@ pub struct FlushEvent {
     #[prost(uint64, tag = "3")]
     pub checkpoint: u64,
 }
+impl ::prost::Name for FlushEvent {
+    const NAME: &'static str = "FlushEvent";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.FlushEvent".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.FlushEvent".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FlushNowRequest {}
+impl ::prost::Name for FlushNowRequest {
+    const NAME: &'static str = "FlushNowRequest";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.FlushNowRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.FlushNowRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FlushNowResponse {
     #[prost(message, repeated, tag = "1")]
     pub results: ::prost::alloc::vec::Vec<FlushResult>,
+}
+impl ::prost::Name for FlushNowResponse {
+    const NAME: &'static str = "FlushNowResponse";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.FlushNowResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.FlushNowResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -72,6 +162,16 @@ pub struct FlushResult {
     pub success: bool,
     #[prost(string, tag = "3")]
     pub error_message: ::prost::alloc::string::String,
+}
+impl ::prost::Name for FlushResult {
+    const NAME: &'static str = "FlushResult";
+    const PACKAGE: &'static str = "logbackup";
+    fn full_name() -> ::prost::alloc::string::String {
+        "logbackup.FlushResult".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/logbackup.FlushResult".into()
+    }
 }
 /// Generated client implementations.
 pub mod log_backup_client {

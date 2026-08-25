@@ -31,6 +31,16 @@ pub mod keyspace_meta {
         KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
     }
 }
+impl ::prost::Name for KeyspaceMeta {
+    const NAME: &'static str = "KeyspaceMeta";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.KeyspaceMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.KeyspaceMeta".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NamespaceMeta {
@@ -49,6 +59,16 @@ pub struct NamespaceMeta {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
+}
+impl ::prost::Name for NamespaceMeta {
+    const NAME: &'static str = "NamespaceMeta";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.NamespaceMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.NamespaceMeta".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -69,6 +89,16 @@ pub mod namespace_ref {
         NamespaceName(::prost::alloc::string::String),
     }
 }
+impl ::prost::Name for NamespaceRef {
+    const NAME: &'static str = "NamespaceRef";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.NamespaceRef".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.NamespaceRef".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateNamespaceRequest {
@@ -82,6 +112,16 @@ pub struct CreateNamespaceRequest {
         ::prost::alloc::string::String,
     >,
 }
+impl ::prost::Name for CreateNamespaceRequest {
+    const NAME: &'static str = "CreateNamespaceRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.CreateNamespaceRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.CreateNamespaceRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateNamespaceResponse {
@@ -89,6 +129,16 @@ pub struct CreateNamespaceResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+impl ::prost::Name for CreateNamespaceResponse {
+    const NAME: &'static str = "CreateNamespaceResponse";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.CreateNamespaceResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.CreateNamespaceResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -98,6 +148,16 @@ pub struct LoadNamespaceRequest {
     #[prost(message, optional, tag = "2")]
     pub namespace: ::core::option::Option<NamespaceRef>,
 }
+impl ::prost::Name for LoadNamespaceRequest {
+    const NAME: &'static str = "LoadNamespaceRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.LoadNamespaceRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.LoadNamespaceRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadNamespaceResponse {
@@ -105,6 +165,16 @@ pub struct LoadNamespaceResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+impl ::prost::Name for LoadNamespaceResponse {
+    const NAME: &'static str = "LoadNamespaceResponse";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.LoadNamespaceResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.LoadNamespaceResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -116,6 +186,16 @@ pub struct GetAllNamespacesRequest {
     #[prost(uint32, tag = "3")]
     pub limit: u32,
 }
+impl ::prost::Name for GetAllNamespacesRequest {
+    const NAME: &'static str = "GetAllNamespacesRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.GetAllNamespacesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.GetAllNamespacesRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetAllNamespacesResponse {
@@ -123,6 +203,16 @@ pub struct GetAllNamespacesResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, repeated, tag = "2")]
     pub namespaces: ::prost::alloc::vec::Vec<NamespaceMeta>,
+}
+impl ::prost::Name for GetAllNamespacesResponse {
+    const NAME: &'static str = "GetAllNamespacesResponse";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.GetAllNamespacesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.GetAllNamespacesResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -134,6 +224,16 @@ pub struct UpdateNamespaceStateRequest {
     #[prost(enumeration = "KeyspaceState", tag = "3")]
     pub state: i32,
 }
+impl ::prost::Name for UpdateNamespaceStateRequest {
+    const NAME: &'static str = "UpdateNamespaceStateRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.UpdateNamespaceStateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.UpdateNamespaceStateRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateNamespaceStateResponse {
@@ -141,6 +241,16 @@ pub struct UpdateNamespaceStateResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+impl ::prost::Name for UpdateNamespaceStateResponse {
+    const NAME: &'static str = "UpdateNamespaceStateResponse";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.UpdateNamespaceStateResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.UpdateNamespaceStateResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -152,6 +262,16 @@ pub struct LoadKeyspaceRequest {
     /// V3 namespace-scoped name lookup. If unset, V3 name-only lookup should use LookupKeyspace and may return multiple keyspaces.
     #[prost(message, optional, tag = "3")]
     pub namespace: ::core::option::Option<NamespaceRef>,
+}
+impl ::prost::Name for LoadKeyspaceRequest {
+    const NAME: &'static str = "LoadKeyspaceRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.LoadKeyspaceRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.LoadKeyspaceRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -174,6 +294,16 @@ pub mod load_keyspace_by_id_request {
         KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
     }
 }
+impl ::prost::Name for LoadKeyspaceByIdRequest {
+    const NAME: &'static str = "LoadKeyspaceByIDRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.LoadKeyspaceByIDRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.LoadKeyspaceByIDRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadKeyspaceResponse {
@@ -181,6 +311,16 @@ pub struct LoadKeyspaceResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub keyspace: ::core::option::Option<KeyspaceMeta>,
+}
+impl ::prost::Name for LoadKeyspaceResponse {
+    const NAME: &'static str = "LoadKeyspaceResponse";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.LoadKeyspaceResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.LoadKeyspaceResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -190,6 +330,16 @@ pub struct LookupKeyspaceRequest {
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
 }
+impl ::prost::Name for LookupKeyspaceRequest {
+    const NAME: &'static str = "LookupKeyspaceRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.LookupKeyspaceRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.LookupKeyspaceRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LookupKeyspaceResponse {
@@ -198,11 +348,31 @@ pub struct LookupKeyspaceResponse {
     #[prost(message, repeated, tag = "2")]
     pub keyspaces: ::prost::alloc::vec::Vec<KeyspaceMeta>,
 }
+impl ::prost::Name for LookupKeyspaceResponse {
+    const NAME: &'static str = "LookupKeyspaceResponse";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.LookupKeyspaceResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.LookupKeyspaceResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WatchKeyspacesRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+}
+impl ::prost::Name for WatchKeyspacesRequest {
+    const NAME: &'static str = "WatchKeyspacesRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.WatchKeyspacesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.WatchKeyspacesRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -211,6 +381,16 @@ pub struct WatchKeyspacesResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, repeated, tag = "2")]
     pub keyspaces: ::prost::alloc::vec::Vec<KeyspaceMeta>,
+}
+impl ::prost::Name for WatchKeyspacesResponse {
+    const NAME: &'static str = "WatchKeyspacesResponse";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.WatchKeyspacesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.WatchKeyspacesResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -235,6 +415,16 @@ pub mod update_keyspace_state_request {
         KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
     }
 }
+impl ::prost::Name for UpdateKeyspaceStateRequest {
+    const NAME: &'static str = "UpdateKeyspaceStateRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.UpdateKeyspaceStateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.UpdateKeyspaceStateRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateKeyspaceStateResponse {
@@ -242,6 +432,16 @@ pub struct UpdateKeyspaceStateResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub keyspace: ::core::option::Option<KeyspaceMeta>,
+}
+impl ::prost::Name for UpdateKeyspaceStateResponse {
+    const NAME: &'static str = "UpdateKeyspaceStateResponse";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.UpdateKeyspaceStateResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.UpdateKeyspaceStateResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -269,6 +469,16 @@ pub mod get_all_keyspaces_request {
         StartKeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
     }
 }
+impl ::prost::Name for GetAllKeyspacesRequest {
+    const NAME: &'static str = "GetAllKeyspacesRequest";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.GetAllKeyspacesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.GetAllKeyspacesRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetAllKeyspacesResponse {
@@ -276,6 +486,16 @@ pub struct GetAllKeyspacesResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, repeated, tag = "2")]
     pub keyspaces: ::prost::alloc::vec::Vec<KeyspaceMeta>,
+}
+impl ::prost::Name for GetAllKeyspacesResponse {
+    const NAME: &'static str = "GetAllKeyspacesResponse";
+    const PACKAGE: &'static str = "keyspacepb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "keyspacepb.GetAllKeyspacesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/keyspacepb.GetAllKeyspacesResponse".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

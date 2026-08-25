@@ -7,9 +7,29 @@ pub struct SwitchModeRequest {
     #[prost(message, optional, tag = "2")]
     pub request: ::core::option::Option<super::import_sstpb::SwitchModeRequest>,
 }
+impl ::prost::Name for SwitchModeRequest {
+    const NAME: &'static str = "SwitchModeRequest";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.SwitchModeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.SwitchModeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SwitchModeResponse {}
+impl ::prost::Name for SwitchModeResponse {
+    const NAME: &'static str = "SwitchModeResponse";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.SwitchModeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.SwitchModeResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OpenEngineRequest {
@@ -18,14 +38,44 @@ pub struct OpenEngineRequest {
     #[prost(bytes = "vec", tag = "2")]
     pub key_prefix: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for OpenEngineRequest {
+    const NAME: &'static str = "OpenEngineRequest";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.OpenEngineRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.OpenEngineRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OpenEngineResponse {}
+impl ::prost::Name for OpenEngineResponse {
+    const NAME: &'static str = "OpenEngineResponse";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.OpenEngineResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.OpenEngineResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WriteHead {
     #[prost(bytes = "vec", tag = "1")]
     pub uuid: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for WriteHead {
+    const NAME: &'static str = "WriteHead";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.WriteHead".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.WriteHead".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -73,6 +123,16 @@ pub mod mutation {
         }
     }
 }
+impl ::prost::Name for Mutation {
+    const NAME: &'static str = "Mutation";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.Mutation".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.Mutation".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WriteBatch {
@@ -80,6 +140,16 @@ pub struct WriteBatch {
     pub commit_ts: u64,
     #[prost(message, repeated, tag = "2")]
     pub mutations: ::prost::alloc::vec::Vec<Mutation>,
+}
+impl ::prost::Name for WriteBatch {
+    const NAME: &'static str = "WriteBatch";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.WriteBatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.WriteBatch".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -98,6 +168,16 @@ pub mod write_engine_request {
         Batch(super::WriteBatch),
     }
 }
+impl ::prost::Name for WriteEngineRequest {
+    const NAME: &'static str = "WriteEngineRequest";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.WriteEngineRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.WriteEngineRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KvPair {
@@ -105,6 +185,16 @@ pub struct KvPair {
     pub key: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub value: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for KvPair {
+    const NAME: &'static str = "KVPair";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.KVPair".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.KVPair".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -116,11 +206,31 @@ pub struct WriteEngineV3Request {
     #[prost(message, repeated, tag = "3")]
     pub pairs: ::prost::alloc::vec::Vec<KvPair>,
 }
+impl ::prost::Name for WriteEngineV3Request {
+    const NAME: &'static str = "WriteEngineV3Request";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.WriteEngineV3Request".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.WriteEngineV3Request".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WriteEngineResponse {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<Error>,
+}
+impl ::prost::Name for WriteEngineResponse {
+    const NAME: &'static str = "WriteEngineResponse";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.WriteEngineResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.WriteEngineResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -128,11 +238,31 @@ pub struct CloseEngineRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub uuid: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for CloseEngineRequest {
+    const NAME: &'static str = "CloseEngineRequest";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.CloseEngineRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.CloseEngineRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CloseEngineResponse {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<Error>,
+}
+impl ::prost::Name for CloseEngineResponse {
+    const NAME: &'static str = "CloseEngineResponse";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.CloseEngineResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.CloseEngineResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -142,18 +272,58 @@ pub struct ImportEngineRequest {
     #[prost(string, tag = "2")]
     pub pd_addr: ::prost::alloc::string::String,
 }
+impl ::prost::Name for ImportEngineRequest {
+    const NAME: &'static str = "ImportEngineRequest";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.ImportEngineRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.ImportEngineRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ImportEngineResponse {}
+impl ::prost::Name for ImportEngineResponse {
+    const NAME: &'static str = "ImportEngineResponse";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.ImportEngineResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.ImportEngineResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CleanupEngineRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub uuid: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for CleanupEngineRequest {
+    const NAME: &'static str = "CleanupEngineRequest";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.CleanupEngineRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.CleanupEngineRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CleanupEngineResponse {}
+impl ::prost::Name for CleanupEngineResponse {
+    const NAME: &'static str = "CleanupEngineResponse";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.CleanupEngineResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.CleanupEngineResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactClusterRequest {
@@ -162,12 +332,42 @@ pub struct CompactClusterRequest {
     #[prost(message, optional, tag = "2")]
     pub request: ::core::option::Option<super::import_sstpb::CompactRequest>,
 }
+impl ::prost::Name for CompactClusterRequest {
+    const NAME: &'static str = "CompactClusterRequest";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.CompactClusterRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.CompactClusterRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactClusterResponse {}
+impl ::prost::Name for CompactClusterResponse {
+    const NAME: &'static str = "CompactClusterResponse";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.CompactClusterResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.CompactClusterResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetVersionRequest {}
+impl ::prost::Name for GetVersionRequest {
+    const NAME: &'static str = "GetVersionRequest";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.GetVersionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.GetVersionRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetVersionResponse {
@@ -176,14 +376,44 @@ pub struct GetVersionResponse {
     #[prost(string, tag = "2")]
     pub commit: ::prost::alloc::string::String,
 }
+impl ::prost::Name for GetVersionResponse {
+    const NAME: &'static str = "GetVersionResponse";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.GetVersionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.GetVersionResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetMetricsRequest {}
+impl ::prost::Name for GetMetricsRequest {
+    const NAME: &'static str = "GetMetricsRequest";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.GetMetricsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.GetMetricsRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetMetricsResponse {
     #[prost(string, tag = "1")]
     pub prometheus: ::prost::alloc::string::String,
+}
+impl ::prost::Name for GetMetricsResponse {
+    const NAME: &'static str = "GetMetricsResponse";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.GetMetricsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.GetMetricsResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -202,6 +432,26 @@ pub mod error {
     pub struct EngineNotFound {
         #[prost(bytes = "vec", tag = "1")]
         pub uuid: ::prost::alloc::vec::Vec<u8>,
+    }
+    impl ::prost::Name for EngineNotFound {
+        const NAME: &'static str = "EngineNotFound";
+        const PACKAGE: &'static str = "import_kvpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "import_kvpb.Error.EngineNotFound".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/import_kvpb.Error.EngineNotFound".into()
+        }
+    }
+}
+impl ::prost::Name for Error {
+    const NAME: &'static str = "Error";
+    const PACKAGE: &'static str = "import_kvpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "import_kvpb.Error".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/import_kvpb.Error".into()
     }
 }
 /// Generated client implementations.

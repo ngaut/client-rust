@@ -45,6 +45,7 @@ openssl = "0.10"
 pin-project = "1"
 prometheus = { version = "0.13", default-features = false }
 prost = "0.13"
+prost-reflect = "=0.15.3"
 prost-types = "0.13"
 rand = "0.8"
 regex = "1"

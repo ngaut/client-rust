@@ -30,6 +30,16 @@ pub struct RaftMessage {
     #[prost(enumeration = "super::disk_usage::DiskUsage", tag = "12")]
     pub disk_usage: i32,
 }
+impl ::prost::Name for RaftMessage {
+    const NAME: &'static str = "RaftMessage";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.RaftMessage".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.RaftMessage".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RaftTruncatedState {
@@ -37,6 +47,16 @@ pub struct RaftTruncatedState {
     pub index: u64,
     #[prost(uint64, tag = "2")]
     pub term: u64,
+}
+impl ::prost::Name for RaftTruncatedState {
+    const NAME: &'static str = "RaftTruncatedState";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.RaftTruncatedState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.RaftTruncatedState".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -47,6 +67,16 @@ pub struct SnapshotCfFile {
     pub size: u64,
     #[prost(uint32, tag = "3")]
     pub checksum: u32,
+}
+impl ::prost::Name for SnapshotCfFile {
+    const NAME: &'static str = "SnapshotCFFile";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.SnapshotCFFile".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.SnapshotCFFile".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -75,6 +105,16 @@ pub struct SnapshotMeta {
     #[prost(uint64, tag = "7")]
     pub commit_index_hint: u64,
 }
+impl ::prost::Name for SnapshotMeta {
+    const NAME: &'static str = "SnapshotMeta";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.SnapshotMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.SnapshotMeta".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SnapshotChunk {
@@ -83,9 +123,29 @@ pub struct SnapshotChunk {
     #[prost(bytes = "vec", tag = "2")]
     pub data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for SnapshotChunk {
+    const NAME: &'static str = "SnapshotChunk";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.SnapshotChunk".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.SnapshotChunk".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Done {}
+impl ::prost::Name for Done {
+    const NAME: &'static str = "Done";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.Done".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.Done".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TabletSnapshotFileMeta {
@@ -100,6 +160,16 @@ pub struct TabletSnapshotFileMeta {
     #[prost(bytes = "vec", tag = "4")]
     pub trailing_chunk: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for TabletSnapshotFileMeta {
+    const NAME: &'static str = "TabletSnapshotFileMeta";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.TabletSnapshotFileMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.TabletSnapshotFileMeta".into()
+    }
+}
 /// Snapshot preview for server to decide whether skip some files.
 /// Server should send back an `AcceptedSnapshotFile` to let client
 /// keep sending specified files. Only SST files can be skipped, all
@@ -113,6 +183,16 @@ pub struct TabletSnapshotPreview {
     /// are sent.
     #[prost(bool, tag = "2")]
     pub end: bool,
+}
+impl ::prost::Name for TabletSnapshotPreview {
+    const NAME: &'static str = "TabletSnapshotPreview";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.TabletSnapshotPreview".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.TabletSnapshotPreview".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -130,6 +210,16 @@ pub struct TabletSnapshotFileChunk {
     #[prost(message, optional, tag = "5")]
     pub key: ::core::option::Option<super::encryptionpb::DataKey>,
 }
+impl ::prost::Name for TabletSnapshotFileChunk {
+    const NAME: &'static str = "TabletSnapshotFileChunk";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.TabletSnapshotFileChunk".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.TabletSnapshotFileChunk".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TabletSnapshotHead {
@@ -138,6 +228,16 @@ pub struct TabletSnapshotHead {
     #[prost(bool, tag = "2")]
     pub use_cache: bool,
 }
+impl ::prost::Name for TabletSnapshotHead {
+    const NAME: &'static str = "TabletSnapshotHead";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.TabletSnapshotHead".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.TabletSnapshotHead".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TabletSnapshotEnd {
@@ -145,6 +245,16 @@ pub struct TabletSnapshotEnd {
     /// `TabletSnapshotFileChunk.file_name`.
     #[prost(uint64, tag = "1")]
     pub checksum: u64,
+}
+impl ::prost::Name for TabletSnapshotEnd {
+    const NAME: &'static str = "TabletSnapshotEnd";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.TabletSnapshotEnd".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.TabletSnapshotEnd".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -167,17 +277,47 @@ pub mod tablet_snapshot_request {
         End(super::TabletSnapshotEnd),
     }
 }
+impl ::prost::Name for TabletSnapshotRequest {
+    const NAME: &'static str = "TabletSnapshotRequest";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.TabletSnapshotRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.TabletSnapshotRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AcceptedSnapshotFiles {
     #[prost(string, repeated, tag = "1")]
     pub file_name: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for AcceptedSnapshotFiles {
+    const NAME: &'static str = "AcceptedSnapshotFiles";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.AcceptedSnapshotFiles".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.AcceptedSnapshotFiles".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TabletSnapshotResponse {
     #[prost(message, optional, tag = "1")]
     pub files: ::core::option::Option<AcceptedSnapshotFiles>,
+}
+impl ::prost::Name for TabletSnapshotResponse {
+    const NAME: &'static str = "TabletSnapshotResponse";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.TabletSnapshotResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.TabletSnapshotResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -186,6 +326,16 @@ pub struct KeyValue {
     pub key: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub value: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for KeyValue {
+    const NAME: &'static str = "KeyValue";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.KeyValue".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.KeyValue".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -205,6 +355,16 @@ pub struct RaftSnapshotData {
     #[prost(message, repeated, tag = "7")]
     pub merged_records: ::prost::alloc::vec::Vec<MergedRecord>,
 }
+impl ::prost::Name for RaftSnapshotData {
+    const NAME: &'static str = "RaftSnapshotData";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.RaftSnapshotData".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.RaftSnapshotData".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreIdent {
@@ -214,6 +374,16 @@ pub struct StoreIdent {
     pub store_id: u64,
     #[prost(enumeration = "super::kvrpcpb::ApiVersion", tag = "3")]
     pub api_version: i32,
+}
+impl ::prost::Name for StoreIdent {
+    const NAME: &'static str = "StoreIdent";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.StoreIdent".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.StoreIdent".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -226,6 +396,16 @@ pub struct StoreRecoverState {
     #[prost(uint64, tag = "1")]
     pub seqno: u64,
 }
+impl ::prost::Name for StoreRecoverState {
+    const NAME: &'static str = "StoreRecoverState";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.StoreRecoverState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.StoreRecoverState".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RaftLocalState {
@@ -233,6 +413,16 @@ pub struct RaftLocalState {
     pub hard_state: ::core::option::Option<super::eraftpb::HardState>,
     #[prost(uint64, tag = "2")]
     pub last_index: u64,
+}
+impl ::prost::Name for RaftLocalState {
+    const NAME: &'static str = "RaftLocalState";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.RaftLocalState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.RaftLocalState".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -248,6 +438,16 @@ pub struct RaftApplyState {
     #[prost(message, optional, tag = "2")]
     pub truncated_state: ::core::option::Option<RaftTruncatedState>,
 }
+impl ::prost::Name for RaftApplyState {
+    const NAME: &'static str = "RaftApplyState";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.RaftApplyState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.RaftApplyState".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MergeState {
@@ -257,6 +457,16 @@ pub struct MergeState {
     pub target: ::core::option::Option<super::metapb::Region>,
     #[prost(uint64, tag = "3")]
     pub commit: u64,
+}
+impl ::prost::Name for MergeState {
+    const NAME: &'static str = "MergeState";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.MergeState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.MergeState".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -284,6 +494,16 @@ pub struct MergedRecord {
     #[prost(uint64, tag = "8")]
     pub source_index: u64,
 }
+impl ::prost::Name for MergedRecord {
+    const NAME: &'static str = "MergedRecord";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.MergedRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.MergedRecord".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionLocalState {
@@ -307,6 +527,16 @@ pub struct RegionLocalState {
     #[prost(message, repeated, tag = "6")]
     pub merged_records: ::prost::alloc::vec::Vec<MergedRecord>,
 }
+impl ::prost::Name for RegionLocalState {
+    const NAME: &'static str = "RegionLocalState";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.RegionLocalState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.RegionLocalState".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegionSequenceNumberRelation {
@@ -318,6 +548,16 @@ pub struct RegionSequenceNumberRelation {
     pub apply_state: ::core::option::Option<RaftApplyState>,
     #[prost(message, optional, tag = "4")]
     pub region_state: ::core::option::Option<RegionLocalState>,
+}
+impl ::prost::Name for RegionSequenceNumberRelation {
+    const NAME: &'static str = "RegionSequenceNumberRelation";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.RegionSequenceNumberRelation".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.RegionSequenceNumberRelation".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -331,11 +571,31 @@ pub struct AvailabilityContext {
     #[prost(bool, tag = "4")]
     pub trimmed: bool,
 }
+impl ::prost::Name for AvailabilityContext {
+    const NAME: &'static str = "AvailabilityContext";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.AvailabilityContext".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.AvailabilityContext".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FlushMemtable {
     #[prost(uint64, tag = "1")]
     pub region_id: u64,
+}
+impl ::prost::Name for FlushMemtable {
+    const NAME: &'static str = "FlushMemtable";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.FlushMemtable".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.FlushMemtable".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -346,6 +606,16 @@ pub struct RefreshBuckets {
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(uint64, repeated, tag = "3")]
     pub sizes: ::prost::alloc::vec::Vec<u64>,
+}
+impl ::prost::Name for RefreshBuckets {
+    const NAME: &'static str = "RefreshBuckets";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.RefreshBuckets".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.RefreshBuckets".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -363,6 +633,16 @@ pub struct CheckGcPeer {
     /// The peer to be checked.
     #[prost(message, optional, tag = "4")]
     pub check_peer: ::core::option::Option<super::metapb::Peer>,
+}
+impl ::prost::Name for CheckGcPeer {
+    const NAME: &'static str = "CheckGcPeer";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.CheckGcPeer".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.CheckGcPeer".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -396,6 +676,16 @@ pub struct ExtraMessage {
     /// a follower responds to a leader's snapshot gen precheck request.
     #[prost(bool, tag = "10")]
     pub snap_gen_precheck_passed: bool,
+}
+impl ::prost::Name for ExtraMessage {
+    const NAME: &'static str = "ExtraMessage";
+    const PACKAGE: &'static str = "raft_serverpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "raft_serverpb.ExtraMessage".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/raft_serverpb.ExtraMessage".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

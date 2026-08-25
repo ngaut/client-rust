@@ -14,6 +14,16 @@ pub struct GetRequest {
     #[prost(bool, tag = "4")]
     pub need_commit_ts: bool,
 }
+impl ::prost::Name for GetRequest {
+    const NAME: &'static str = "GetRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GetRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GetRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetResponse {
@@ -37,6 +47,16 @@ pub struct GetResponse {
     /// If it is zero, it means the commit timestamp is unknown.
     #[prost(uint64, tag = "7")]
     pub commit_ts: u64,
+}
+impl ::prost::Name for GetResponse {
+    const NAME: &'static str = "GetResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GetResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GetResponse".into()
+    }
 }
 /// Scan fetches values for a range of keys; it is part of the transaction with
 /// starting timestamp = `version`.
@@ -66,6 +86,16 @@ pub struct ScanRequest {
     #[prost(uint32, tag = "8")]
     pub sample_step: u32,
 }
+impl ::prost::Name for ScanRequest {
+    const NAME: &'static str = "ScanRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ScanRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ScanRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ScanResponse {
@@ -79,6 +109,16 @@ pub struct ScanResponse {
     /// after resolving the lock.
     #[prost(message, optional, tag = "3")]
     pub error: ::core::option::Option<KeyError>,
+}
+impl ::prost::Name for ScanResponse {
+    const NAME: &'static str = "ScanResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ScanResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ScanResponse".into()
+    }
 }
 /// A prewrite is the first phase of writing to TiKV. It contains all data to be written in a transaction.
 /// TiKV will write the data in a preliminary state. Data cannot be read until it has been committed.
@@ -158,6 +198,16 @@ pub mod prewrite_request {
         #[prost(uint64, tag = "2")]
         pub expected_for_update_ts: u64,
     }
+    impl ::prost::Name for ForUpdateTsConstraint {
+        const NAME: &'static str = "ForUpdateTSConstraint";
+        const PACKAGE: &'static str = "kvrpcpb";
+        fn full_name() -> ::prost::alloc::string::String {
+            "kvrpcpb.PrewriteRequest.ForUpdateTSConstraint".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/kvrpcpb.PrewriteRequest.ForUpdateTSConstraint".into()
+        }
+    }
     /// What kind of checks need to be performed for keys in a pessimistic transaction.
     #[derive(
         Clone,
@@ -205,6 +255,16 @@ pub mod prewrite_request {
         }
     }
 }
+impl ::prost::Name for PrewriteRequest {
+    const NAME: &'static str = "PrewriteRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PrewriteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PrewriteRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrewriteResponse {
@@ -225,6 +285,16 @@ pub struct PrewriteResponse {
     /// Execution details about the request processing.
     #[prost(message, optional, tag = "5")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
+}
+impl ::prost::Name for PrewriteResponse {
+    const NAME: &'static str = "PrewriteResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PrewriteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PrewriteResponse".into()
+    }
 }
 /// Lock a set of keys to prepare to write to them.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -282,6 +352,16 @@ pub struct PessimisticLockRequest {
     #[prost(enumeration = "PessimisticLockWakeUpMode", tag = "14")]
     pub wake_up_mode: i32,
 }
+impl ::prost::Name for PessimisticLockRequest {
+    const NAME: &'static str = "PessimisticLockRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PessimisticLockRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PessimisticLockRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PessimisticLockKeyResult {
@@ -304,6 +384,16 @@ pub struct PessimisticLockKeyResult {
     /// requests only.
     #[prost(bool, tag = "11")]
     pub skip_resolving_lock: bool,
+}
+impl ::prost::Name for PessimisticLockKeyResult {
+    const NAME: &'static str = "PessimisticLockKeyResult";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PessimisticLockKeyResult".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PessimisticLockKeyResult".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -337,6 +427,16 @@ pub struct PessimisticLockResponse {
     #[prost(message, repeated, tag = "8")]
     pub results: ::prost::alloc::vec::Vec<PessimisticLockKeyResult>,
 }
+impl ::prost::Name for PessimisticLockResponse {
+    const NAME: &'static str = "PessimisticLockResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PessimisticLockResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PessimisticLockResponse".into()
+    }
+}
 /// Unlock keys locked using `PessimisticLockRequest`.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -350,6 +450,16 @@ pub struct PessimisticRollbackRequest {
     #[prost(bytes = "vec", repeated, tag = "4")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
+impl ::prost::Name for PessimisticRollbackRequest {
+    const NAME: &'static str = "PessimisticRollbackRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PessimisticRollbackRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PessimisticRollbackRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PessimisticRollbackResponse {
@@ -360,6 +470,16 @@ pub struct PessimisticRollbackResponse {
     /// Execution details about the request processing.
     #[prost(message, optional, tag = "3")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
+}
+impl ::prost::Name for PessimisticRollbackResponse {
+    const NAME: &'static str = "PessimisticRollbackResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PessimisticRollbackResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PessimisticRollbackResponse".into()
+    }
 }
 /// Used to update the lock_ttl of a psessimistic and/or large transaction to prevent it from been killed.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -385,6 +505,16 @@ pub struct TxnHeartBeatRequest {
     #[prost(bool, tag = "100")]
     pub is_txn_file: bool,
 }
+impl ::prost::Name for TxnHeartBeatRequest {
+    const NAME: &'static str = "TxnHeartBeatRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TxnHeartBeatRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TxnHeartBeatRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TxnHeartBeatResponse {
@@ -398,6 +528,16 @@ pub struct TxnHeartBeatResponse {
     /// Execution details about the request processing.
     #[prost(message, optional, tag = "4")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
+}
+impl ::prost::Name for TxnHeartBeatResponse {
+    const NAME: &'static str = "TxnHeartBeatResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TxnHeartBeatResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TxnHeartBeatResponse".into()
+    }
 }
 /// CheckTxnStatusRequest checks the status of a transaction.
 /// If the transaction is rollbacked/committed, return that result.
@@ -447,6 +587,16 @@ pub struct CheckTxnStatusRequest {
     #[prost(bool, tag = "100")]
     pub is_txn_file: bool,
 }
+impl ::prost::Name for CheckTxnStatusRequest {
+    const NAME: &'static str = "CheckTxnStatusRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CheckTxnStatusRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CheckTxnStatusRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CheckTxnStatusResponse {
@@ -471,6 +621,16 @@ pub struct CheckTxnStatusResponse {
     #[prost(message, optional, tag = "7")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
 }
+impl ::prost::Name for CheckTxnStatusResponse {
+    const NAME: &'static str = "CheckTxnStatusResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CheckTxnStatusResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CheckTxnStatusResponse".into()
+    }
+}
 /// Part of the async commit protocol, checks for locks on all supplied keys. If a lock is missing,
 /// does not have a successful status, or belongs to another transaction, TiKV will leave a rollback
 /// tombstone for that key.
@@ -484,6 +644,16 @@ pub struct CheckSecondaryLocksRequest {
     /// Identifies the transaction we are investigating.
     #[prost(uint64, tag = "3")]
     pub start_version: u64,
+}
+impl ::prost::Name for CheckSecondaryLocksRequest {
+    const NAME: &'static str = "CheckSecondaryLocksRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CheckSecondaryLocksRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CheckSecondaryLocksRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -504,6 +674,16 @@ pub struct CheckSecondaryLocksResponse {
     /// Execution details about the request processing.
     #[prost(message, optional, tag = "5")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
+}
+impl ::prost::Name for CheckSecondaryLocksResponse {
+    const NAME: &'static str = "CheckSecondaryLocksResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CheckSecondaryLocksResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CheckSecondaryLocksResponse".into()
+    }
 }
 /// The second phase of writing to TiKV. If there are no errors or conflicts, then this request
 /// commits a transaction so that its data can be read by other transactions.
@@ -536,6 +716,16 @@ pub struct CommitRequest {
     #[prost(bool, tag = "100")]
     pub is_txn_file: bool,
 }
+impl ::prost::Name for CommitRequest {
+    const NAME: &'static str = "CommitRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CommitRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CommitRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitResponse {
@@ -550,6 +740,16 @@ pub struct CommitResponse {
     #[prost(message, optional, tag = "4")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
 }
+impl ::prost::Name for CommitResponse {
+    const NAME: &'static str = "CommitResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CommitResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CommitResponse".into()
+    }
+}
 /// Not yet implemented.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -559,6 +759,16 @@ pub struct ImportRequest {
     #[prost(uint64, tag = "2")]
     pub commit_version: u64,
 }
+impl ::prost::Name for ImportRequest {
+    const NAME: &'static str = "ImportRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ImportRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ImportRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ImportResponse {
@@ -566,6 +776,16 @@ pub struct ImportResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ImportResponse {
+    const NAME: &'static str = "ImportResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ImportResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ImportResponse".into()
+    }
 }
 /// Cleanup a key by possibly unlocking it.
 /// From 4.0 onwards, this message is no longer used.
@@ -584,6 +804,16 @@ pub struct CleanupRequest {
     #[prost(uint64, tag = "4")]
     pub current_ts: u64,
 }
+impl ::prost::Name for CleanupRequest {
+    const NAME: &'static str = "CleanupRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CleanupRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CleanupRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CleanupResponse {
@@ -594,6 +824,16 @@ pub struct CleanupResponse {
     /// Set if the key is already committed.
     #[prost(uint64, tag = "3")]
     pub commit_version: u64,
+}
+impl ::prost::Name for CleanupResponse {
+    const NAME: &'static str = "CleanupResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CleanupResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CleanupResponse".into()
+    }
 }
 /// Similar to a `Get` request.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -608,6 +848,16 @@ pub struct BatchGetRequest {
     /// If true, the response will include the commit ts of the key.
     #[prost(bool, tag = "4")]
     pub need_commit_ts: bool,
+}
+impl ::prost::Name for BatchGetRequest {
+    const NAME: &'static str = "BatchGetRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.BatchGetRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.BatchGetRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -624,6 +874,16 @@ pub struct BatchGetResponse {
     /// after resolving the lock.
     #[prost(message, optional, tag = "5")]
     pub error: ::core::option::Option<KeyError>,
+}
+impl ::prost::Name for BatchGetResponse {
+    const NAME: &'static str = "BatchGetResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.BatchGetResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.BatchGetResponse".into()
+    }
 }
 /// Rollback a prewritten transaction. This will remove the preliminary data from the database,
 /// unlock locks, and leave a rollback tombstone.
@@ -642,6 +902,16 @@ pub struct BatchRollbackRequest {
     #[prost(bool, tag = "100")]
     pub is_txn_file: bool,
 }
+impl ::prost::Name for BatchRollbackRequest {
+    const NAME: &'static str = "BatchRollbackRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.BatchRollbackRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.BatchRollbackRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchRollbackResponse {
@@ -652,6 +922,16 @@ pub struct BatchRollbackResponse {
     /// Execution details about the request processing.
     #[prost(message, optional, tag = "3")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
+}
+impl ::prost::Name for BatchRollbackResponse {
+    const NAME: &'static str = "BatchRollbackResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.BatchRollbackResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.BatchRollbackResponse".into()
+    }
 }
 /// Scan the database for locks. Used at the start of the GC process to find all
 /// old locks.
@@ -673,6 +953,16 @@ pub struct ScanLockRequest {
     #[prost(bytes = "vec", tag = "5")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for ScanLockRequest {
+    const NAME: &'static str = "ScanLockRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ScanLockRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ScanLockRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ScanLockResponse {
@@ -686,6 +976,16 @@ pub struct ScanLockResponse {
     /// Execution details about the request processing.
     #[prost(message, optional, tag = "4")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
+}
+impl ::prost::Name for ScanLockResponse {
+    const NAME: &'static str = "ScanLockResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ScanLockResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ScanLockResponse".into()
+    }
 }
 /// For all keys locked by the transaction identified by `start_version`, either
 /// commit or rollback the transaction and unlock the key.
@@ -712,6 +1012,16 @@ pub struct ResolveLockRequest {
     #[prost(bool, tag = "100")]
     pub is_txn_file: bool,
 }
+impl ::prost::Name for ResolveLockRequest {
+    const NAME: &'static str = "ResolveLockRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ResolveLockRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ResolveLockRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResolveLockResponse {
@@ -723,6 +1033,16 @@ pub struct ResolveLockResponse {
     #[prost(message, optional, tag = "3")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
 }
+impl ::prost::Name for ResolveLockResponse {
+    const NAME: &'static str = "ResolveLockResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ResolveLockResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ResolveLockResponse".into()
+    }
+}
 /// Request TiKV to garbage collect all non-current data older than `safe_point`.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -732,6 +1052,16 @@ pub struct GcRequest {
     #[prost(uint64, tag = "2")]
     pub safe_point: u64,
 }
+impl ::prost::Name for GcRequest {
+    const NAME: &'static str = "GCRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GCRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GCRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GcResponse {
@@ -739,6 +1069,16 @@ pub struct GcResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(message, optional, tag = "2")]
     pub error: ::core::option::Option<KeyError>,
+}
+impl ::prost::Name for GcResponse {
+    const NAME: &'static str = "GCResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GCResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GCResponse".into()
+    }
 }
 /// Delete a range of data from TiKV.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -756,6 +1096,16 @@ pub struct DeleteRangeRequest {
     #[prost(bool, tag = "4")]
     pub notify_only: bool,
 }
+impl ::prost::Name for DeleteRangeRequest {
+    const NAME: &'static str = "DeleteRangeRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.DeleteRangeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.DeleteRangeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteRangeResponse {
@@ -763,6 +1113,16 @@ pub struct DeleteRangeResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for DeleteRangeResponse {
+    const NAME: &'static str = "DeleteRangeResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.DeleteRangeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.DeleteRangeResponse".into()
+    }
 }
 /// Preparing the flashback for a region/key range will "lock" the region
 /// so that there is no any read, write or schedule operation could be proposed before
@@ -784,6 +1144,16 @@ pub struct PrepareFlashbackToVersionRequest {
     #[prost(uint64, tag = "5")]
     pub version: u64,
 }
+impl ::prost::Name for PrepareFlashbackToVersionRequest {
+    const NAME: &'static str = "PrepareFlashbackToVersionRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PrepareFlashbackToVersionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PrepareFlashbackToVersionRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrepareFlashbackToVersionResponse {
@@ -791,6 +1161,16 @@ pub struct PrepareFlashbackToVersionResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for PrepareFlashbackToVersionResponse {
+    const NAME: &'static str = "PrepareFlashbackToVersionResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PrepareFlashbackToVersionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PrepareFlashbackToVersionResponse".into()
+    }
 }
 /// Flashback the region to a specific point with the given `version`, please
 /// make sure the region is "locked" by `PrepareFlashbackToVersionRequest` first,
@@ -814,6 +1194,16 @@ pub struct FlashbackToVersionRequest {
     #[prost(uint64, tag = "6")]
     pub commit_ts: u64,
 }
+impl ::prost::Name for FlashbackToVersionRequest {
+    const NAME: &'static str = "FlashbackToVersionRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.FlashbackToVersionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.FlashbackToVersionRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FlashbackToVersionResponse {
@@ -821,6 +1211,16 @@ pub struct FlashbackToVersionResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for FlashbackToVersionResponse {
+    const NAME: &'static str = "FlashbackToVersionResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.FlashbackToVersionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.FlashbackToVersionResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -831,6 +1231,16 @@ pub struct RawGetRequest {
     pub key: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "3")]
     pub cf: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RawGetRequest {
+    const NAME: &'static str = "RawGetRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawGetRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawGetRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -844,6 +1254,16 @@ pub struct RawGetResponse {
     #[prost(bool, tag = "4")]
     pub not_found: bool,
 }
+impl ::prost::Name for RawGetResponse {
+    const NAME: &'static str = "RawGetResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawGetResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawGetResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawBatchGetRequest {
@@ -854,6 +1274,16 @@ pub struct RawBatchGetRequest {
     #[prost(string, tag = "3")]
     pub cf: ::prost::alloc::string::String,
 }
+impl ::prost::Name for RawBatchGetRequest {
+    const NAME: &'static str = "RawBatchGetRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawBatchGetRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawBatchGetRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawBatchGetResponse {
@@ -861,6 +1291,16 @@ pub struct RawBatchGetResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(message, repeated, tag = "2")]
     pub pairs: ::prost::alloc::vec::Vec<KvPair>,
+}
+impl ::prost::Name for RawBatchGetResponse {
+    const NAME: &'static str = "RawBatchGetResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawBatchGetResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawBatchGetResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -878,6 +1318,16 @@ pub struct RawPutRequest {
     #[prost(bool, tag = "6")]
     pub for_cas: bool,
 }
+impl ::prost::Name for RawPutRequest {
+    const NAME: &'static str = "RawPutRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawPutRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawPutRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawPutResponse {
@@ -885,6 +1335,16 @@ pub struct RawPutResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RawPutResponse {
+    const NAME: &'static str = "RawPutResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawPutResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawPutResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -906,6 +1366,16 @@ pub struct RawBatchPutRequest {
     #[prost(uint64, repeated, tag = "6")]
     pub ttls: ::prost::alloc::vec::Vec<u64>,
 }
+impl ::prost::Name for RawBatchPutRequest {
+    const NAME: &'static str = "RawBatchPutRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawBatchPutRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawBatchPutRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawBatchPutResponse {
@@ -913,6 +1383,16 @@ pub struct RawBatchPutResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RawBatchPutResponse {
+    const NAME: &'static str = "RawBatchPutResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawBatchPutResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawBatchPutResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -926,6 +1406,16 @@ pub struct RawDeleteRequest {
     #[prost(bool, tag = "4")]
     pub for_cas: bool,
 }
+impl ::prost::Name for RawDeleteRequest {
+    const NAME: &'static str = "RawDeleteRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawDeleteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawDeleteRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawDeleteResponse {
@@ -933,6 +1423,16 @@ pub struct RawDeleteResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RawDeleteResponse {
+    const NAME: &'static str = "RawDeleteResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawDeleteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawDeleteResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -946,6 +1446,16 @@ pub struct RawBatchDeleteRequest {
     #[prost(bool, tag = "4")]
     pub for_cas: bool,
 }
+impl ::prost::Name for RawBatchDeleteRequest {
+    const NAME: &'static str = "RawBatchDeleteRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawBatchDeleteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawBatchDeleteRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawBatchDeleteResponse {
@@ -953,6 +1463,16 @@ pub struct RawBatchDeleteResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RawBatchDeleteResponse {
+    const NAME: &'static str = "RawBatchDeleteResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawBatchDeleteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawBatchDeleteResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -974,6 +1494,16 @@ pub struct RawScanRequest {
     #[prost(bytes = "vec", tag = "7")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for RawScanRequest {
+    const NAME: &'static str = "RawScanRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawScanRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawScanRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawScanResponse {
@@ -981,6 +1511,16 @@ pub struct RawScanResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(message, repeated, tag = "2")]
     pub kvs: ::prost::alloc::vec::Vec<KvPair>,
+}
+impl ::prost::Name for RawScanResponse {
+    const NAME: &'static str = "RawScanResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawScanResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawScanResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -994,6 +1534,16 @@ pub struct RawDeleteRangeRequest {
     #[prost(string, tag = "4")]
     pub cf: ::prost::alloc::string::String,
 }
+impl ::prost::Name for RawDeleteRangeRequest {
+    const NAME: &'static str = "RawDeleteRangeRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawDeleteRangeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawDeleteRangeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawDeleteRangeResponse {
@@ -1001,6 +1551,16 @@ pub struct RawDeleteRangeResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RawDeleteRangeResponse {
+    const NAME: &'static str = "RawDeleteRangeResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawDeleteRangeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawDeleteRangeResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1020,6 +1580,16 @@ pub struct RawBatchScanRequest {
     #[prost(bool, tag = "6")]
     pub reverse: bool,
 }
+impl ::prost::Name for RawBatchScanRequest {
+    const NAME: &'static str = "RawBatchScanRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawBatchScanRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawBatchScanRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawBatchScanResponse {
@@ -1027,6 +1597,16 @@ pub struct RawBatchScanResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(message, repeated, tag = "2")]
     pub kvs: ::prost::alloc::vec::Vec<KvPair>,
+}
+impl ::prost::Name for RawBatchScanResponse {
+    const NAME: &'static str = "RawBatchScanResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawBatchScanResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawBatchScanResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1038,6 +1618,16 @@ pub struct UnsafeDestroyRangeRequest {
     #[prost(bytes = "vec", tag = "3")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for UnsafeDestroyRangeRequest {
+    const NAME: &'static str = "UnsafeDestroyRangeRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.UnsafeDestroyRangeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.UnsafeDestroyRangeRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UnsafeDestroyRangeResponse {
@@ -1045,6 +1635,16 @@ pub struct UnsafeDestroyRangeResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for UnsafeDestroyRangeResponse {
+    const NAME: &'static str = "UnsafeDestroyRangeResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.UnsafeDestroyRangeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.UnsafeDestroyRangeResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1054,11 +1654,31 @@ pub struct RegisterLockObserverRequest {
     #[prost(uint64, tag = "2")]
     pub max_ts: u64,
 }
+impl ::prost::Name for RegisterLockObserverRequest {
+    const NAME: &'static str = "RegisterLockObserverRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RegisterLockObserverRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RegisterLockObserverRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RegisterLockObserverResponse {
     #[prost(string, tag = "1")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RegisterLockObserverResponse {
+    const NAME: &'static str = "RegisterLockObserverResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RegisterLockObserverResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RegisterLockObserverResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1067,6 +1687,16 @@ pub struct CheckLockObserverRequest {
     pub context: ::core::option::Option<Context>,
     #[prost(uint64, tag = "2")]
     pub max_ts: u64,
+}
+impl ::prost::Name for CheckLockObserverRequest {
+    const NAME: &'static str = "CheckLockObserverRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CheckLockObserverRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CheckLockObserverRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1078,6 +1708,16 @@ pub struct CheckLockObserverResponse {
     #[prost(message, repeated, tag = "3")]
     pub locks: ::prost::alloc::vec::Vec<LockInfo>,
 }
+impl ::prost::Name for CheckLockObserverResponse {
+    const NAME: &'static str = "CheckLockObserverResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CheckLockObserverResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CheckLockObserverResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemoveLockObserverRequest {
@@ -1086,11 +1726,31 @@ pub struct RemoveLockObserverRequest {
     #[prost(uint64, tag = "2")]
     pub max_ts: u64,
 }
+impl ::prost::Name for RemoveLockObserverRequest {
+    const NAME: &'static str = "RemoveLockObserverRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RemoveLockObserverRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RemoveLockObserverRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemoveLockObserverResponse {
     #[prost(string, tag = "1")]
     pub error: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RemoveLockObserverResponse {
+    const NAME: &'static str = "RemoveLockObserverResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RemoveLockObserverResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RemoveLockObserverResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1104,6 +1764,16 @@ pub struct PhysicalScanLockRequest {
     #[prost(uint32, tag = "4")]
     pub limit: u32,
 }
+impl ::prost::Name for PhysicalScanLockRequest {
+    const NAME: &'static str = "PhysicalScanLockRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PhysicalScanLockRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PhysicalScanLockRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PhysicalScanLockResponse {
@@ -1111,6 +1781,16 @@ pub struct PhysicalScanLockResponse {
     pub error: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "2")]
     pub locks: ::prost::alloc::vec::Vec<LockInfo>,
+}
+impl ::prost::Name for PhysicalScanLockResponse {
+    const NAME: &'static str = "PhysicalScanLockResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PhysicalScanLockResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PhysicalScanLockResponse".into()
+    }
 }
 /// Sent from PD to a TiKV node.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1127,6 +1807,16 @@ pub struct SplitRegionRequest {
     /// Once enabled, the split_key will not be encoded.
     #[prost(bool, tag = "4")]
     pub is_raw_kv: bool,
+}
+impl ::prost::Name for SplitRegionRequest {
+    const NAME: &'static str = "SplitRegionRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.SplitRegionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.SplitRegionRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1148,6 +1838,16 @@ pub struct SplitRegionResponse {
     #[prost(message, repeated, tag = "100")]
     pub errors: ::prost::alloc::vec::Vec<KeyError>,
 }
+impl ::prost::Name for SplitRegionResponse {
+    const NAME: &'static str = "SplitRegionResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.SplitRegionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.SplitRegionResponse".into()
+    }
+}
 /// Sent from TiFlash to a TiKV node.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1161,6 +1861,16 @@ pub struct ReadIndexRequest {
     #[prost(message, repeated, tag = "3")]
     pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
 }
+impl ::prost::Name for ReadIndexRequest {
+    const NAME: &'static str = "ReadIndexRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ReadIndexRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ReadIndexRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReadIndexResponse {
@@ -1173,6 +1883,16 @@ pub struct ReadIndexResponse {
     #[prost(message, optional, tag = "3")]
     pub locked: ::core::option::Option<LockInfo>,
 }
+impl ::prost::Name for ReadIndexResponse {
+    const NAME: &'static str = "ReadIndexResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ReadIndexResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ReadIndexResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MvccGetByKeyRequest {
@@ -1180,6 +1900,16 @@ pub struct MvccGetByKeyRequest {
     pub context: ::core::option::Option<Context>,
     #[prost(bytes = "vec", tag = "2")]
     pub key: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for MvccGetByKeyRequest {
+    const NAME: &'static str = "MvccGetByKeyRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.MvccGetByKeyRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.MvccGetByKeyRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1191,6 +1921,16 @@ pub struct MvccGetByKeyResponse {
     #[prost(message, optional, tag = "3")]
     pub info: ::core::option::Option<MvccInfo>,
 }
+impl ::prost::Name for MvccGetByKeyResponse {
+    const NAME: &'static str = "MvccGetByKeyResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.MvccGetByKeyResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.MvccGetByKeyResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MvccGetByStartTsRequest {
@@ -1198,6 +1938,16 @@ pub struct MvccGetByStartTsRequest {
     pub context: ::core::option::Option<Context>,
     #[prost(uint64, tag = "2")]
     pub start_ts: u64,
+}
+impl ::prost::Name for MvccGetByStartTsRequest {
+    const NAME: &'static str = "MvccGetByStartTsRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.MvccGetByStartTsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.MvccGetByStartTsRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1210,6 +1960,16 @@ pub struct MvccGetByStartTsResponse {
     pub key: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "4")]
     pub info: ::core::option::Option<MvccInfo>,
+}
+impl ::prost::Name for MvccGetByStartTsResponse {
+    const NAME: &'static str = "MvccGetByStartTsResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.MvccGetByStartTsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.MvccGetByStartTsResponse".into()
+    }
 }
 /// Miscellaneous metadata attached to most requests.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1344,6 +2104,16 @@ pub mod context {
         KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
     }
 }
+impl ::prost::Name for Context {
+    const NAME: &'static str = "Context";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.Context".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.Context".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceControlContext {
@@ -1359,6 +2129,16 @@ pub struct ResourceControlContext {
     #[prost(uint64, tag = "3")]
     pub override_priority: u64,
 }
+impl ::prost::Name for ResourceControlContext {
+    const NAME: &'static str = "ResourceControlContext";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ResourceControlContext".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ResourceControlContext".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SourceStmt {
@@ -1371,6 +2151,16 @@ pub struct SourceStmt {
     /// session alias set by user
     #[prost(string, tag = "4")]
     pub session_alias: ::prost::alloc::string::String,
+}
+impl ::prost::Name for SourceStmt {
+    const NAME: &'static str = "SourceStmt";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.SourceStmt".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.SourceStmt".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1414,6 +2204,16 @@ pub struct LockInfo {
     #[prost(bool, tag = "100")]
     pub is_txn_file: bool,
 }
+impl ::prost::Name for LockInfo {
+    const NAME: &'static str = "LockInfo";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.LockInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.LockInfo".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyError {
@@ -1456,6 +2256,16 @@ pub struct KeyError {
     /// Extra information for error debugging
     #[prost(message, optional, tag = "100")]
     pub debug_info: ::core::option::Option<DebugInfo>,
+}
+impl ::prost::Name for KeyError {
+    const NAME: &'static str = "KeyError";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.KeyError".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.KeyError".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1533,11 +2343,31 @@ pub mod write_conflict {
         }
     }
 }
+impl ::prost::Name for WriteConflict {
+    const NAME: &'static str = "WriteConflict";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.WriteConflict".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.WriteConflict".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AlreadyExist {
     #[prost(bytes = "vec", tag = "1")]
     pub key: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for AlreadyExist {
+    const NAME: &'static str = "AlreadyExist";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.AlreadyExist".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.AlreadyExist".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1555,6 +2385,16 @@ pub struct Deadlock {
     #[prost(bytes = "vec", tag = "5")]
     pub deadlock_key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for Deadlock {
+    const NAME: &'static str = "Deadlock";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.Deadlock".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.Deadlock".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitTsExpired {
@@ -1567,6 +2407,16 @@ pub struct CommitTsExpired {
     #[prost(uint64, tag = "4")]
     pub min_commit_ts: u64,
 }
+impl ::prost::Name for CommitTsExpired {
+    const NAME: &'static str = "CommitTsExpired";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CommitTsExpired".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CommitTsExpired".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TxnNotFound {
@@ -1575,12 +2425,32 @@ pub struct TxnNotFound {
     #[prost(bytes = "vec", tag = "2")]
     pub primary_key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for TxnNotFound {
+    const NAME: &'static str = "TxnNotFound";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TxnNotFound".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TxnNotFound".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommitTsTooLarge {
     /// The calculated commit TS.
     #[prost(uint64, tag = "1")]
     pub commit_ts: u64,
+}
+impl ::prost::Name for CommitTsTooLarge {
+    const NAME: &'static str = "CommitTsTooLarge";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CommitTsTooLarge".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CommitTsTooLarge".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1596,17 +2466,47 @@ pub struct AssertionFailed {
     #[prost(uint64, tag = "5")]
     pub existing_commit_ts: u64,
 }
+impl ::prost::Name for AssertionFailed {
+    const NAME: &'static str = "AssertionFailed";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.AssertionFailed".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.AssertionFailed".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PrimaryMismatch {
     #[prost(message, optional, tag = "1")]
     pub lock_info: ::core::option::Option<LockInfo>,
 }
+impl ::prost::Name for PrimaryMismatch {
+    const NAME: &'static str = "PrimaryMismatch";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PrimaryMismatch".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PrimaryMismatch".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TxnLockNotFound {
     #[prost(bytes = "vec", tag = "1")]
     pub key: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for TxnLockNotFound {
+    const NAME: &'static str = "TxnLockNotFound";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TxnLockNotFound".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TxnLockNotFound".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1616,11 +2516,31 @@ pub struct MvccDebugInfo {
     #[prost(message, optional, tag = "2")]
     pub mvcc: ::core::option::Option<MvccInfo>,
 }
+impl ::prost::Name for MvccDebugInfo {
+    const NAME: &'static str = "MvccDebugInfo";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.MvccDebugInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.MvccDebugInfo".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DebugInfo {
     #[prost(message, repeated, tag = "1")]
     pub mvcc_info: ::prost::alloc::vec::Vec<MvccDebugInfo>,
+}
+impl ::prost::Name for DebugInfo {
+    const NAME: &'static str = "DebugInfo";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.DebugInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.DebugInfo".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1642,6 +2562,16 @@ pub struct TimeDetail {
     /// Total wall clock time spent on this RPC in TiKV .
     #[prost(uint64, tag = "4")]
     pub total_rpc_wall_time_ns: u64,
+}
+impl ::prost::Name for TimeDetail {
+    const NAME: &'static str = "TimeDetail";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TimeDetail".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TimeDetail".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1673,6 +2603,16 @@ pub struct TimeDetailV2 {
     #[prost(uint64, tag = "7")]
     pub kv_grpc_wait_time_ns: u64,
 }
+impl ::prost::Name for TimeDetailV2 {
+    const NAME: &'static str = "TimeDetailV2";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TimeDetailV2".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TimeDetailV2".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ScanInfo {
@@ -1682,6 +2622,16 @@ pub struct ScanInfo {
     pub processed: i64,
     #[prost(int64, tag = "3")]
     pub read_bytes: i64,
+}
+impl ::prost::Name for ScanInfo {
+    const NAME: &'static str = "ScanInfo";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ScanInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ScanInfo".into()
+    }
 }
 /// Only reserved for compatibility.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1693,6 +2643,16 @@ pub struct ScanDetail {
     pub lock: ::core::option::Option<ScanInfo>,
     #[prost(message, optional, tag = "3")]
     pub data: ::core::option::Option<ScanInfo>,
+}
+impl ::prost::Name for ScanDetail {
+    const NAME: &'static str = "ScanDetail";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ScanDetail".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ScanDetail".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1770,6 +2730,16 @@ pub struct ScanDetailV2 {
     #[prost(uint64, tag = "18")]
     pub ia_remote_read_segment_nanos: u64,
 }
+impl ::prost::Name for ScanDetailV2 {
+    const NAME: &'static str = "ScanDetailV2";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ScanDetailV2".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ScanDetailV2".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecDetails {
@@ -1779,6 +2749,16 @@ pub struct ExecDetails {
     /// Available when ctx.record_scan_stat = true or meet slow query.
     #[prost(message, optional, tag = "2")]
     pub scan_detail: ::core::option::Option<ScanDetail>,
+}
+impl ::prost::Name for ExecDetails {
+    const NAME: &'static str = "ExecDetails";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ExecDetails".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ExecDetails".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1803,6 +2783,16 @@ pub struct ExecDetailsV2 {
     /// Available when read-pool task tracking is enabled in TiKV.
     #[prost(message, optional, tag = "6")]
     pub read_pool_task_details: ::core::option::Option<PoolTaskDetails>,
+}
+impl ::prost::Name for ExecDetailsV2 {
+    const NAME: &'static str = "ExecDetailsV2";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ExecDetailsV2".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ExecDetailsV2".into()
+    }
 }
 /// Scheduling and execution details collected across all polls of one task running in a pool.
 /// The timing model is:
@@ -1896,6 +2886,16 @@ pub struct PoolTaskDetails {
     #[prost(uint64, tag = "19")]
     pub max_poll_wall_nanos: u64,
 }
+impl ::prost::Name for PoolTaskDetails {
+    const NAME: &'static str = "PoolTaskDetails";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.PoolTaskDetails".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.PoolTaskDetails".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Ruv2 {
@@ -1920,6 +2920,16 @@ pub struct Ruv2 {
     #[prost(uint64, tag = "9")]
     pub write_rpc_count: u64,
 }
+impl ::prost::Name for Ruv2 {
+    const NAME: &'static str = "RUV2";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RUV2".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RUV2".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecutorInputs {
@@ -1937,6 +2947,16 @@ pub struct ExecutorInputs {
     pub tikv_coprocessor_executor_work_total_batch_simple_aggr: u64,
     #[prost(uint64, tag = "7")]
     pub tikv_coprocessor_executor_work_total_batch_fast_hash_aggr: u64,
+}
+impl ::prost::Name for ExecutorInputs {
+    const NAME: &'static str = "ExecutorInputs";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ExecutorInputs".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ExecutorInputs".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1993,6 +3013,16 @@ pub struct WriteDetail {
     #[prost(uint64, tag = "17")]
     pub pessimistic_lock_wait_nanos: u64,
 }
+impl ::prost::Name for WriteDetail {
+    const NAME: &'static str = "WriteDetail";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.WriteDetail".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.WriteDetail".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KvPair {
@@ -2007,6 +3037,16 @@ pub struct KvPair {
     #[prost(uint64, tag = "4")]
     pub commit_ts: u64,
 }
+impl ::prost::Name for KvPair {
+    const NAME: &'static str = "KvPair";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.KvPair".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.KvPair".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Mutation {
@@ -2018,6 +3058,16 @@ pub struct Mutation {
     pub value: ::prost::alloc::vec::Vec<u8>,
     #[prost(enumeration = "Assertion", tag = "4")]
     pub assertion: i32,
+}
+impl ::prost::Name for Mutation {
+    const NAME: &'static str = "Mutation";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.Mutation".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.Mutation".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2041,6 +3091,16 @@ pub struct MvccWrite {
     #[prost(uint64, tag = "9")]
     pub versions_to_last_change: u64,
 }
+impl ::prost::Name for MvccWrite {
+    const NAME: &'static str = "MvccWrite";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.MvccWrite".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.MvccWrite".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MvccValue {
@@ -2048,6 +3108,16 @@ pub struct MvccValue {
     pub start_ts: u64,
     #[prost(bytes = "vec", tag = "2")]
     pub value: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for MvccValue {
+    const NAME: &'static str = "MvccValue";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.MvccValue".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.MvccValue".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2077,6 +3147,16 @@ pub struct MvccLock {
     #[prost(uint64, tag = "12")]
     pub versions_to_last_change: u64,
 }
+impl ::prost::Name for MvccLock {
+    const NAME: &'static str = "MvccLock";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.MvccLock".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.MvccLock".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MvccInfo {
@@ -2086,6 +3166,16 @@ pub struct MvccInfo {
     pub writes: ::prost::alloc::vec::Vec<MvccWrite>,
     #[prost(message, repeated, tag = "3")]
     pub values: ::prost::alloc::vec::Vec<MvccValue>,
+}
+impl ::prost::Name for MvccInfo {
+    const NAME: &'static str = "MvccInfo";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.MvccInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.MvccInfo".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2098,6 +3188,16 @@ pub struct TxnInfo {
     #[prost(bool, tag = "100")]
     pub is_txn_file: bool,
 }
+impl ::prost::Name for TxnInfo {
+    const NAME: &'static str = "TxnInfo";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TxnInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TxnInfo".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeyRange {
@@ -2105,6 +3205,16 @@ pub struct KeyRange {
     pub start_key: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for KeyRange {
+    const NAME: &'static str = "KeyRange";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.KeyRange".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.KeyRange".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2120,6 +3230,16 @@ pub struct LeaderInfo {
     #[prost(message, optional, tag = "5")]
     pub read_state: ::core::option::Option<ReadState>,
 }
+impl ::prost::Name for LeaderInfo {
+    const NAME: &'static str = "LeaderInfo";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.LeaderInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.LeaderInfo".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReadState {
@@ -2127,6 +3247,16 @@ pub struct ReadState {
     pub applied_index: u64,
     #[prost(uint64, tag = "2")]
     pub safe_ts: u64,
+}
+impl ::prost::Name for ReadState {
+    const NAME: &'static str = "ReadState";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.ReadState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.ReadState".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2136,6 +3266,16 @@ pub struct CheckLeaderRequest {
     #[prost(uint64, tag = "2")]
     pub ts: u64,
 }
+impl ::prost::Name for CheckLeaderRequest {
+    const NAME: &'static str = "CheckLeaderRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CheckLeaderRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CheckLeaderRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CheckLeaderResponse {
@@ -2143,6 +3283,16 @@ pub struct CheckLeaderResponse {
     pub regions: ::prost::alloc::vec::Vec<u64>,
     #[prost(uint64, tag = "2")]
     pub ts: u64,
+}
+impl ::prost::Name for CheckLeaderResponse {
+    const NAME: &'static str = "CheckLeaderResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CheckLeaderResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CheckLeaderResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2152,11 +3302,31 @@ pub struct StoreSafeTsRequest {
     #[prost(message, optional, tag = "1")]
     pub key_range: ::core::option::Option<KeyRange>,
 }
+impl ::prost::Name for StoreSafeTsRequest {
+    const NAME: &'static str = "StoreSafeTSRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.StoreSafeTSRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.StoreSafeTSRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StoreSafeTsResponse {
     #[prost(uint64, tag = "1")]
     pub safe_ts: u64,
+}
+impl ::prost::Name for StoreSafeTsResponse {
+    const NAME: &'static str = "StoreSafeTSResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.StoreSafeTSResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.StoreSafeTSResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2167,6 +3337,16 @@ pub struct RawGetKeyTtlRequest {
     pub key: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "3")]
     pub cf: ::prost::alloc::string::String,
+}
+impl ::prost::Name for RawGetKeyTtlRequest {
+    const NAME: &'static str = "RawGetKeyTTLRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawGetKeyTTLRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawGetKeyTTLRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2179,6 +3359,16 @@ pub struct RawGetKeyTtlResponse {
     pub ttl: u64,
     #[prost(bool, tag = "4")]
     pub not_found: bool,
+}
+impl ::prost::Name for RawGetKeyTtlResponse {
+    const NAME: &'static str = "RawGetKeyTTLResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawGetKeyTTLResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawGetKeyTTLResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2201,6 +3391,16 @@ pub struct RawCasRequest {
     #[prost(bool, tag = "8")]
     pub delete: bool,
 }
+impl ::prost::Name for RawCasRequest {
+    const NAME: &'static str = "RawCASRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawCASRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawCASRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawCasResponse {
@@ -2216,6 +3416,16 @@ pub struct RawCasResponse {
     #[prost(bytes = "vec", tag = "5")]
     pub previous_value: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for RawCasResponse {
+    const NAME: &'static str = "RawCASResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawCASResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawCASResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetLockWaitInfoRequest {
@@ -2223,6 +3433,16 @@ pub struct GetLockWaitInfoRequest {
     /// the lock waiting status for some specified transaction.
     #[prost(message, optional, tag = "1")]
     pub context: ::core::option::Option<Context>,
+}
+impl ::prost::Name for GetLockWaitInfoRequest {
+    const NAME: &'static str = "GetLockWaitInfoRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GetLockWaitInfoRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GetLockWaitInfoRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2234,6 +3454,16 @@ pub struct GetLockWaitInfoResponse {
     #[prost(message, repeated, tag = "3")]
     pub entries: ::prost::alloc::vec::Vec<super::deadlock::WaitForEntry>,
 }
+impl ::prost::Name for GetLockWaitInfoResponse {
+    const NAME: &'static str = "GetLockWaitInfoResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GetLockWaitInfoResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GetLockWaitInfoResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetLockWaitHistoryRequest {
@@ -2241,6 +3471,16 @@ pub struct GetLockWaitHistoryRequest {
     /// the lock waiting status for some specified transaction.
     #[prost(message, optional, tag = "1")]
     pub context: ::core::option::Option<Context>,
+}
+impl ::prost::Name for GetLockWaitHistoryRequest {
+    const NAME: &'static str = "GetLockWaitHistoryRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GetLockWaitHistoryRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GetLockWaitHistoryRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2251,6 +3491,16 @@ pub struct GetLockWaitHistoryResponse {
     pub error: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "3")]
     pub entries: ::prost::alloc::vec::Vec<super::deadlock::WaitForEntry>,
+}
+impl ::prost::Name for GetLockWaitHistoryResponse {
+    const NAME: &'static str = "GetLockWaitHistoryResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GetLockWaitHistoryResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GetLockWaitHistoryResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2267,6 +3517,16 @@ pub struct RawCoprocessorRequest {
     #[prost(bytes = "vec", tag = "5")]
     pub data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for RawCoprocessorRequest {
+    const NAME: &'static str = "RawCoprocessorRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawCoprocessorRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawCoprocessorRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawCoprocessorResponse {
@@ -2279,6 +3539,16 @@ pub struct RawCoprocessorResponse {
     #[prost(bytes = "vec", tag = "3")]
     pub data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for RawCoprocessorResponse {
+    const NAME: &'static str = "RawCoprocessorResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawCoprocessorResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawCoprocessorResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RawChecksumRequest {
@@ -2288,6 +3558,16 @@ pub struct RawChecksumRequest {
     pub algorithm: i32,
     #[prost(message, repeated, tag = "3")]
     pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
+}
+impl ::prost::Name for RawChecksumRequest {
+    const NAME: &'static str = "RawChecksumRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawChecksumRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawChecksumRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2302,6 +3582,16 @@ pub struct RawChecksumResponse {
     pub total_kvs: u64,
     #[prost(uint64, tag = "5")]
     pub total_bytes: u64,
+}
+impl ::prost::Name for RawChecksumResponse {
+    const NAME: &'static str = "RawChecksumResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.RawChecksumResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.RawChecksumResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2324,18 +3614,68 @@ pub mod compact_error {
         ErrTooManyPendingTasks(super::CompactErrorTooManyPendingTasks),
     }
 }
+impl ::prost::Name for CompactError {
+    const NAME: &'static str = "CompactError";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CompactError".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CompactError".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactErrorInvalidStartKey {}
+impl ::prost::Name for CompactErrorInvalidStartKey {
+    const NAME: &'static str = "CompactErrorInvalidStartKey";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CompactErrorInvalidStartKey".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CompactErrorInvalidStartKey".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactErrorPhysicalTableNotExist {}
+impl ::prost::Name for CompactErrorPhysicalTableNotExist {
+    const NAME: &'static str = "CompactErrorPhysicalTableNotExist";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CompactErrorPhysicalTableNotExist".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CompactErrorPhysicalTableNotExist".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactErrorCompactInProgress {}
+impl ::prost::Name for CompactErrorCompactInProgress {
+    const NAME: &'static str = "CompactErrorCompactInProgress";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CompactErrorCompactInProgress".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CompactErrorCompactInProgress".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactErrorTooManyPendingTasks {}
+impl ::prost::Name for CompactErrorTooManyPendingTasks {
+    const NAME: &'static str = "CompactErrorTooManyPendingTasks";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CompactErrorTooManyPendingTasks".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CompactErrorTooManyPendingTasks".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactRequest {
@@ -2380,6 +3720,16 @@ pub mod compact_request {
         KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
     }
 }
+impl ::prost::Name for CompactRequest {
+    const NAME: &'static str = "CompactRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CompactRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CompactRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompactResponse {
@@ -2394,17 +3744,47 @@ pub struct CompactResponse {
     #[prost(bytes = "vec", tag = "4")]
     pub compacted_end_key: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for CompactResponse {
+    const NAME: &'static str = "CompactResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.CompactResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.CompactResponse".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TiFlashSystemTableRequest {
     #[prost(string, tag = "1")]
     pub sql: ::prost::alloc::string::String,
 }
+impl ::prost::Name for TiFlashSystemTableRequest {
+    const NAME: &'static str = "TiFlashSystemTableRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TiFlashSystemTableRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TiFlashSystemTableRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TiFlashSystemTableResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for TiFlashSystemTableResponse {
+    const NAME: &'static str = "TiFlashSystemTableResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TiFlashSystemTableResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TiFlashSystemTableResponse".into()
+    }
 }
 /// Flush is introduced from the pipelined DML protocol.
 /// A Flush request writes some keys and values to TiKV, storing in LOCK and DEFAULT CF, just like a Prewrite request.
@@ -2429,6 +3809,16 @@ pub struct FlushRequest {
     #[prost(enumeration = "AssertionLevel", tag = "8")]
     pub assertion_level: i32,
 }
+impl ::prost::Name for FlushRequest {
+    const NAME: &'static str = "FlushRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.FlushRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.FlushRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FlushResponse {
@@ -2438,6 +3828,16 @@ pub struct FlushResponse {
     pub errors: ::prost::alloc::vec::Vec<KeyError>,
     #[prost(message, optional, tag = "3")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
+}
+impl ::prost::Name for FlushResponse {
+    const NAME: &'static str = "FlushResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.FlushResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.FlushResponse".into()
+    }
 }
 /// BufferBatchGet is introduced from the pipelined DML protocol.
 /// It is similar to a BatchGet request, except that it can only read the data that has been flushed by itself.
@@ -2450,6 +3850,16 @@ pub struct BufferBatchGetRequest {
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(uint64, tag = "3")]
     pub version: u64,
+}
+impl ::prost::Name for BufferBatchGetRequest {
+    const NAME: &'static str = "BufferBatchGetRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.BufferBatchGetRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.BufferBatchGetRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2464,6 +3874,16 @@ pub struct BufferBatchGetResponse {
     #[prost(message, optional, tag = "4")]
     pub exec_details_v2: ::core::option::Option<ExecDetailsV2>,
 }
+impl ::prost::Name for BufferBatchGetResponse {
+    const NAME: &'static str = "BufferBatchGetResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.BufferBatchGetResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.BufferBatchGetResponse".into()
+    }
+}
 /// Actively request TiKV to report health feedback information. TiKV won't omit the health feedback information when sending the
 /// `BatchCommandsResponse` that contains this response.
 /// The health feedback information won't be replied in the response, but will be attached to `BatchCommandsResponse.health_feedback` field as usual.
@@ -2474,6 +3894,16 @@ pub struct GetHealthFeedbackRequest {
     #[prost(message, optional, tag = "1")]
     pub context: ::core::option::Option<Context>,
 }
+impl ::prost::Name for GetHealthFeedbackRequest {
+    const NAME: &'static str = "GetHealthFeedbackRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GetHealthFeedbackRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GetHealthFeedbackRequest".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetHealthFeedbackResponse {
@@ -2482,6 +3912,16 @@ pub struct GetHealthFeedbackResponse {
     pub region_error: ::core::option::Option<super::errorpb::Error>,
     #[prost(message, optional, tag = "2")]
     pub health_feedback: ::core::option::Option<HealthFeedback>,
+}
+impl ::prost::Name for GetHealthFeedbackResponse {
+    const NAME: &'static str = "GetHealthFeedbackResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.GetHealthFeedbackResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.GetHealthFeedbackResponse".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2501,6 +3941,16 @@ pub struct HealthFeedback {
     #[prost(int32, tag = "3")]
     pub slow_score: i32,
 }
+impl ::prost::Name for HealthFeedback {
+    const NAME: &'static str = "HealthFeedback";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.HealthFeedback".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.HealthFeedback".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BroadcastTxnStatusRequest {
@@ -2508,6 +3958,16 @@ pub struct BroadcastTxnStatusRequest {
     pub context: ::core::option::Option<Context>,
     #[prost(message, repeated, tag = "2")]
     pub txn_status: ::prost::alloc::vec::Vec<TxnStatus>,
+}
+impl ::prost::Name for BroadcastTxnStatusRequest {
+    const NAME: &'static str = "BroadcastTxnStatusRequest";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.BroadcastTxnStatusRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.BroadcastTxnStatusRequest".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2526,9 +3986,29 @@ pub struct TxnStatus {
     #[prost(bool, tag = "5")]
     pub is_completed: bool,
 }
+impl ::prost::Name for TxnStatus {
+    const NAME: &'static str = "TxnStatus";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.TxnStatus".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.TxnStatus".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BroadcastTxnStatusResponse {}
+impl ::prost::Name for BroadcastTxnStatusResponse {
+    const NAME: &'static str = "BroadcastTxnStatusResponse";
+    const PACKAGE: &'static str = "kvrpcpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "kvrpcpb.BroadcastTxnStatusResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/kvrpcpb.BroadcastTxnStatusResponse".into()
+    }
+}
 /// Used to specify the behavior when a pessimistic lock request is woken up after waiting for another
 /// lock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
