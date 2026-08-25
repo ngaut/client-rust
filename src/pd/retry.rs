@@ -147,6 +147,43 @@ pub trait RetryClientTrait {
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
 
+    async fn update_safepoint_value(self: Arc<Self>, _safepoint: u64) -> Result<u64> {
+        Err(Error::Unimplemented)
+    }
+
+    /// Loads PD's modern transaction/GC safe-point state for one keyspace.
+    async fn get_gc_state(self: Arc<Self>, _keyspace_id: u32) -> Result<pdpb::GetGcStateResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    async fn advance_txn_safe_point(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _target: u64,
+    ) -> Result<pdpb::AdvanceTxnSafePointResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    async fn advance_gc_safe_point(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _target: u64,
+    ) -> Result<pdpb::AdvanceGcSafePointResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    async fn scatter_regions(
+        self: Arc<Self>,
+        _region_ids: Vec<u64>,
+        _group: String,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    async fn get_operator(self: Arc<Self>, _region_id: u64) -> Result<pdpb::GetOperatorResponse> {
+        Err(Error::Unimplemented)
+    }
+
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 }
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
@@ -421,11 +458,57 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
+        Ok(self.clone().update_safepoint_value(safepoint).await? == safepoint)
+    }
+
+    async fn update_safepoint_value(self: Arc<Self>, safepoint: u64) -> Result<u64> {
         retry_mut!(self, "update_gc_safepoint", |cluster| async {
             cluster
                 .update_safepoint(safepoint, self.timeout)
                 .await
-                .map(|resp| resp.new_safe_point == safepoint)
+                .map(|resp| resp.new_safe_point)
+        })
+    }
+
+    async fn get_gc_state(self: Arc<Self>, keyspace_id: u32) -> Result<pdpb::GetGcStateResponse> {
+        retry_mut!(self, "get_gc_state", |cluster| {
+            cluster.get_gc_state(keyspace_id, self.timeout)
+        })
+    }
+
+    async fn advance_txn_safe_point(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        target: u64,
+    ) -> Result<pdpb::AdvanceTxnSafePointResponse> {
+        retry_mut!(self, "advance_txn_safe_point", |cluster| {
+            cluster.advance_txn_safe_point(keyspace_id, target, self.timeout)
+        })
+    }
+
+    async fn advance_gc_safe_point(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        target: u64,
+    ) -> Result<pdpb::AdvanceGcSafePointResponse> {
+        retry_mut!(self, "advance_gc_safe_point", |cluster| {
+            cluster.advance_gc_safe_point(keyspace_id, target, self.timeout)
+        })
+    }
+
+    async fn scatter_regions(
+        self: Arc<Self>,
+        region_ids: Vec<u64>,
+        group: String,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        retry_mut!(self, "scatter_regions", |cluster| {
+            cluster.scatter_regions(region_ids.clone(), group.clone(), self.timeout)
+        })
+    }
+
+    async fn get_operator(self: Arc<Self>, region_id: u64) -> Result<pdpb::GetOperatorResponse> {
+        retry_mut!(self, "get_operator", |cluster| {
+            cluster.get_operator(region_id, self.timeout)
         })
     }
 
