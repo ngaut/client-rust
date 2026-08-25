@@ -136,6 +136,11 @@ impl SyncTransaction {
         safe_block_on(&self.runtime, self.inner.batch_mutate(mutations))
     }
 
+    /// Returns the exact staged MemDB used by reads and commit.
+    pub fn get_mem_buffer(&mut self) -> &mut crate::transaction::unionstore::MemDb {
+        self.inner.get_mem_buffer()
+    }
+
     /// Lock the given keys without associating any values.
     pub fn lock_keys(&mut self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
         safe_block_on(&self.runtime, self.inner.lock_keys(keys))
