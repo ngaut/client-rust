@@ -225,6 +225,7 @@ pub use crate::raw::Client as RawClient;
 pub use crate::raw::ColumnFamily;
 #[doc(inline)]
 pub use crate::raw::RawChecksum;
+pub use crate::raw::MAX_RAW_KV_SCAN_LIMIT;
 #[doc(inline)]
 pub use crate::region_request::{
     RegionRequestRuntimeStats, ReplicaAccessInfo, ReplicaAccessStats, RequestErrorStats,
