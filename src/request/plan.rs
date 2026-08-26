@@ -340,7 +340,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .execution_details_trace_handler
             .clone()
             .or_else(crate::trace::current_execution_details_trace_handler);
-        let next = Box::new(|| {
+        let next = Arc::new(|| {
             Box::pin(async {
                 let dispatch = client.dispatch_with_timeout_and_forwarded_host(
                     &request,

@@ -26,9 +26,9 @@ is nameable at `tikv_client::tikv::Request`.
 
 | client-go surface | Rust owner and decision |
 | --- | --- |
-| `RPCInterceptor.Name`, `Wrap` | `RpcInterceptor::name` and async `wrap`; the resolved target, immutable typed request, and one-shot continuation permit before/after logic, replacement, and suppression. |
+| `RPCInterceptor.Name`, `Wrap` | `RpcInterceptor::name` and async `wrap`; the resolved target, immutable typed request, and repeatable continuation permit before/after logic, replacement, suppression, and multiple downstream dispatches. |
 | `rpcInterceptorWrapper`, `NewRPCInterceptor` | `FunctionRpcInterceptor` and `new_rpc_interceptor`; an owned `Arc` handle replaces Go interface-pointer ownership. |
-| `RPCInterceptorFunc` | lifetime-bound `RpcNext` and `RpcDispatchResult`; an awaited future replaces synchronous call/return without changing onion ownership. |
+| `RPCInterceptorFunc` | lifetime-bound `RpcNext` and `RpcDispatchResult`; a shared `Fn` continuation may be skipped, called once, or called repeatedly exactly like the source function value. Each call creates and awaits an independent physical dispatch future. |
 | `RPCInterceptorChain.Len`, constructor | `len`, `is_empty`, `new`, and `Default`. |
 | `Link` | `link` flattens concrete chains, removes the first prior matching name, and appends the replacement, preserving source order. |
 | chain `Name`, `Wrap` | exact `interceptor-chain` name and recursive outer-to-inner entry/inner-to-outer return. |
@@ -47,7 +47,7 @@ integration suite; it is now public and root-exported.
 
 ## Unit and consumer test mapping
 
-The sole original test is ported independently as
+The sole original `TestInterceptor` is ported independently as
 `interceptor::tests::source_test_interceptor`. It uses the public manager,
 links `INTERCEPTOR-1` then `INTERCEPTOR-2`, executes one continuation, and
 asserts two entries, two returns, and exact entry order. `TestMain` owns only
@@ -56,10 +56,15 @@ continuation is ownership-bound and awaited.
 
 Source-uncovered package tests exercise duplicate-name replacement and onion
 return order, nested-chain flattening, the standalone chain constructor and
-fixed chain name, empty/non-empty state, shared manager clones, and reset.
+fixed chain name, empty/non-empty state, shared manager clones, reset, and
+multiple invocations of one continuation. The repeat-dispatch regression first
+failed to compile with E0382 because the old public `RpcNext` was `FnOnce`; it
+passes after making the continuation a cloneable shared `Fn`.
 `tests/public_interceptor_tests.rs` compiles in an ordinary downstream crate:
 its custom interceptor implements only `name` and `wrap`, then links alongside
-the public manager without private features or hooks.
+the public manager without private features or hooks. Its implementation also
+clones and invokes `RpcNext` twice, proving the restored behavior is available
+outside the crate.
 
 The client-go integration test is ported at
 `source_integration_test_interceptor_transaction_commit_and_get`. A transaction
@@ -87,7 +92,7 @@ decorator contract and its direct propagation edges only.
 
 ## Validation
 
-Exact pinned Go package and race suites:
+Exact pinned Go package execution:
 
 ```text
 env GOCACHE=/private/tmp/client-go-interceptor-build-cache \
@@ -98,15 +103,24 @@ env GOCACHE=/private/tmp/client-go-interceptor-build-cache \
 env GOCACHE=/private/tmp/client-go-interceptor-race-build-cache \
     GOMODCACHE=/private/tmp/client-go-interceptor-module-cache \
     /private/tmp/go1.25.12/bin/go test -race ./tikvrpc/interceptor -count=1
-# passed
+# unavailable: this extracted toolchain has no runtime/race package, so testmain
+# cannot link; this is an environment limitation, not a package test failure
 ```
 
 Focused and downstream gates:
 
 ```text
 cargo +nightly-2026-08-22 test -p tikv-client \
-    interceptor::tests::source_ --lib --all-features
-# 4 passed
+    interceptor::tests::source_test_interceptor --lib --all-features
+# the independent port of TestInterceptor passed
+
+cargo +nightly-2026-08-22 test -p tikv-client \
+    interceptor::tests::source_uncovered_continuation_can_dispatch_more_than_once \
+    --lib --no-default-features
+cargo +nightly-2026-08-22 test -p tikv-client \
+    interceptor::tests::source_uncovered_continuation_can_dispatch_more_than_once \
+    --lib --all-features
+# the repeat-dispatch regression passed in both configurations
 
 cargo +nightly-2026-08-22 test -p tikv-client \
     source_integration_test_interceptor_transaction_commit_and_get \
@@ -125,26 +139,25 @@ Complete matrices and strict gates:
 ```text
 cargo +nightly-2026-08-22 test -p tikv-client source_ --lib \
     --no-default-features --quiet
-# 590 passed
+# 740 passed
 cargo +nightly-2026-08-22 test -p tikv-client source_ --lib \
     --all-features --quiet
-# 587 passed
-
-cargo +nightly-2026-08-22 test -p tikv-client --lib \
-    --no-default-features --quiet
-# 895 passed; 1 unrelated intentional ignore
-cargo +nightly-2026-08-22 test -p tikv-client --lib \
-    --all-features --quiet
-# 892 passed; 1 unrelated intentional ignore
+# 737 passed
 
 cargo +nightly-2026-08-22 test --workspace --no-default-features --quiet
+# library: 1,009 passed; 1 unrelated intentional ignore; every external/crate
+# target passed; 51 doctests passed
+cargo +nightly-2026-08-22 test -p tikv-client --lib \
+    --all-features --quiet
+# 1,006 passed; 1 unrelated intentional ignore
+
 cargo +nightly-2026-08-22 check --workspace --all-targets --all-features
 cargo +nightly-2026-08-22 clippy --workspace --all-targets \
     --all-features -- -D warnings
 env RUSTDOCFLAGS='-Dwarnings --document-private-items' \
     cargo +nightly-2026-08-22 doc --workspace --all-features --no-deps
 cargo +nightly-2026-08-22 test --workspace --doc --all-features --quiet
-# all passed; 51 doctests
+# strict gates passed; 51 all-feature doctests passed
 
 cargo +nightly-2026-08-22 fmt --all -- --check
 git diff --check

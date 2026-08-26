@@ -20,7 +20,10 @@ use crate::Result;
 pub type RpcDispatchResult = Result<Box<dyn Any>>;
 
 /// The remaining RPC dispatch in an interceptor chain.
-pub type RpcNext<'a> = Box<dyn FnOnce() -> BoxFuture<'a, RpcDispatchResult> + Send + 'a>;
+///
+/// Like client-go's function value, the continuation may be skipped, called
+/// once, or called multiple times by an interceptor.
+pub type RpcNext<'a> = Arc<dyn Fn() -> BoxFuture<'a, RpcDispatchResult> + Send + Sync + 'a>;
 
 /// A decorator for an RPC sent to TiKV.
 ///
@@ -173,11 +176,11 @@ impl RpcInterceptorChain {
     ) -> BoxFuture<'a, RpcDispatchResult> {
         match interceptors.split_first() {
             None => next(),
-            Some((interceptor, remaining)) => interceptor.wrap(
-                target,
-                request,
-                Box::new(move || Self::dispatch_from(remaining, target, request, next)),
-            ),
+            Some((interceptor, remaining)) => {
+                let downstream =
+                    Arc::new(move || Self::dispatch_from(remaining, target, request, next.clone()));
+                interceptor.wrap(target, request, downstream)
+            }
         }
     }
 
@@ -361,7 +364,7 @@ mod tests {
         futures::executor::block_on(chain.wrap(
             "",
             &request,
-            Box::new(|| Box::pin(async { Ok(Box::new(()) as Box<dyn Any>) })),
+            Arc::new(|| Box::pin(async { Ok(Box::new(()) as Box<dyn Any>) })),
         ))
         .unwrap();
 
@@ -397,7 +400,8 @@ mod tests {
         futures::executor::block_on(chain.dispatch(
             "127.0.0.1:20160",
             &request,
-            Box::new(move || {
+            Arc::new(move || {
+                let count_for_next = count_for_next.clone();
                 Box::pin(async move {
                     count_for_next.fetch_add(1, Ordering::SeqCst);
                     Ok(Box::new(()) as Box<dyn Any>)
@@ -422,7 +426,7 @@ mod tests {
         futures::executor::block_on(interceptor.wrap(
             "",
             &request,
-            Box::new(|| Box::pin(async { Ok(Box::new(()) as Box<dyn Any>) })),
+            Arc::new(|| Box::pin(async { Ok(Box::new(()) as Box<dyn Any>) })),
         ))
         .unwrap();
         assert_eq!(clone.begin_count(), 1);
@@ -433,6 +437,29 @@ mod tests {
         assert_eq!(manager.begin_count(), 0);
         assert_eq!(manager.end_count(), 0);
         assert!(manager.exec_log().is_empty());
+    }
+
+    #[test]
+    fn source_uncovered_continuation_can_dispatch_more_than_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let interceptor = new_rpc_interceptor("repeat", |_, _, next| {
+            Box::pin(async move {
+                next().await?;
+                next().await
+            })
+        });
+        let calls_for_next = calls.clone();
+        let request = TestRequest;
+        futures::executor::block_on(interceptor.wrap(
+            "",
+            &request,
+            Arc::new(move || {
+                let call = calls_for_next.fetch_add(1, Ordering::SeqCst) + 1;
+                Box::pin(async move { Ok(Box::new(call) as Box<dyn Any>) })
+            }),
+        ))
+        .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -478,7 +505,7 @@ mod tests {
         futures::executor::block_on(chain.wrap(
             "",
             &request,
-            Box::new(|| Box::pin(async { Ok(Box::new(()) as Box<dyn Any>) })),
+            Arc::new(|| Box::pin(async { Ok(Box::new(()) as Box<dyn Any>) })),
         ))
         .unwrap();
         assert_eq!(*events.lock().unwrap(), ["second", "third", "first"]);

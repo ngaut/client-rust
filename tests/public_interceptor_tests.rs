@@ -22,7 +22,11 @@ impl RpcInterceptor for DownstreamInterceptor {
         _request: &'a dyn Request,
         next: RpcNext<'a>,
     ) -> BoxFuture<'a, RpcDispatchResult> {
-        next()
+        let repeat = next.clone();
+        Box::pin(async move {
+            next().await?;
+            repeat().await
+        })
     }
 }
 
