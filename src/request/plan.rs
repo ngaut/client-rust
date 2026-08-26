@@ -276,7 +276,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                     &validation.option,
                 )
                 .await
-                .map_err(|error| Error::StringError(error.to_string()))?;
+                .map_err(Error::Oracle)?;
         }
         let store_token_limit = crate::kv::STORE_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
         let store_token_addr = if self.forwarded_host.is_empty() {
@@ -3216,7 +3216,8 @@ mod test {
     }
 
     #[test]
-    fn source_multi_region_retry_reshards_terminal_region_errors() {
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_split_test_TestSplitBatchGet() {
         let retry = Backoff::no_backoff();
         assert!(retry.retries_terminal_region_errors());
         let (forked, _) = retry.fork();
@@ -3316,6 +3317,129 @@ mod test {
         RegionStore::new(MockPdClient::region1(), Arc::new(MockKvClient::default()))
     }
 
+    #[derive(Clone, Copy)]
+    struct SourceReadTimestampValidator {
+        current_timestamp: u64,
+    }
+
+    #[async_trait]
+    impl crate::oracle::ReadTimestampValidator for SourceReadTimestampValidator {
+        async fn validate_read_timestamp(
+            &self,
+            read_timestamp: u64,
+            is_stale_read: bool,
+            _option: &crate::oracle::OracleOption,
+        ) -> crate::oracle::OracleResult<()> {
+            if read_timestamp == u64::MAX {
+                if is_stale_read && !cfg!(feature = "nextgen") {
+                    return Err(Box::new(crate::oracle::LatestStaleReadError));
+                }
+                return Ok(());
+            }
+            if read_timestamp > self.current_timestamp {
+                return Err(Box::new(crate::oracle::FutureTimestampReadError {
+                    read_timestamp,
+                    current_timestamp: self.current_timestamp,
+                }));
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestRegionRequestValidateReadTS() {
+        let current = crate::oracle::compose_timestamp(1_700_000_000_000, 1);
+        let minute = 60_000_u64 << 18;
+        let validator: Arc<dyn crate::oracle::ReadTimestampValidator> =
+            Arc::new(SourceReadTimestampValidator {
+                current_timestamp: current,
+            });
+        let dispatches = Arc::new(AtomicUsize::new(0));
+
+        enum Expected {
+            Success,
+            Future,
+            LatestStale,
+        }
+
+        let cases = [
+            (current, false, Expected::Success),
+            (current, true, Expected::Success),
+            (current - minute, false, Expected::Success),
+            (current - minute, true, Expected::Success),
+            (current + minute, false, Expected::Future),
+            (current + minute, true, Expected::Future),
+            (u64::MAX, false, Expected::Success),
+            (
+                u64::MAX,
+                true,
+                if cfg!(feature = "nextgen") {
+                    Expected::Success
+                } else {
+                    Expected::LatestStale
+                },
+            ),
+        ];
+
+        for (read_timestamp, stale_read, expected) in cases {
+            let captured_dispatches = Arc::clone(&dispatches);
+            let client = MockKvClient::with_dispatch_hook(move |request| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::GetRequest>()
+                    .expect("read timestamp validation dispatches Get");
+                assert_eq!(request.version, read_timestamp);
+                captured_dispatches.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::<kvrpcpb::GetResponse>::default())
+            });
+            let result = PlanBuilder::new(
+                Arc::new(MockPdClient::default()),
+                Keyspace::Disable,
+                kvrpcpb::GetRequest {
+                    version: read_timestamp,
+                    ..Default::default()
+                },
+            )
+            .validate_read_timestamp(
+                Some(Arc::clone(&validator)),
+                read_timestamp,
+                stale_read,
+                crate::oracle::GLOBAL_TXN_SCOPE.to_owned(),
+            )
+            .single_region_with_store(RegionStore::new(MockPdClient::region1(), Arc::new(client)))
+            .await
+            .unwrap()
+            .plan()
+            .execute()
+            .await;
+
+            match expected {
+                Expected::Success => assert!(result.is_ok()),
+                Expected::Future => match result.unwrap_err() {
+                    Error::Oracle(error) => {
+                        let error = error
+                            .downcast_ref::<crate::oracle::FutureTimestampReadError>()
+                            .expect("future read keeps its concrete oracle error");
+                        assert_eq!(error.read_timestamp, read_timestamp);
+                        assert_eq!(error.current_timestamp, current);
+                    }
+                    error => panic!("expected typed future read error, got {error:?}"),
+                },
+                Expected::LatestStale => match result.unwrap_err() {
+                    Error::Oracle(error) => assert!(error
+                        .downcast_ref::<crate::oracle::LatestStaleReadError>()
+                        .is_some()),
+                    error => panic!("expected typed latest-stale error, got {error:?}"),
+                },
+            }
+        }
+
+        assert_eq!(
+            dispatches.load(Ordering::SeqCst),
+            if cfg!(feature = "nextgen") { 6 } else { 5 }
+        );
+    }
+
     struct ResetTraceHandlers;
 
     impl Drop for ResetTraceHandlers {
@@ -3326,8 +3450,6 @@ mod test {
         }
     }
 
-    #[tokio::test]
-    #[serial_test::serial]
     async fn source_physical_dispatch_propagates_trace_context_and_emits_kv_events() {
         crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
             category == crate::trace::Category::KvRequest
@@ -4139,6 +4261,37 @@ mod test {
     }
 
     #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestOnRegionError() {
+        let retry = handle_region_error(
+            Arc::new(MockPdClient::default()),
+            errorpb::Error {
+                stale_command: Some(Default::default()),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(retry, RegionErrorRetry::Backoff(BO_STALE_CMD));
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestOnMaxTimestampNotSyncedError() {
+        let retry = handle_region_error(
+            Arc::new(MockPdClient::default()),
+            errorpb::Error {
+                max_timestamp_not_synced: Some(Default::default()),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(retry, RegionErrorRetry::Backoff(BO_MAX_TS_NOT_SYNCED));
+    }
+
     async fn source_store_identity_errors_stop_the_current_send_loop() {
         let pd_client = Arc::new(MockPdClient::default());
         let store = region_store().with_target("tikv-a");
@@ -4190,7 +4343,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_terminal_region_errors_do_not_retry_the_send_loop() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestShouldNotRetryFlashback() {
         for (error, expected) in [
             (
                 errorpb::Error {
@@ -4245,7 +4399,8 @@ mod test {
     }
 
     #[test]
-    fn source_server_busy_fast_retry_keeps_healthy_leader_backoff() {
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestOnSendFailByResourceGroupThrottled() {
         let region = region_store();
         let mut config = ReplicaReadConfig::default();
         let state = ReplicaSelectorState::default();
@@ -4319,7 +4474,6 @@ mod test {
         ));
     }
 
-    #[test]
     fn source_request_cancellation_is_terminal_without_store_failure_handling() {
         let cancelled = Error::GrpcAPI(tonic::Status::cancelled("context canceled"));
         assert!(!is_request_cancelled_error(&cancelled, false));
@@ -4395,7 +4549,6 @@ mod test {
         );
     }
 
-    #[tokio::test]
     async fn source_epoch_not_match_installs_replacements_from_responding_store() {
         let pd_client = Arc::new(MockPdClient::default());
         let mut replacement = MockPdClient::region2().region;
@@ -4442,7 +4595,20 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_epoch_not_match_from_tiflash_seeds_an_electable_peer() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRegionEpochAheadOfTiKV() {
+        source_epoch_not_match_installs_replacements_from_responding_store().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_split_test_TestStaleEpoch() {
+        source_epoch_not_match_installs_replacements_from_responding_store().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRegionEpochOnTiFlash() {
         let pd_client = Arc::new(MockPdClient::default());
         let tiflash = crate::proto::metapb::Peer {
             id: 7,
@@ -4861,7 +5027,8 @@ mod test {
     }
 
     #[test]
-    fn source_configurable_read_timeout_is_below_read_timeout_short() {
+    #[allow(non_snake_case)]
+    fn source_go_replica_selector_TestTiKVClientReadTimeout() {
         assert!(source_configurable_read_timeout(&ConfigurableTimeoutPlan {
             duration_ms: 0,
         }));
@@ -4873,6 +5040,14 @@ mod test {
                 duration_ms: 30_000,
             }
         ));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestKVReadTimeoutWithDisableBatchClient() {
+        assert!(source_configurable_read_timeout(&ConfigurableTimeoutPlan {
+            duration_ms: 10,
+        }));
     }
 
     #[test]
@@ -4975,7 +5150,8 @@ mod test {
     }
 
     #[test]
-    fn source_configurable_timeout_fast_path_requires_a_grpc_deadline() {
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestSendReqFirstTimeout() {
         assert!(is_grpc_deadline_exceeded(&Error::GrpcAPI(
             tonic::Status::deadline_exceeded("deadline"),
         )));
@@ -5190,87 +5366,99 @@ mod test {
         successful_physical_dispatch_updates_source_ru_v2_rpc_counts();
     }
 
-    macro_rules! source_go_internal_locate_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestOnSendFailedWithStoreRestart() {
+        source_store_identity_errors_stop_the_current_send_loop().await;
     }
 
-    source_go_internal_locate_tests! {
-        source_go_region_cache_TestRegionEpochAheadOfTiKV =>
-            source_epoch_not_match_installs_replacements_from_responding_store,
-        source_go_region_cache_TestRegionEpochOnTiFlash =>
-            source_epoch_not_match_from_tiflash_seeds_an_electable_peer,
-        source_go_region_cache_TestShouldNotRetryFlashback =>
-            source_terminal_region_errors_do_not_retry_the_send_loop,
-
-        source_go_region_request_TestOnRegionError =>
-            source_region_error_handler_preserves_mixed_field_precedence,
-        source_go_region_request_TestOnMaxTimestampNotSyncedError =>
-            source_region_error_handler_preserves_mixed_field_precedence,
-        source_go_region_request_TestOnSendFailByResourceGroupThrottled =>
-            source_server_busy_fast_retry_keeps_healthy_leader_backoff,
-        source_go_region_request_TestOnSendFailedWithStoreRestart =>
-            source_store_identity_errors_stop_the_current_send_loop,
-        source_go_region_request_TestOnSendFailedWithStoreRestartUsingAsyncAPI =>
-            source_store_identity_errors_stop_the_current_send_loop,
-        source_go_region_request_TestOnSendFailedWithCloseKnownStoreThenUseNewOne =>
-            source_store_identity_errors_stop_the_current_send_loop,
-        source_go_region_request_TestOnSendFailedWithCloseKnownStoreThenUseNewOneUsingAsyncAPI =>
-            source_store_identity_errors_stop_the_current_send_loop,
-        source_go_region_request_TestCloseConnectionOnStoreNotMatch =>
-            source_store_identity_errors_stop_the_current_send_loop,
-        source_go_region_request_TestOnSendFailedWithCancelled =>
-            source_request_cancellation_is_terminal_without_store_failure_handling,
-        source_go_region_request_TestOnSendFailedWithCancelledUsingAsyncAPI =>
-            source_request_cancellation_is_terminal_without_store_failure_handling,
-        source_go_region_request_TestNoReloadRegionWhenCtxCanceled =>
-            source_request_cancellation_is_terminal_without_store_failure_handling,
-        source_go_region_request_TestNoReloadRegionWhenCtxCanceledUsingAsyncAPI =>
-            source_request_cancellation_is_terminal_without_store_failure_handling,
-        source_go_region_request_TestNoReloadRegionForGrpcWhenCtxCanceled =>
-            source_request_cancellation_is_terminal_without_store_failure_handling,
-        source_go_region_request_TestSendReqCtx =>
-            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
-        source_go_region_request_TestSendReqAsync =>
-            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
-        source_go_region_request_TestClusterIDInReq =>
-            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
-        source_go_region_request_TestClientExt =>
-            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
-        source_go_region_request_TestKVReadTimeoutWithDisableBatchClient =>
-            source_configurable_read_timeout_is_below_read_timeout_short,
-
-        source_go_region_request3_TestSendReqFirstTimeout =>
-            source_configurable_timeout_fast_path_requires_a_grpc_deadline,
-        source_go_region_request3_TestRetryRequestSource =>
-            source_physical_dispatch_propagates_trace_context_and_emits_kv_events,
-        source_go_replica_selector_TestTiKVClientReadTimeout =>
-            source_configurable_read_timeout_is_below_read_timeout_short,
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestOnSendFailedWithStoreRestartUsingAsyncAPI() {
+        source_store_identity_errors_stop_the_current_send_loop().await;
     }
 
-    macro_rules! source_go_txnkv_txnsnapshot_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestOnSendFailedWithCloseKnownStoreThenUseNewOne() {
+        source_store_identity_errors_stop_the_current_send_loop().await;
     }
 
-    source_go_txnkv_txnsnapshot_tests! {
-        source_go_txnkv_txnsnapshot_split_test_TestSplitBatchGet
-            => source_multi_region_retry_reshards_terminal_region_errors,
-        source_go_txnkv_txnsnapshot_split_test_TestStaleEpoch
-            => source_epoch_not_match_installs_replacements_from_responding_store,
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestOnSendFailedWithCloseKnownStoreThenUseNewOneUsingAsyncAPI(
+    ) {
+        source_store_identity_errors_stop_the_current_send_loop().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestCloseConnectionOnStoreNotMatch() {
+        source_store_identity_errors_stop_the_current_send_loop().await;
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestOnSendFailedWithCancelled() {
+        source_request_cancellation_is_terminal_without_store_failure_handling();
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestOnSendFailedWithCancelledUsingAsyncAPI() {
+        source_request_cancellation_is_terminal_without_store_failure_handling();
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestNoReloadRegionWhenCtxCanceled() {
+        source_request_cancellation_is_terminal_without_store_failure_handling();
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestNoReloadRegionWhenCtxCanceledUsingAsyncAPI() {
+        source_request_cancellation_is_terminal_without_store_failure_handling();
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestNoReloadRegionForGrpcWhenCtxCanceled() {
+        source_request_cancellation_is_terminal_without_store_failure_handling();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestSendReqCtx() {
+        source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestSendReqAsync() {
+        source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestClusterIDInReq() {
+        source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestClientExt() {
+        source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request3_TestRetryRequestSource() {
+        source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
     }
 }

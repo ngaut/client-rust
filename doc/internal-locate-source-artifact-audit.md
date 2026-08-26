@@ -57,6 +57,7 @@ The completion pass re-read production code and downstream TiDB consumers rather
 | Replica selection and forwarding | Prefer-leader no longer treats a slow leader as preferred; mixed reads allow `Unknown` but reject `Unreachable`; forwarding proxies require positive reachability; stale-epoch delayed reload respects follower state; and a directly failed unreachable leader preserves its epoch only for a viable forwarding retry. Evidence: `source_mixed_selection_allows_unknown_but_not_unreachable_liveness`, `source_direct_unreachable_leader_preserves_store_epoch_for_forwarding`, forwarding, stale-follower, and candidate-join tests. |
 | TiFlash routing | Selection reads cached metadata rather than caller snapshots, checks captured store epochs, reports the ten source unavailability reasons with store/peer IDs in rotated probe order, and invalidates on every stale epoch while allowing the current walk to continue. `needCheck` preserves the old address for the in-flight route while refreshing later metadata; valid-store discovery rotates from the current access index and skips pending/stale candidates. Send failure rotates the cursor and reloads after exhaustion. Evidence: `source_tiflash_selection_rotates_only_tiflash_peers`, `source_tiflash_need_check_uses_current_address_and_refreshes_next_route`, and `source_tiflash_store_epochs_failover_and_send_failure_rotation`. |
 | Sender terminal paths | Caller cancellation, `RpcCanceller::cancel_all`, and TiDB shutdown stop current/future request trees before cache mutation; disk-full backoff exhaustion returns the original region error. Evidence: `source_rpc_canceller_stops_current_and_future_request_trees`, `source_shutdown_marker_defaults_to_running`, `source_transport_failure_is_terminal_while_tidb_is_shutting_down`, and the disk-full region-error table. |
+| Read-timestamp error identity | `RegionRequestSender` in client-go returns concrete `oracle.ErrFutureTSRead` and `oracle.ErrLatestStaleRead` values before transport. Rust previously converted every validator failure into `Error::StringError`, making downstream type checks impossible. `Error::Oracle` now preserves the boxed concrete error, `source_go_region_request_TestRegionRequestValidateReadTS` executes all eight source rows and proves rejected reads do not dispatch, and `tests/public_locate_api_tests.rs` proves an ordinary downstream crate can downcast the public error. |
 | Ordinary-build API | `PdRpcClient`, `CodecPdClient`, `RegionCache`, region identities, TiFlash details, live-cache accessors, bucket refresh, shutdown, cancellation, and liveness controls are public without `internal-tests`. `TransactionClient::pd_client` and `tikv::KvStore::{pd_client,region_cache}` expose the same live authority. `tests/public_locate_api_tests.rs` is a downstream-crate compile/run gate. |
 
 ## External inputs and native boundaries
@@ -84,14 +85,14 @@ Go's synchronous and asynchronous test variants call the same sender algorithms.
 
 ## Original test mapping
 
-All 147 original declarations are named below. `TestMain` is the package harness and `TestRegionCache`, `TestRegionCacheWithDelay`, `TestRegionRequestToSingleStore`, and `TestRegionRequestToThreeStores` are testify suite runners, so they have explicit lifecycle/runner dispositions rather than duplicate unit tests. Every one of the remaining 142 assertion-bearing declarations has an independently selectable Rust identity named `source_go_<source-artifact>_<Go-name>`. The identities reuse the native assertion bodies listed below so fixture construction and branch tables have one authority. Sync/async source pairs remain distinct Rust tests while both exercise Rust's single future-based production path.
+All 147 original declarations are named below. `TestMain` is the package harness and `TestRegionCache`, `TestRegionCacheWithDelay`, `TestRegionRequestToSingleStore`, and `TestRegionRequestToThreeStores` are testify suite runners, so they have explicit lifecycle/runner dispositions rather than duplicate unit tests. Every one of the remaining 142 assertion-bearing declarations has an independently selectable ordinary Rust test named `source_go_<source-artifact>_<Go-name>`. No source identity is a forwarding macro or calls another registered test. Related source cases may share a plain non-test setup/assertion helper, including the Go sync/async pairs that already call one source helper, while each exact identity remains independently executable. Sync/async source pairs exercise Rust's single future-based production path.
 
 ### Harness, metrics, codec, and stale-state tests (6)
 
 | Source declarations | Rust evidence |
 | --- | --- |
 | `TestMain` | Every cache/health/refresh/batch/mock-server task has cancellation/drop and join ownership; close, idle retirement, panic recovery, stream recreation, and force-stop tests cover package-created tasks. |
-| `TestNetworkCollectorOnReq`, `TestNetworkCollectorOnResp` | `source_network_collector_request_and_response_accounting`, `source_network_collector_cross_zone_mpp_and_replica_metrics`, and physical dispatch integration. |
+| `TestNetworkCollectorOnReq`, `TestNetworkCollectorOnResp` | Independent `source_go_metrics_collector_TestNetworkCollectorOnReq` and `source_go_metrics_collector_TestNetworkCollectorOnResp` ports preserve the source request/response size tables and stale-read metrics; cross-zone MPP and physical-dispatch integration remain additional coverage. |
 | `TestGetKeyspaceIDRejectsV3Identity` | `source_get_keyspace_id_loads_canonical_name_and_rejects_v3_identity`, codec V1/V2 matrices, and malformed decode classification. |
 | `TestRegionCacheStaleRead`, `TestRegionCacheStaleReadUsingAsyncAPI` | Source selector-state, stale-timeout follower, lock-triggered stale disabling, attempt-path, route-context, and resend tests. |
 
@@ -125,7 +126,7 @@ All 147 original declarations are named below. `TestMain` is the package harness
 | `TestGetRegionByIDFromCache`, `TestClusterIDInReq`, `TestClientExt` | Cached by-ID routing, cluster/keyspace/context attachment, and native typed client extension points. |
 | `TestBatchClientSendLoopPanic` | Completed transport receipt plus sender integration proves panic recovery, pending failure, recreation, and later dispatch. |
 | `TestRegionRequestSenderString`, `TestRegionRequestStats`, `TestGetErrMsg`, `TestRPCContextString`, `TestBackoffErrWithRPCContext` | Runtime stats, 16-error cap, replica trace, source error labels/suffixes, route/context strings, and contextual backoff formatting. |
-| `TestRegionRequestValidateReadTS` | Source scope timestamp validation blocks transport and preserves exact request ownership. |
+| `TestRegionRequestValidateReadTS` | All eight source rows execute against sender dispatch. Current and past timestamps succeed, future normal/stale reads retain concrete `FutureTimestampReadError`, the latest stale sentinel retains concrete `LatestStaleReadError` outside NextGen, and every rejected read is proved to stop before transport. |
 
 ### `region_request3_test.go` (21)
 
@@ -187,21 +188,22 @@ The package is exercised through deterministic cache/selector tests and complete
 
 The 147 original test declarations and five benchmark declarations are fully mapped above, including duplicated sync/async façades and the goleak harness. The 2026-08-26 independent closeout reconfirmed the exact Go commit, 17-file/20,132-line inventory, every recorded SHA-256, 147 `Test*` declarations, five `Benchmark*` declarations, and all 28 direct importer files. A mechanical source/Rust identity reconciliation proves exactly 142 executable Go declarations and 142 independently named Rust tests, with no missing, extra, or duplicate identity.
 
-Go 1.25.12 executed the exact pinned package in both normal and race modes. The first sandboxed attempt was intentionally discarded because loopback bind denial made the mock server receive a nil listener; the same command with local loopback permission passed:
+Go 1.25.12 executed the exact pinned package in both normal and race modes:
 
-    go test --tags=intest ./internal/locate -count=1
-    # passed in 70.470s
+    go test ./internal/locate
+    # passed in 68.669s
 
-    go test -race --tags=intest ./internal/locate -count=1
-    # passed in 70.383s
+    go test -race ./internal/locate
+    # passed in 70.101s (with the known macOS LC_DYSYMTAB linker warning)
 
 Fresh Rust gates on `nightly-2026-08-22` are:
 
-- `cargo test --no-default-features source_go_ -- --nocapture`: 142/142 independently named source tests passed.
-- `cargo test --no-default-features --lib`: 1,233 passed and one unrelated subprocess-only test remained ignored.
-- `cargo test --all-features --lib`: 1,230 passed and the same unrelated test remained ignored.
-- Canonical `make unit-test`: 1,285 no-default workspace tests and 1,264 all-feature workspace-library tests passed; one unrelated test was skipped in each configuration.
-- Source-derived inventories list 986 no-default and 983 all-feature tests.
+- Mechanical declaration reconciliation: 142 expected source tests, zero missing, zero duplicates, and zero forwarding macros.
+- `cargo test --no-default-features --lib source_go_ -- --nocapture`: 328 passed and one unrelated source test retained its source skip.
+- `cargo test --all-features --lib source_go_ -- --nocapture`: 324 passed and five unrelated source tests retained their source skips.
+- Canonical `make unit-test`: 1,328 no-default workspace tests passed with two configured skips; 1,302 all-feature workspace-library tests passed with six configured skips.
+- Source-derived library inventories list 1,016 no-default and 1,013 all-feature tests.
+- `cargo test --{no-default,all}-features --test public_locate_api_tests`: both downstream API configurations passed two tests, including concrete oracle-error downcasting.
 - `make check` regenerated the bindings, checked every workspace target and feature, verified formatting, and passed Clippy with warnings denied.
 - `make doc` passed private-item workspace rustdoc with warnings denied and all 51 doctests.
 - Exact pin, 17-artifact line/hash inventory, 147-declaration/five-benchmark inventory, 28-importer inventory, 142-test source identity, `nightly-2026-08-22`, formatting, and whitespace checks pass.

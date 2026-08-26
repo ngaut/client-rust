@@ -1284,18 +1284,24 @@ against its exact 17-artifact/20,132-line boundary, 147 test declarations,
 five colocated benchmarks, every production/native representation surface,
 ten direct pinned protocol inputs, and 28 direct importer files. `TestMain`
 and the four testify suite runners have explicit non-test dispositions; every
-one of the remaining 142 assertion-bearing declarations now has an
-independently selectable, source-named Rust port. Sync/async source pairs keep
-separate identities while executing Rust's one future path. The source-name
-bijection, focused ports, and complete parallel suites pass without a
-production change, confirming the implementation while correcting the older
-grouped evidence. Exact Go normal/race suites pass. Final pinned-nightly gates
-pass all 142 independent ports, 986/983 source-derived tests, 1,233/1,230
-active no-default/all-feature main-library tests, and 1,285/1,264 canonical
-workspace tests plus one unrelated ignore/skip. Strict all-target
-check/Clippy/private rustdoc, all 51 doctests, formatting, exact
-inventory/declaration/importer reconciliation, source identity, and whitespace
-checks pass. This receipt is the package-sized integration boundary.
+one of the remaining 142 assertion-bearing declarations now has an ordinary,
+independently selectable, source-named Rust port. Forwarding macros and
+test-to-test calls are gone; related cases share only plain non-test helpers,
+including source sync/async pairs that execute Rust's one future path. The
+stronger `TestRegionRequestValidateReadTS` port exposed a production gap:
+dispatch converted oracle failures to strings, so downstream code could not
+distinguish client-go's future-timestamp and latest-stale error types. Public
+`Error::Oracle` now retains the boxed concrete error, all eight source rows
+prove rejection happens before transport in both feature modes, and an
+ordinary downstream-crate test proves the type is downcastable. Mechanical
+reconciliation reports 142 expected tests, zero missing, zero duplicates, and
+zero forwarding mappings. Exact Go normal/race suites pass in 68.669s and
+70.101s. Final pinned-nightly matrices pass 1,328 no-default workspace tests
+with two configured skips and 1,302 all-feature library tests with six
+configured skips; source-derived inventories contain 1,016/1,013 tests.
+Strict all-target check/Clippy/private rustdoc, all 51 doctests, formatting,
+exact inventory/declaration/importer reconciliation, source identity, and
+whitespace checks pass. This receipt is the package-sized integration boundary.
 
 Plan revision note (2026-08-26): independently reopened `rawkv` against its
 exact eight-artifact/2,743-line package and external-integration boundary, 31

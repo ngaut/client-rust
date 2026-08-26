@@ -2757,10 +2757,4 @@ mod tests {
         oracle.close();
         ENABLE_TS_VALIDATION.store(false, Ordering::Release);
     }
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn source_go_region_request_TestRegionRequestValidateReadTS() {
-        source_go_oracle_oracles_pd_test_TestValidateReadTS();
-    }
 }

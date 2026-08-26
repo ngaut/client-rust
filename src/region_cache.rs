@@ -4212,7 +4212,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_bucket_aware_pd_lookup_refreshes_only_missing_bucket_metadata() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestLocateBucket() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
         let region = region(1, vec![], vec![]);
@@ -4233,7 +4234,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_by_id_pd_load_requests_bucket_metadata() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestLocateRegionByIDFromPD() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
         client
@@ -4249,7 +4251,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_point_pd_loads_request_bucket_metadata() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestLoadRegionsWithLeader() -> Result<()> {
         let key_client = Arc::new(MockRetryClient::default());
         key_client
             .regions
@@ -4285,7 +4288,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_pd_load_rejects_regions_without_available_peers() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestReturnRegionWithNoLeader() {
         let client = Arc::new(MockRetryClient::default());
         let mut peerless = region_with_leader(1, b"", b"");
         peerless.region.peers.clear();
@@ -4403,7 +4407,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_background_bucket_refresh_is_deduplicated() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestUpdateBucketsConcurrently() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         let cache = Arc::new(RegionCache::new(client.clone()));
         let mut region = region(1, vec![], vec![]);
@@ -4459,7 +4464,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_bucket_mismatch_only_replaces_older_cached_metadata() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBuckets() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         let region = region(1, vec![], vec![10]);
         let ver_id = region.ver_id();
@@ -4603,7 +4609,6 @@ mod test {
         assert(&cache, &expected_cache).await;
     }
 
-    #[tokio::test]
     async fn source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections() {
         let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
 
@@ -4657,7 +4662,6 @@ mod test {
         assert(&cache, &expected).await;
     }
 
-    #[tokio::test]
     async fn source_cache_miss_retries_pd_metadata_rejected_as_stale() -> Result<()> {
         let setup = |id, start: &[u8], end: &[u8], version| {
             let mut region = region_with_leader(id, start, end);
@@ -4710,7 +4714,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_region_ttl_refreshes_live_entries_and_reloads_expired_ones() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestNeedExpireRegionAfterTTL() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(retry_client.clone());
         let cached = region(1, vec![], vec![]);
@@ -4760,7 +4765,6 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
     async fn source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure() {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
@@ -4838,7 +4842,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_gc_round_is_bounded_and_expires_regions_with_unhealthy_stores() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBackgroundCacheGC() {
         let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
         cache.store_cache.write().unwrap().insert(
             9,
@@ -4900,7 +4905,6 @@ mod test {
         assert!(cache.background_tasks.lock().unwrap().is_empty());
     }
 
-    #[tokio::test]
     async fn source_full_region_refresh_replaces_indexes_and_can_run_periodically() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         for region in [
@@ -4960,7 +4964,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_health_feedback_updates_only_the_owning_cached_store() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRegionCacheHandleHealthStatus() {
         let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
         cache.store_cache.write().unwrap().insert(
             7,
@@ -5028,7 +5033,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_health_tick_actively_refreshes_only_reachable_stale_feedback() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_request3_TestTiKVRecoveredFromDown() {
         let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
         cache.store_cache.write().unwrap().insert(
             9,
@@ -5082,7 +5088,6 @@ mod test {
         assert_eq!(cache.store_health(9).unwrap().tikv_side_slow_score, 95);
     }
 
-    #[tokio::test]
     async fn source_store_reresolve_updates_metadata_without_resetting_runtime_state() -> Result<()>
     {
         let client = Arc::new(MockRetryClient::default());
@@ -5145,7 +5150,6 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
     async fn source_store_resolve_state_transition_matrix() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         client.stores.lock().await.push(metapb::Store {
@@ -5237,6 +5241,22 @@ mod test {
     }
 
     #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestResolveStateTransition() {
+        source_store_resolve_state_transition_matrix()
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_rawkv_TestReplaceStore() {
+        source_store_resolve_state_transition_matrix()
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn source_invalid_store_id_error_marks_store_tombstone() {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
@@ -5264,8 +5284,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_store_background_trigger_and_periodic_refresh_share_one_lifecycle() -> Result<()>
-    {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBackgroundRunner() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         client.stores.lock().await.push(metapb::Store {
             id: 7,
@@ -5342,7 +5362,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_store_list_compute_cache_labels_and_replica_flows() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestStoreLabels() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         *client.stores.lock().await = vec![
             metapb::Store {
@@ -5499,7 +5520,6 @@ mod test {
         assert_eq!(cache.estimated_store_wait(8), None);
     }
 
-    #[tokio::test]
     async fn source_replica_candidates_join_region_peers_to_cached_store_state() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         cache.store_cache.write().unwrap().insert(
@@ -5683,7 +5703,6 @@ mod test {
         assert_eq!(proxy, Some(follower));
     }
 
-    #[tokio::test]
     async fn source_forwarding_prefers_cached_proxy_then_walks_untried_replicas() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         for store_id in 1..=3 {
@@ -5790,7 +5809,6 @@ mod test {
             .has_sync_flags(NEED_RELOAD_ON_ACCESS));
     }
 
-    #[tokio::test]
     async fn source_replica_candidates_skip_tombstone_and_removed_stores() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         *client.stores.lock().await = vec![
@@ -6035,7 +6053,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_tiflash_store_epochs_failover_and_send_failure_rotation() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestTiFlashRecoveredFromDown() {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
         let tikv = metapb::Peer {
@@ -6183,7 +6202,6 @@ mod test {
         );
     }
 
-    #[tokio::test]
     async fn source_store_failure_epoch_invalidates_only_its_cached_snapshot() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         cache.store_cache.write().unwrap().insert(
@@ -6222,7 +6240,6 @@ mod test {
             .is_empty());
     }
 
-    #[tokio::test]
     async fn source_stale_need_check_follower_does_not_schedule_delayed_reload() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         for id in [1, 2] {
@@ -6277,7 +6294,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_get_region_by_key() -> Result<()> {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSimple() -> Result<()> {
         let retry_client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(retry_client.clone());
 
@@ -6343,7 +6361,6 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
     async fn source_cache_only_location_and_exact_version_lookup_do_not_contact_pd() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         let cache = RegionCache::new(client.clone());
@@ -6527,7 +6544,6 @@ mod test {
         regions.iter().map(RegionWithLeader::id).collect()
     }
 
-    #[test]
     fn source_batch_scan_detects_gaps_across_ranges() {
         let check = |ranges: &[&str], regions: &[&str], limit: isize, expected: bool| {
             let ranges = ranges
@@ -6638,7 +6654,8 @@ mod test {
     }
 
     #[test]
-    fn source_ranges_after_key_splits_and_discards_finished_ranges() {
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestSplitKeyRanges() {
         let check = |range_keys: &[&str], split_key: &str, expected: &[&str]| {
             let ranges = range_keys
                 .chunks_exact(2)
@@ -6670,7 +6687,8 @@ mod test {
     }
 
     #[test]
-    fn source_batch_locate_merger_prefers_loaded_regions_over_stale_cache() {
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestBatchScanRegionsMerger() {
         let check = |loaded: &[&str], cached: &[&str], expected: &[&str]| {
             let to_regions = |keys: &[&str]| {
                 keys.chunks_exact(2)
@@ -6763,7 +6781,6 @@ mod test {
         }
     }
 
-    #[tokio::test]
     async fn source_batch_locate_reuses_cache_and_falls_back_to_scan_regions() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         for (id, start, end) in [
@@ -6861,7 +6878,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_cached_range_scan_stops_at_expiration_and_holes() {
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestScanRegions() {
         let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
         for region in [
             region_with_leader(2, b"a", b"b"),
@@ -6899,7 +6917,6 @@ mod test {
         );
     }
 
-    #[tokio::test]
     async fn source_region_range_helpers_preserve_half_open_and_inclusive_bounds() -> Result<()> {
         let client = Arc::new(MockRetryClient::default());
         for (id, start, end) in [
@@ -7054,154 +7071,256 @@ mod test {
         assert_eq!(cache.store_cache.read().unwrap()[&1].meta.address, "tikv");
     }
 
-    macro_rules! source_go_internal_locate_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSendFailedButLeaderNotChange() {
+        source_store_failure_epoch_invalidates_only_its_cached_snapshot().await;
     }
 
-    macro_rules! source_go_internal_locate_result_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target().expect(concat!(stringify!($name), " must pass"));
-                }
-            )+
-        };
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSendFailedInHibernateRegion() {
+        source_stale_need_check_follower_does_not_schedule_delayed_reload().await;
     }
 
-    source_go_internal_locate_tests! {
-        source_go_region_cache_TestReturnRegionWithNoLeader =>
-            source_pd_load_rejects_regions_without_available_peers,
-        source_go_region_cache_TestTiFlashRecoveredFromDown =>
-            source_tiflash_store_epochs_failover_and_send_failure_rotation,
-        source_go_region_cache_TestSendFailedButLeaderNotChange =>
-            source_store_failure_epoch_invalidates_only_its_cached_snapshot,
-        source_go_region_cache_TestSendFailedInHibernateRegion =>
-            source_stale_need_check_follower_does_not_schedule_delayed_reload,
-        source_go_region_cache_TestSendFailInvalidateRegionsInSameStore =>
-            source_store_failure_epoch_invalidates_only_its_cached_snapshot,
-        source_go_region_cache_TestSendFailedInMultipleNode =>
-            source_store_failure_epoch_invalidates_only_its_cached_snapshot,
-        source_go_region_cache_TestSplit =>
-            source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections,
-        source_go_region_cache_TestMerge =>
-            source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections,
-        source_go_region_cache_TestRemoveIntersectingRegions =>
-            source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections,
-        source_go_region_cache_TestScanRegions =>
-            source_cached_range_scan_stops_at_expiration_and_holes,
-        source_go_region_cache_TestPeersLenChange =>
-            source_replica_candidates_join_region_peers_to_cached_store_state,
-        source_go_region_cache_TestBuckets =>
-            source_bucket_mismatch_only_replaces_older_cached_metadata,
-        source_go_region_cache_TestBackgroundCacheGC =>
-            source_gc_round_is_bounded_and_expires_regions_with_unhealthy_stores,
-        source_go_region_cache_TestRegionCacheHandleHealthStatus =>
-            source_health_feedback_updates_only_the_owning_cached_store,
-        source_go_region_cache_TestSplitThenLocateInvalidRegion =>
-            source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure,
-        source_go_region_cache_TestSplitThenLocateRegionNeedReloadOnAccess =>
-            source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure,
-        source_go_region_cache_TestSplitThenLocateRegionNeedDelayedReload =>
-            source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure,
-        source_go_region_cache_TestInsertStaleRegion =>
-            source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections,
-        source_go_region_cache_TestFollowerGetStaleRegion =>
-            source_stale_need_check_follower_does_not_schedule_delayed_reload,
-        source_go_region_cache_TestBatchScanRegionsMerger =>
-            source_batch_locate_merger_prefers_loaded_regions_over_stale_cache,
-        source_go_region_cache_TestSplitKeyRanges =>
-            source_ranges_after_key_splits_and_discards_finished_ranges,
-        source_go_region_cache_TestRangesAreCoveredCheck =>
-            source_batch_scan_detects_gaps_across_ranges,
-        source_go_region_cache_TestScanRegionsWithGaps =>
-            source_batch_scan_detects_gaps_across_ranges,
-
-        source_go_region_request3_TestForwarding =>
-            source_forwarding_prefers_cached_proxy_then_walks_untried_replicas,
-        source_go_region_request3_TestSendReqWithReplicaSelector =>
-            source_replica_candidates_join_region_peers_to_cached_store_state,
-        source_go_region_request3_TestTiKVRecoveredFromDown =>
-            source_health_tick_actively_refreshes_only_reachable_stale_feedback,
-        source_go_replica_selector_TestReplicaReadAccessPathByProxyCase =>
-            source_forwarding_prefers_cached_proxy_then_walks_untried_replicas,
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSendFailInvalidateRegionsInSameStore() {
+        source_store_failure_epoch_invalidates_only_its_cached_snapshot().await;
     }
 
-    source_go_internal_locate_result_tests! {
-        source_go_region_cache_TestBackgroundRunner =>
-            source_store_background_trigger_and_periodic_refresh_share_one_lifecycle,
-        source_go_region_cache_TestStoreLabels =>
-            source_store_list_compute_cache_labels_and_replica_flows,
-        source_go_region_cache_TestSimple => test_get_region_by_key,
-        source_go_region_cache_TestResolveStateTransition =>
-            source_store_resolve_state_transition_matrix,
-        source_go_region_cache_TestNeedExpireRegionAfterTTL =>
-            source_region_ttl_refreshes_live_entries_and_reloads_expired_ones,
-        source_go_region_cache_TestFilterDownPeersOrPeersOnTombstoneOrDroppedStores =>
-            source_replica_candidates_skip_tombstone_and_removed_stores,
-        source_go_region_cache_TestReconnect =>
-            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
-        source_go_region_cache_TestHealthCheckWithAddressChange =>
-            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
-        source_go_region_cache_TestStoreRestartWithNewLabels =>
-            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
-        source_go_region_cache_TestListRegionIDsInCache =>
-            source_cache_only_location_and_exact_version_lookup_do_not_contact_pd,
-        source_go_region_cache_TestBatchLoadRegions =>
-            source_batch_locate_reuses_cache_and_falls_back_to_scan_regions,
-        source_go_region_cache_TestBatchScanRegions =>
-            source_batch_locate_reuses_cache_and_falls_back_to_scan_regions,
-        source_go_region_cache_TestBatchScanRegionsFallback =>
-            source_batch_locate_reuses_cache_and_falls_back_to_scan_regions,
-        source_go_region_cache_TestBatchLoadLimitRanges =>
-            source_batch_locate_reuses_cache_and_falls_back_to_scan_regions,
-        source_go_region_cache_TestPeersLenChangedByWitness =>
-            source_replica_candidates_skip_tombstone_and_removed_stores,
-        source_go_region_cache_TestContains =>
-            source_region_range_helpers_preserve_half_open_and_inclusive_bounds,
-        source_go_region_cache_TestContainsByEnd =>
-            source_region_range_helpers_preserve_half_open_and_inclusive_bounds,
-        source_go_region_cache_TestBucketClampingToRegion =>
-            source_region_range_helpers_preserve_half_open_and_inclusive_bounds,
-        source_go_region_cache_TestNoBackoffWhenFailToDecodeRegion =>
-            source_cache_miss_retries_pd_metadata_rejected_as_stale,
-        source_go_region_cache_TestIssue1401 =>
-            source_cache_miss_retries_pd_metadata_rejected_as_stale,
-        source_go_region_cache_TestStaleGetRegion =>
-            source_cache_miss_retries_pd_metadata_rejected_as_stale,
-        source_go_region_cache_TestLocateBucket =>
-            source_bucket_aware_pd_lookup_refreshes_only_missing_bucket_metadata,
-        source_go_region_cache_TestLoadRegionsWithLeader =>
-            source_point_pd_loads_request_bucket_metadata,
-        source_go_region_cache_TestRefreshCache =>
-            source_full_region_refresh_replaces_indexes_and_can_run_periodically,
-        source_go_region_cache_TestRegionCacheStartNonEmpty =>
-            source_full_region_refresh_replaces_indexes_and_can_run_periodically,
-        source_go_region_cache_TestRefreshCacheConcurrency =>
-            source_full_region_refresh_replaces_indexes_and_can_run_periodically,
-        source_go_region_cache_TestRegionCacheValidAfterLoading =>
-            source_full_region_refresh_replaces_indexes_and_can_run_periodically,
-        source_go_region_cache_TestUpdateBucketsConcurrently =>
-            source_background_bucket_refresh_is_deduplicated,
-        source_go_region_cache_TestLocateRegionByIDFromPD =>
-            source_by_id_pd_load_requests_bucket_metadata,
-        source_go_region_request_TestGetRegionByIDFromCache =>
-            source_cache_only_location_and_exact_version_lookup_do_not_contact_pd,
-        source_go_rawkv_TestReplaceAddrWithNewStore =>
-            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
-        source_go_rawkv_TestUpdateStoreAddr =>
-            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
-        source_go_rawkv_TestReplaceNewAddrAndOldOfflineImmediately =>
-            source_replica_candidates_skip_tombstone_and_removed_stores,
-        source_go_rawkv_TestReplaceStore => source_store_resolve_state_transition_matrix,
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSendFailedInMultipleNode() {
+        source_store_failure_epoch_invalidates_only_its_cached_snapshot().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSplit() {
+        source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestMerge() {
+        source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRemoveIntersectingRegions() {
+        source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestPeersLenChange() {
+        source_replica_candidates_join_region_peers_to_cached_store_state().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSplitThenLocateInvalidRegion() {
+        source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSplitThenLocateRegionNeedReloadOnAccess() {
+        source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestSplitThenLocateRegionNeedDelayedReload() {
+        source_region_sync_flags_delay_reload_and_preserve_old_region_on_pd_failure().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestInsertStaleRegion() {
+        source_region_insert_rejects_stale_epochs_and_removes_max_end_intersections().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestFollowerGetStaleRegion() {
+        source_stale_need_check_follower_does_not_schedule_delayed_reload().await;
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestRangesAreCoveredCheck() {
+        source_batch_scan_detects_gaps_across_ranges();
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_cache_TestScanRegionsWithGaps() {
+        source_batch_scan_detects_gaps_across_ranges();
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request3_TestForwarding() {
+        source_forwarding_prefers_cached_proxy_then_walks_untried_replicas().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request3_TestSendReqWithReplicaSelector() {
+        source_replica_candidates_join_region_peers_to_cached_store_state().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_replica_selector_TestReplicaReadAccessPathByProxyCase() {
+        source_forwarding_prefers_cached_proxy_then_walks_untried_replicas().await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestFilterDownPeersOrPeersOnTombstoneOrDroppedStores(
+    ) -> Result<()> {
+        source_replica_candidates_skip_tombstone_and_removed_stores().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestReconnect() -> Result<()> {
+        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestHealthCheckWithAddressChange() -> Result<()> {
+        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestStoreRestartWithNewLabels() -> Result<()> {
+        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestListRegionIDsInCache() -> Result<()> {
+        source_cache_only_location_and_exact_version_lookup_do_not_contact_pd().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBatchLoadRegions() -> Result<()> {
+        source_batch_locate_reuses_cache_and_falls_back_to_scan_regions().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBatchScanRegions() -> Result<()> {
+        source_batch_locate_reuses_cache_and_falls_back_to_scan_regions().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBatchScanRegionsFallback() -> Result<()> {
+        source_batch_locate_reuses_cache_and_falls_back_to_scan_regions().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBatchLoadLimitRanges() -> Result<()> {
+        source_batch_locate_reuses_cache_and_falls_back_to_scan_regions().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestPeersLenChangedByWitness() -> Result<()> {
+        source_replica_candidates_skip_tombstone_and_removed_stores().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestContains() -> Result<()> {
+        source_region_range_helpers_preserve_half_open_and_inclusive_bounds().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestContainsByEnd() -> Result<()> {
+        source_region_range_helpers_preserve_half_open_and_inclusive_bounds().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestBucketClampingToRegion() -> Result<()> {
+        source_region_range_helpers_preserve_half_open_and_inclusive_bounds().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestNoBackoffWhenFailToDecodeRegion() -> Result<()> {
+        source_cache_miss_retries_pd_metadata_rejected_as_stale().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestIssue1401() -> Result<()> {
+        source_cache_miss_retries_pd_metadata_rejected_as_stale().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestStaleGetRegion() -> Result<()> {
+        source_cache_miss_retries_pd_metadata_rejected_as_stale().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRefreshCache() -> Result<()> {
+        source_full_region_refresh_replaces_indexes_and_can_run_periodically().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRegionCacheStartNonEmpty() -> Result<()> {
+        source_full_region_refresh_replaces_indexes_and_can_run_periodically().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRefreshCacheConcurrency() -> Result<()> {
+        source_full_region_refresh_replaces_indexes_and_can_run_periodically().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_cache_TestRegionCacheValidAfterLoading() -> Result<()> {
+        source_full_region_refresh_replaces_indexes_and_can_run_periodically().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestGetRegionByIDFromCache() -> Result<()> {
+        source_cache_only_location_and_exact_version_lookup_do_not_contact_pd().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_rawkv_TestReplaceAddrWithNewStore() -> Result<()> {
+        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_rawkv_TestUpdateStoreAddr() -> Result<()> {
+        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_rawkv_TestReplaceNewAddrAndOldOfflineImmediately() -> Result<()> {
+        source_replica_candidates_skip_tombstone_and_removed_stores().await
     }
 }

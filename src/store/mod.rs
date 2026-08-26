@@ -558,7 +558,8 @@ mod tests {
     }
 
     #[test]
-    fn source_store_token_limit_rejects_and_releases() {
+    #[allow(non_snake_case)]
+    fn source_go_region_request3_TestStoreTokenLimit() {
         let count = Arc::new(AtomicI64::new(0));
         let address = "store-42:20160";
         let metric_before = crate::stats::store_limit_error_count(address, 42);
@@ -575,11 +576,5 @@ mod tests {
 
         drop(token);
         assert_eq!(count.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn source_go_region_request3_TestStoreTokenLimit() {
-        source_store_token_limit_rejects_and_releases();
     }
 }
