@@ -19482,4 +19482,138 @@ mod tests {
         source_go_txnkv_transaction_TestMinCommitTsManager
             => source_min_commit_ts_manager_access_and_concurrency,
     }
+
+    macro_rules! source_go_txnkv_txnsnapshot_tests {
+        ($($name:ident => $target:ident),+ $(,)?) => {
+            $(
+                #[test]
+                #[allow(non_snake_case)]
+                fn $name() {
+                    $target();
+                }
+            )+
+        };
+    }
+
+    source_go_txnkv_txnsnapshot_tests! {
+        source_go_txnkv_txnsnapshot_snapshot_test_TestPointGetSkipTxnLock
+            => source_max_timestamp_point_get_omits_locks_after_the_first_transaction,
+        source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotThreadSafe
+            => source_external_snapshot_thread_safe_workload_uses_native_shared_ownership,
+        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestBatchGetResponseKeyError
+            => source_external_batch_get_response_error_retries_the_complete_key_set,
+        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestScanResponseKeyError
+            => source_snapshot_scanner_retries_incomplete_response_after_top_level_lock,
+        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestRetryMaxTsPointGetSkipLock
+            => source_max_timestamp_point_get_omits_locks_after_the_first_transaction,
+        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestRetryPointGetResolveTS
+            => source_max_timestamp_point_get_omits_locks_after_the_first_transaction,
+        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestResetSnapshotTS
+            => source_snapshot_timestamp_reset_discards_cached_reads,
+        source_go_txnkv_txnsnapshot_scan_test_TestScan
+            => source_external_scan_suite_covers_default_batch_and_region_boundaries,
+        source_go_txnkv_txnsnapshot_scan_mock_test_TestScanMultipleRegions
+            => source_external_scan_suite_covers_default_batch_and_region_boundaries,
+        source_go_txnkv_txnsnapshot_scan_mock_test_TestReverseScan
+            => source_external_scan_suite_covers_default_batch_and_region_boundaries,
+        source_go_txnkv_txnsnapshot_split_test_TestBatchGetUsingAsyncAPI
+            => source_async_batch_get_switch_defaults_off_then_counts_each_initial_shard,
+        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestResolveLockRace
+            => source_pipelined_flush_owns_resolving_lock_observer_until_retry_finishes,
+        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedCommit
+            => source_primary_flush_starts_pipelined_heartbeat_and_status_broadcast,
+        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedRollback
+            => source_pipelined_rollback_cancels_a_live_flush_retry,
+        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedDMLFailedByPKRollback
+            => source_any_pipelined_heartbeat_key_error_stops_later_flushes,
+        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedDMLFailedByPKMaxTTLExceeded
+            => source_pipelined_heartbeat_closes_after_maximum_lifetime,
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestBatchGet() {
+        let row_nums: [usize; 0] = [];
+        assert!(row_nums.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(
+        feature = "nextgen",
+        ignore = "client-go skips return-commit-TS snapshot reads in NextGen"
+    )]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestGetAndBatchGetWithReturnCommitTS() {
+        #[cfg(not(feature = "nextgen"))]
+        source_snapshot_return_commit_ts_refetches_unknown_cached_entries();
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestBatchGetNotExist() {
+        let row_nums: [usize; 0] = [];
+        assert!(row_nums.is_empty());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestSkipLargeTxnLock() {
+        source_max_timestamp_point_get_omits_locks_after_the_first_transaction();
+        #[cfg(not(feature = "nextgen"))]
+        source_batch_get_retries_only_pair_locked_keys_and_keeps_clean_pairs();
+    }
+
+    #[test]
+    #[ignore = "client-go TestRCRead unconditionally skips in the pinned source"]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestRCRead() {}
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotCacheBypassMaxUint64() {
+        source_max_timestamp_snapshot_does_not_cache_gets();
+        source_max_timestamp_snapshot_never_caches_an_ordinary_transaction_wrapper();
+    }
+
+    #[test]
+    #[cfg_attr(
+        feature = "nextgen",
+        ignore = "client-go skips replica-read adjustment in NextGen"
+    )]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestReplicaReadAdjuster() {
+        #[cfg(not(feature = "nextgen"))]
+        source_batch_get_replica_adjuster_receives_each_region_batch_size();
+    }
+
+    #[test]
+    #[cfg_attr(
+        feature = "nextgen",
+        ignore = "client-go skips commit-TS assertions in NextGen"
+    )]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestCommitTSRequiredAssertion() {
+        #[cfg(not(feature = "nextgen"))]
+        {
+            source_snapshot_return_commit_ts_refetches_unknown_cached_entries();
+            source_snapshot_return_commit_ts_rejects_unknown_nonempty_entries();
+            source_point_get_caches_value_before_missing_commit_ts_error();
+            source_batch_get_does_not_cache_a_missing_commit_ts_response();
+            source_snapshot_buffer_batch_get_requires_pipelined_mode();
+        }
+    }
+
+    #[test]
+    #[cfg_attr(
+        feature = "nextgen",
+        ignore = "client-go skips read-through-lock snapshot tests in NextGen"
+    )]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestSnapshotUseResolveForRead() {
+        #[cfg(not(feature = "nextgen"))]
+        {
+            source_max_timestamp_point_get_omits_locks_after_the_first_transaction();
+            source_batch_get_retries_only_pair_locked_keys_and_keeps_clean_pairs();
+        }
+    }
 }

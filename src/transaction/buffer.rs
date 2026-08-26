@@ -2020,4 +2020,13 @@ mod tests {
     fn source_go_txnkv_transaction_TestBufferBatchGetter() {
         source_buffer_batch_getter_local_precedence_delete_and_commit_ts();
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotCache() {
+        source_snapshot_cache_observability_counts_values_and_misses();
+        source_snapshot_cache_mutation_preserves_entries_and_cached_misses();
+        source_snapshot_cache_limit_evicts_only_entries_unneeded_by_current_fill();
+        source_snapshot_cache_replacement_and_clean_keep_go_accounting();
+    }
 }

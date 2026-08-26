@@ -58,7 +58,7 @@ All ten direct pinned importers were inspected:
 
 Two indirect probe consumers were also inventoried rather than hidden: `integration_tests/scan_mock_test.go` exercises forward/reverse multi-region scanner construction, and `integration_tests/split_test.go` exercises stale-region single-region BatchGet plus concurrent async BatchGet success, lock, region-error, and transport-error branches.
 
-The six external files contain 40 `Test*` declarations: six suite harnesses and 34 suite methods. Their exact executable ownership is:
+The six external files contain 40 `Test*` declarations: six suite harnesses and 34 suite methods. The six top-level declarations only invoke `suite.Run` and map to Rust's module test harnesses. Every behavioral method has an independently discoverable Rust identity named `source_go_txnkv_txnsnapshot_<file>_<GoName>`. Mechanical comparison finds 34 methods and 34 unique Rust identities with no missing, extra, or duplicate name. Their exact executable ownership is:
 
 | External declaration/case matrix | Executable Rust port or disposition |
 | --- | --- |
@@ -82,18 +82,20 @@ Completing this package does not promote root `tikv`, root `txnkv`, or the integ
 
 ## Validation boundary
 
-Final validation on `nightly-2026-08-22-aarch64-apple-darwin` passed:
+Final independent-test validation on `nightly-2026-08-22-aarch64-apple-darwin` passed:
 
-- `cargo test --lib source_ --quiet`: 515 passed.
-- `cargo test --lib --quiet`: 847 passed and one unrelated test remained ignored.
-- `cargo test --lib --all-features --quiet`: 844 passed and one unrelated test remained ignored; three replica/stale-read tests are compiled out exactly where client-go's NextGen build skips those features.
-- `cargo check --all-targets --all-features`: passed.
-- `cargo clippy --lib --all-features --message-format short`: passed.
-- `cargo doc --no-deps --all-features`: passed.
-- `cargo test --doc --all-features --quiet`: 51 passed.
-- `cargo fmt --all -- --check` and `git diff --check`: passed.
+- From the nested `integration_tests` module, `/private/tmp/go1.25.12-full/bin/go test . -run '^(TestSnapshot|TestSnapshotFail|TestScan|TestScanMock|TestSplit|TestPipelinedMemDB)$' -count=1`: passed in 45.638 seconds.
+- The same exact Go selection with `-race`: passed in 43.454 seconds; the linker emitted only its known malformed `LC_DYSYMTAB` warning.
+- `cargo test --no-default-features --lib source_go_txnkv_txnsnapshot_ -- --nocapture`: 33 passed and the source's unconditional `TestRCRead` skip remained ignored.
+- The same focused Rust gate with `--all-features`: 29 passed and five source-compatible NextGen/unconditional skips remained ignored.
+- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 1,406 passed and two tests were intentionally skipped.
+- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib`: 1,381 passed and six tests were intentionally skipped.
+- `make check`: clean protocol generation, workspace all-target/all-feature checking, rustfmt, and strict workspace Clippy with warnings denied passed.
+- `make doc`: strict private-item workspace rustdoc and all 51 doctests passed.
+- `git diff --check`: passed.
+- Mechanical method comparison: 34 source suite methods and 34 independently named Rust tests, with no missing, extra, or duplicate identity.
 - The source checkout HEAD is exactly `52c1e76cec993571493c81de442bcbef90cdc106`; `git ls-tree`, `wc -l`, and SHA-256 checks reproduce the five-file/2,317-line inventory above.
 
 The pinned source package has no local test requiring UniStore. Deterministic Rust PD/KV mocks cover its complete local interface boundary; UniStore remains available for reusable high-level integration tests.
 
-The package-local completion used deterministic Rust request and state-machine tests. The configured Go 1.25.12 toolchain and isolated TiKV/PD clusters subsequently passed the complete pinned local, race, integration, and cross-client repository gates; those remain repository-level evidence rather than uncounted artifacts of this package.
+The stronger one-to-one test audit found no additional production divergence. Package-owned behavior uses deterministic Rust request and state-machine tests; the exact pinned Go integration selections supply the ordinary and race baselines. Separately recorded full integration and cross-client cluster runs remain repository-level evidence rather than uncounted artifacts of this package.

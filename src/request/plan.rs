@@ -5254,4 +5254,23 @@ mod test {
         source_go_replica_selector_TestTiKVClientReadTimeout =>
             source_configurable_read_timeout_is_below_read_timeout_short,
     }
+
+    macro_rules! source_go_txnkv_txnsnapshot_tests {
+        ($($name:ident => $target:ident),+ $(,)?) => {
+            $(
+                #[test]
+                #[allow(non_snake_case)]
+                fn $name() {
+                    $target();
+                }
+            )+
+        };
+    }
+
+    source_go_txnkv_txnsnapshot_tests! {
+        source_go_txnkv_txnsnapshot_split_test_TestSplitBatchGet
+            => source_multi_region_retry_reshards_terminal_region_errors,
+        source_go_txnkv_txnsnapshot_split_test_TestStaleEpoch
+            => source_epoch_not_match_installs_replacements_from_responding_store,
+    }
 }

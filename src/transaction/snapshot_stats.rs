@@ -1227,4 +1227,13 @@ mod tests {
             assert_eq!(format_duration(duration), expected);
         }
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotRuntimeStats() {
+        clone_and_merge_preserve_independent_rpc_totals();
+        display_matches_client_go_runtime_stat_format();
+        read_pool_details_merge_clone_and_format_like_client_go();
+        duration_formatting_matches_client_go_precision_rules();
+    }
 }

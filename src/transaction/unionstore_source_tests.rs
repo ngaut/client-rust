@@ -2049,3 +2049,28 @@ fn source_benchmark_mem_buffer_set_get_long_key_contract() {
     }
     check_both_buffers!(check);
 }
+
+macro_rules! source_go_txnkv_txnsnapshot_tests {
+    ($($name:ident => $target:ident),+ $(,)?) => {
+        $(
+            #[test]
+            #[allow(non_snake_case)]
+            fn $name() {
+                $target();
+            }
+        )+
+    };
+}
+
+source_go_txnkv_txnsnapshot_tests! {
+    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedAndFlush
+        => source_test_pipelined_flush_trigger,
+    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedMemDBBufferGet
+        => source_test_pipelined_flush_get,
+    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedFlushBlock
+        => source_test_pipelined_flush_block,
+    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedSkipFlushedLock
+        => source_test_pipelined_flush_skip,
+    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedPrefetch
+        => source_test_mem_buffer_batch_get_cache,
+}
