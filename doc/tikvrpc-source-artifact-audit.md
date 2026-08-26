@@ -1,6 +1,6 @@
 # `tikvrpc` source-artifact audit
 
-This is the atomic completion receipt for client-go package `tikvrpc` at commit `52c1e76cec993571493c81de442bcbef90cdc106`. The child directory `tikvrpc/interceptor` is a separate Go package with its own completed receipt and is not folded into this inventory.
+This is the independently re-audited atomic completion receipt for client-go package `tikvrpc` at commit `52c1e76cec993571493c81de442bcbef90cdc106`. The 2026-08-26 re-audit reran the exact Go normal/race suite, replayed every source assertion, and gives all five ordinary tests independently selectable Rust identities. The child directory `tikvrpc/interceptor` is a separate Go package with its own completed receipt and is not folded into this inventory.
 
 ## Complete source inventory
 
@@ -54,14 +54,18 @@ The broader generated-protocol root remains a repository-level final gate; this 
 
 ## Original test mapping
 
-| Source test | Rust evidence |
+Every ordinary source test has one identity named `source_go_tikvrpc_<Go-name>`:
+
+| Source test | Independently executed Rust body |
 | --- | --- |
-| `TestBatchResponse` | `batch_command_response_decoding_preserves_oneof_and_unknown_error` verifies a nil oneof returns `Unknown command response`. |
-| `TestDefaultRequestOrigin` | `source_default_request_origin_fills_only_unknown_contexts` covers constructor-equivalent batch wiring, all four source regression request types, explicit-origin precedence, and atomic reset. |
-| `TestAttachContextSetsRequestContext` | `source_attach_context_replaces_the_owned_request_snapshot` covers Get and LockWaitInfo replacement with region/API/keyspace metadata; `source_generated_attach_context_matrix_is_complete` covers the whole generated registry. |
-| `TestTiDB51921` | `source_tidb_51921_batch_snapshots_encode_after_relocation` publishes every source-batchable owned snapshot, relocates the original, then concurrently Prost-encodes all 29 snapshots. Rust's borrow/ownership rules make the original mutable-pointer race unrepresentable. |
-| `TestCopStreamResponseRecvBypass` | `source_cop_stream_ru_v2_counts_only_the_first_received_rpc` covers charged and bypass branches, one-time count consumption, unchanged server details, accumulation, and drain behavior. Real loopback eager-first-receive and close behavior is covered in `src/store/client.rs`. |
+| `TestBatchResponse` | `batch_command_response_decoding_preserves_oneof_and_unknown_error` verifies the nil-oneof `Unknown command response` error; typed `Result` makes a simultaneous non-nil response impossible. |
+| `TestDefaultRequestOrigin` | `source_default_request_origin_fills_only_unknown_contexts` covers getter/setter state, context and batch construction, all four source regression request types, explicit-origin precedence, and atomic reset. |
+| `TestAttachContextSetsRequestContext` | `source_attach_context_replaces_the_owned_request_snapshot` covers Get and LockWaitInfo replacement with both source region IDs, API versions, keyspace IDs, and keyspace names; `source_generated_attach_context_matrix_is_complete` separately covers the generated registry. |
+| `TestTiDB51921` | `source_tidb_51921_batch_snapshots_encode_after_relocation` uses the exact 42-request source inventory, including Cop and CopStream and excluding LockWaitInfo, publishes every source-batchable owned snapshot, relocates the original, then concurrently Prost-encodes all 29 snapshots. |
+| `TestCopStreamResponseRecvBypass` | `assert_source_test_cop_stream_response_recv_bypass` covers charged and bypass branches, cache miss, Get/BatchGet counters, one-time RPC count consumption, exact response preservation, weighted RU, first drain, and empty second drain. The existing two-response test separately proves one-time counting across a stream. |
 | `TestMain` | The package creates no permanent timeout scanner. Stream values, batch workers, connections, and mock servers all have explicit close/drop owners; completed `internal/client` loopback shutdown, cancellation, panic-recovery, and force-stop tests provide leak evidence. |
+
+The older evidence omitted keyspace-ID/API assertions from the context replacement test, substituted `GetLockWaitInfoRequest` for the source's `CopStream` entry in the TiDB #51921 request inventory, and did not independently check the charged stream's cache-miss/BatchGet fields or second drain. The stronger ports restore those assertions and pass without a production change.
 
 Additional production-derived tests cover all command values/names/classifications, exact endpoint labels, 42 generated context commands plus CopStream and no-op/rejected cases, 54 dispatch routes, 22 start timestamps, 37 synthetic region-error response types, request/response sizing, all batch oneofs, streaming API-codec behavior, and typed response/address/tagger carriers.
 
@@ -76,13 +80,21 @@ All 74 Go files importing `tikvrpc` were assigned; completion of this foundation
 | Internal request plumbing | `internal/kvrpc/batch.go`; retains its independent ledger status. `internal/mockstore/mocktikv/rpc.go` remains with the concrete mock-store package. |
 | Locate/routing | `internal/locate/{metrics_collector.go,metrics_collector_test.go,region_cache.go,region_cache_test.go,region_request.go,region_request3_test.go,region_request_state_test.go,region_request_test.go,replica_selector.go,replica_selector_test.go,store_cache.go}`; now complete under its own receipt and owns selection/retry/ResponseExt integration. |
 | Resource control | `internal/resourcecontrol/{resource_control.go,resource_control_test.go}`; already complete and consumes request/response size/classification/detail surfaces. |
-| High-level raw/store | `rawkv/rawkv.go`; `tikv/{gc.go,interface.go,kv.go,kv_test.go,region.go,split_region.go,test_probe.go,test_util.go}`; their ledger rows remain non-complete. |
-| Range and lock | `txnkv/rangetask/delete_range.go` is already complete; `txnkv/txnlock/lock_resolver.go` remains non-complete. |
-| Transactions | `txnkv/transaction/{2pc.go,cleanup.go,commit.go,pessimistic.go,pipelined_flush.go,prewrite.go,test_probe.go,test_util.go,txn.go,txn_file.go,txn_file_test.go,txn_test.go}`; the package remains non-complete and owns tagger/transaction algorithms. |
-| Snapshots | `txnkv/txnsnapshot/{client_helper.go,scan.go,snapshot.go,snapshot_async.go}`; the package remains non-complete and owns async callbacks, scanners, and snapshot state. |
+| High-level raw/store | `rawkv/rawkv.go`; `tikv/{gc.go,interface.go,kv.go,kv_test.go,region.go,split_region.go,test_probe.go,test_util.go}`; their independently completed receipts retain the high-level algorithms. |
+| Range and lock | `txnkv/rangetask/delete_range.go` and `txnkv/txnlock/lock_resolver.go`; their independently completed receipts retain range and lock-resolution behavior. |
+| Transactions | `txnkv/transaction/{2pc.go,cleanup.go,commit.go,pessimistic.go,pipelined_flush.go,prewrite.go,test_probe.go,test_util.go,txn.go,txn_file.go,txn_file_test.go,txn_test.go}`; the independently completed transaction receipt owns tagger/transaction algorithms. |
+| Snapshots | `txnkv/txnsnapshot/{client_helper.go,scan.go,snapshot.go,snapshot_async.go}`; the independently completed snapshot receipt owns async callbacks, scanners, and snapshot state. |
 | Interceptor child package | `tikvrpc/interceptor/{interceptor.go,interceptor_test.go}`; already complete under its separate package receipt. |
 | Repository integration tests | `integration_tests/{2pc_test.go,async_commit_test.go,client_fp_test.go,health_feedback_test.go,interceptor_test.go,lock_test.go,pd_api_test.go,pipelined_memdb_test.go,prewrite_test.go,resource_group_test.go,resource_tag_test.go,snapshot_fail_test.go,snapshot_test.go,store_test.go,txn_file_test.go}`; retained by the final repository integration gate and their owning high-level packages. |
 
 ## Validation boundary
 
-Package behavior is deterministic or already exercised through the completed loopback transport and locate packages. No live TiKV/PD cluster is required for this receipt. The configured Go 1.25.12 toolchain subsequently passed the complete pinned local and race suites. Raw, snapshot, transaction, and high-level `tikv` retain their separate completed receipts and repository live-cluster evidence.
+Package behavior is deterministic or already exercised through the completed loopback transport and locate packages. No live TiKV/PD cluster is required for this receipt. Raw, snapshot, transaction, and high-level `tikv` retain their separate completed receipts and repository live-cluster evidence.
+
+Independent re-audit evidence on 2026-08-26:
+
+- source identity is exactly `52c1e76cec993571493c81de442bcbef90cdc106`; all six hashes and 2,624 lines match, all seven direct proto inputs are byte-identical to kvproto `059694ae4472276644613acccefa24cbc89d959f`, and all 74 consumers remain assigned;
+- Go 1.25.12 passes the package normally in 7.267s and under the race detector in 8.313s;
+- all five independently named ports pass without default features; the complete focused boundary passes 16 command/batch, 20 request/context/stream, and two endpoint tests;
+- complete main-library matrices pass 1,266/1,263 active no-default/all-feature tests plus one unrelated ignore; canonical workspace matrices pass 1,340/1,319 tests plus one unrelated skip in each configuration;
+- `make check` completes clean protocol generation, workspace all-target/all-feature checking, rustfmt, and strict Clippy; `make doc` completes private-item rustdoc and all 51 doctests; final formatting, source/protocol identity, inventory/declaration/consumer, and whitespace gates pass on `nightly-2026-08-22-aarch64-apple-darwin`.

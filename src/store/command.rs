@@ -1346,4 +1346,10 @@ mod tests {
             5_000
         );
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_tikvrpc_TestBatchResponse() {
+        batch_command_response_decoding_preserves_oneof_and_unknown_error();
+    }
 }

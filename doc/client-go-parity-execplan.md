@@ -1326,3 +1326,19 @@ generation, all-target checking, strict Clippy/private rustdoc, all 51
 doctests, formatting, exact inventory/declaration/consumer reconciliation,
 source identity, and whitespace gates pass. This receipt is the package-sized
 integration boundary.
+
+Plan revision note (2026-08-26): independently reopened `tikvrpc` against its
+exact six-artifact/2,624-line boundary, seven direct byte-identical protocol
+inputs, five ordinary tests, `TestMain`, every production surface, and all 74
+consumers. Each ordinary Go test now has an independently selectable Rust
+identity. The assertion audit restored both keyspace IDs/API fields in context
+replacement, replaced the accidental LockWaitInfo substitution with the
+source's CopStream entry in the exact 42-request TiDB #51921 inventory, and
+added the charged cache-miss/BatchGet plus second-drain RU checks. All stronger
+tests pass without a production change. Exact Go normal/race suites pass.
+Final pinned-nightly gates pass 38 focused tests, 1,266/1,263 active
+main-library tests plus one unrelated ignore, and 1,340/1,319 canonical
+workspace tests plus one unrelated skip. Clean generation, all-target
+checking, strict Clippy/private rustdoc, all 51 doctests, formatting, exact
+source/protocol/declaration/consumer reconciliation, and whitespace checks
+pass. This receipt is the package-sized integration boundary.
