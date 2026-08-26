@@ -1364,3 +1364,21 @@ tests in both feature configurations, 1,410 no-default workspace tests, 1,385
 all-feature library tests, strict workspace check/Clippy/private rustdoc, 51
 doctests, rustfmt, exact inventory/declaration/consumer reconciliation, and
 whitespace checks.
+
+Plan revision note (2026-08-26): independently reopened `util/collectors`
+against its exact two-artifact/1,189-line package boundary, six ordinary tests,
+external grpc-go v1.82.1 generated dependency, every production surface, and
+the no-benchmark/example/variant/direct-importer dispositions. Each Go test now
+has an exact source-file-qualified Rust identity, and its complete populated
+fixture is retained rather than only the subset directly sampled by source
+assertions. The production comparison found delayed concurrent publication of
+fetch failures: Rust kept per-walk counts until the entire graph walk returned,
+while client-go increments shared atomics at each failed RPC. An overlapping
+scrape regression was red at one visible `GetChannel` failure instead of two;
+shared immediate counters now make both failures visible before the first walk
+finishes. Exact Go 1.25.12 normal/race suites pass. Final pinned-nightly gates
+pass all eight focused tests in both configurations, 1,411 no-default workspace
+tests, 1,386 all-feature library tests, strict clean-generation/check/Clippy,
+private rustdoc, all 51 doctests, rustfmt, exact inventory/declaration/importer
+reconciliation, source identity, and whitespace checks. This receipt is the
+package-sized integration boundary.
