@@ -5725,6 +5725,16 @@ impl Default for TransactionOptions {
 }
 
 impl TransactionOptions {
+    pub(crate) fn with_config_commit_defaults(
+        mut self,
+        enable_async_commit: bool,
+        enable_one_pc: bool,
+    ) -> Self {
+        self.async_commit |= enable_async_commit;
+        self.try_one_pc |= enable_one_pc;
+        self
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
         if !self.pipelined.enable {
             return Ok(());
@@ -9145,6 +9155,26 @@ mod tests {
     use crate::ResourceGroupController;
     use crate::ResponseWaitResult;
     use crate::Value;
+
+    #[test]
+    fn source_config_commit_defaults_apply_without_disabling_explicit_options() {
+        let configured =
+            TransactionOptions::new_optimistic().with_config_commit_defaults(true, true);
+        assert!(configured.async_commit);
+        assert!(configured.try_one_pc);
+
+        let explicit = TransactionOptions::new_optimistic()
+            .use_async_commit()
+            .try_one_pc()
+            .with_config_commit_defaults(false, false);
+        assert!(explicit.async_commit);
+        assert!(explicit.try_one_pc);
+
+        let disabled =
+            TransactionOptions::new_optimistic().with_config_commit_defaults(false, false);
+        assert!(!disabled.async_commit);
+        assert!(!disabled.try_one_pc);
+    }
 
     #[test]
     fn source_request_source_encoding_and_internal_detection() {

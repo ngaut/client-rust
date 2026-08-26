@@ -8,7 +8,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 
 | Go package | Initial Rust owner | Status | Receipt / dependency note |
 | --- | --- | --- | --- |
-| `config` | `src/config.rs`, `src/config/client_go.rs`, client constructors | complete | Receipt below; all defaults, nested sections, validation, global snapshot/restore, path parsing, TLS material behavior, RU-v2 accounting, and both `nextgen` build selections are covered. |
+| `config` | `src/config.rs`, `src/config/client_go.rs`, client constructors | complete | Re-audited atomic receipt: [`config-source-artifact-audit.md`](config-source-artifact-audit.md). All ten top-level artifacts/1,141 lines, every production surface, all seven ordinary tests plus `TestMain`, both build variants, and 68 direct importers are assigned. Differential fixes cover `net/url` malformed-pair/fragment/opaque/authority behavior, Go duration saturation, reusable global restore, and previously dormant async-commit/1PC transaction defaults. The child package `config/retry` retains its own receipt. |
 | `config/retry` | `src/retry.rs`, `src/async_util.rs`, `src/kv/variables.rs`, `src/request/plan.rs`, `src/stats.rs` | complete | Complete package receipt below and full artifact/symbol/test/consumer mapping in [`config-retry-source-artifact-audit.md`](config-retry-source-artifact-audit.md). Both production files, the original test file, goleak harness, all 17 retry classes, every state/error/cancellation/fork branch, native context/error decisions, metrics/runtime-stat boundaries, and validation gates are accounted for. Each unfinished caller loop remains explicitly owned by its own package row. |
 | `error` | `src/error.rs`, `src/common/errors.rs`, `src/stats.rs` | complete | Receipt below; every singleton and typed wrapper, predicates, constructors, extraction precedence/failpoint/redaction, protobuf text/debug JSON, logging, and write-conflict metric side effect are covered. |
 | `internal/apicodec` | `src/{common/errors,request/keyspace,request/mod,request/plan_builder,store/request,raw/client,raw/requests,transaction/{lock,requests,transaction}}.rs`, directly required proto/generated inputs | complete | Complete package receipt below and full seven-artifact/schema/symbol/test/consumer mapping in [`internal-apicodec-source-artifact-audit.md`](internal-apicodec-source-artifact-audit.md). V1/V2 byte, region, request, response, context, error, bucket, MPP/Compact, API V3 rejection, typed decode-error, and exact unsupported-command behavior are covered. Each high-level routing/raw/transaction consumer retains its own package status. |
@@ -896,44 +896,7 @@ No real-cluster test applies to this deterministic taxonomy/transformation packa
 
 ## Complete package receipt: `config`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete production inventory is `config/client.go` (300 lines), `config/config.go` (229 lines), build-selected `config/nextgen_off.go` and `config/nextgen_on.go` (20 lines each), `config/ruv2.go` (66 lines), and `config/security.go` (106 lines). Behavioral/support inventory is `config/config_test.go` (172 lines), `config/ruv2_test.go` (81 lines), `config/security_test.go` (120 lines), and the goleak harness `config/main_test.go` (27 lines). There is no `doc.go`, generated source/input, package-specific build file, or source fixture. The native TLS validation test creates an ephemeral self-signed certificate/key pair at runtime, avoiding a checked-in private key while retaining successful client-material coverage.
-
-Rust implementation is the public `src/config.rs` module plus `src/config/client_go.rs`. The established native `Config` remains non-exhaustive and retains its Rust transport timeout, decoding-size, path, and keyspace builders while adding every source section and field. `Default` implements all source constructors: top-level, PD, TiKV, async-commit, coprocessor-cache, RU-v2, pessimistic-transaction, security, and disabled local-latch values. Validation preserves source order, boundaries, and text for PD timeout, local latches, connection count, compression, keepalive, and transaction-file chunk/concurrency limits. Go's signed duration domain maps to non-negative `std::time::Duration`; invalid negative source configuration is excluded by the native type boundary. Existing kebab-case serde compatibility is retained, while source-hidden local-latch and coprocessor admission fields remain excluded.
-
-Global configuration uses an atomically lock-protected `Arc<Config>` snapshot. `get_global_config`, `store_global_config`, and `update_global` preserve independent copy/update and exact-pointer restore behavior; the scope helper applies the failpoint override and global fallback. URI parsing preserves case-insensitive `tikv`, comma-separated authorities, user-info exclusion, first query value, form decoding, fragments, and both source error classes. The two Go build files map to Cargo's explicit `nextgen` feature and `NEXT_GEN` constant, validated in both feature states.
-
-`Security::to_tls_config` validates a CA pool, supports CA-only operation, pre-validates a present certificate/key pair including mismatch, and returns the existing native `SecurityManager`. `src/common/security.rs` now supports optional client identity and reloads configured files for each connection, preserving client-go's callback reload behavior; `src/pd/client.rs` consumes either the source-style security section or the pre-existing Rust builder fields. The source's client-side TLS use has no server-certificate callback counterpart in client-rust, so Go's duplicate server-side `GetCertificate` assignment is non-applicable rather than emulated.
-
-RU-v2 weights and `update_tikv_ru_v2_from_exec_details_v2` preserve nil/absent early returns, wrapping RPC-count patching, all seven executor-input counters, raw-counter accumulation/drain, and scaled TiKV RU calculation. `src/util/ru.rs` supplies the concurrent native accumulator needed by this function; that is an explicit integration slice and does not complete the broader `util` package. Generated protobufs were already present and unchanged. All source importers were inventoried across transport, routing, resource control, raw/tikv clients, transaction locking/file/commit, snapshots, examples, and integration tests. Their use of configuration values remains an integration gate on each owning ledger row; this package receipt claims the complete configuration definitions and algorithms, not those consumers.
-
-The six original behavioral tests are transcreated as six focused Rust tests, with additional assertions for every default and validation branch, malformed/duplicate/encoded paths, global restore identity, failpoint fallback, CA-only and invalid TLS material, both build selections, and exact raw/scaled RU values. Rust's global lock and TLS manager create no persistent task, so the Go goleak harness has no native background worker to monitor.
-
-Validation on Rust 1.93.0:
-
-    cargo test config::client_go::tests --all-features --quiet
-    # 6 passed; 0 failed
-
-    cargo test config::client_go::tests --no-default-features --quiet
-    # 6 passed; 0 failed
-
-    cargo test --lib --all-features --quiet
-    # 140 passed; 0 failed
-
-    cargo test --doc --all-features --quiet
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster test applies to the package-owned deterministic defaults, validation, parsing, build selection, or RU arithmetic. Actual TLS handshakes, forwarding, batching, and region refresh are covered by the completed `internal/client`, `internal/locate`, and `tikvrpc` receipts; transaction-file operation and its high-level RU collection remain on transaction consumer rows. The host has no Go toolchain, so the original Go tests and goleak harness could not run locally; every original assertion executes in Rust.
+The earlier six-test receipt is superseded by the 2026-08-26 atomic re-audit in [`config-source-artifact-audit.md`](config-source-artifact-audit.md). That receipt owns the immutable ten-artifact/1,141-line source inventory, all seven ordinary tests plus `TestMain`, both build variants, all 68 direct importers, exact Go 1.25.12 execution, differential URL/duration evidence, the reusable global restore correction, and config-driven async-commit/1PC integration. Its final pinned-nightly validation counts are authoritative.
 
 ## Complete package receipt: `oracle/oracles`
 

@@ -94,6 +94,8 @@ pub struct Client {
     latches: Option<Arc<LatchesScheduler>>,
     lock_resolver_context: ResolveLocksContext,
     enable_async_batch_get: bool,
+    enable_async_commit: bool,
+    enable_one_pc: bool,
 }
 
 impl Clone for Client {
@@ -106,6 +108,8 @@ impl Clone for Client {
             latches: self.latches.clone(),
             lock_resolver_context: self.lock_resolver_context.clone(),
             enable_async_batch_get: self.enable_async_batch_get,
+            enable_async_commit: self.enable_async_commit,
+            enable_one_pc: self.enable_one_pc,
         }
     }
 }
@@ -247,6 +251,8 @@ impl Client {
             latches,
             lock_resolver_context: ResolveLocksContext::default(),
             enable_async_batch_get: config.enable_async_batch_get,
+            enable_async_commit: config.enable_async_commit,
+            enable_one_pc: config.enable_1pc,
         })
     }
 
@@ -282,6 +288,8 @@ impl Client {
             latches,
             lock_resolver_context: ResolveLocksContext::default(),
             enable_async_batch_get: config.enable_async_batch_get,
+            enable_async_commit: config.enable_async_commit,
+            enable_one_pc: config.enable_1pc,
         })
     }
 
@@ -632,6 +640,8 @@ impl Client {
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
+        let options =
+            options.with_config_commit_defaults(self.enable_async_commit, self.enable_one_pc);
         let mut transaction = Transaction::new_with_latches_and_keyspace_name(
             timestamp,
             self.pd.clone(),
