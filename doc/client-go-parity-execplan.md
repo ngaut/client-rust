@@ -1460,3 +1460,21 @@ lists contain 1,040/1,035 tests. The UniStore receipt is refreshed to its actual
 six-artifact/3,893-line tree and 43 unit plus three external-consumer tests. No
 production divergence was exposed; this correction removes duplicate evidence
 and makes the package's unit-test parity claim literal.
+
+Plan correction (2026-08-26): the same integrity scan reopened
+`txnkv/txnsnapshot` after finding 16 transaction and five unionstore source
+identities generated as forwarding wrappers, plus nine handwritten evidence
+aliases. Eight called registered tests; one shared another package's scenario
+helper. All 34 behavioral methods across the six
+owning integration files now have direct, independently selectable Rust test
+bodies. The table-shaped commit-TS identity uses four private subcase helpers;
+none is a registered test or shared by another source identity. The source's
+two genuinely zero-case `rowNums` loops, unconditional RC skip, and four
+NextGen skips remain literal. Mechanical reconciliation reports 34 expected
+and 34 actual identities with zero missing, extra, duplicate, forwarding macro,
+or registered test-to-test call. Exact Go 1.25.12 suites pass normally in
+40.674s and under `-race` in 52.880s; focused Rust matrices pass 33 plus one
+skip and 29 plus five skips. Canonical matrices pass 1,275 no-default tests with
+two configured skips and 1,250 all-feature library tests with six configured
+skips. No production divergence was exposed; this correction makes the
+package's unit/integration-test receipt independently executable.

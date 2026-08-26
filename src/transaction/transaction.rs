@@ -11404,7 +11404,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_snapshot_return_commit_ts_refetches_unknown_cached_entries() {
+    #[cfg_attr(
+        feature = "nextgen",
+        ignore = "client-go skips return-commit-TS snapshot reads in NextGen"
+    )]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_test_TestGetAndBatchGetWithReturnCommitTS() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let captured_calls = Arc::clone(&calls);
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -11515,8 +11520,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn source_snapshot_return_commit_ts_rejects_unknown_nonempty_entries() {
+    fn assert_snapshot_return_commit_ts_rejects_unknown_nonempty_entries() {
         let error = ensure_snapshot_commit_ts(true, Some(&ValueEntry::new(b"value".to_vec(), 0)))
             .unwrap_err();
         assert_eq!(
@@ -11529,8 +11533,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn source_point_get_caches_value_before_missing_commit_ts_error() {
+    async fn assert_point_get_caches_value_before_missing_commit_ts_error() {
         let dispatches = Arc::new(AtomicUsize::new(0));
         let captured_dispatches = Arc::clone(&dispatches);
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -11566,8 +11569,7 @@ mod tests {
         assert_eq!(dispatches.load(Ordering::SeqCst), 1);
     }
 
-    #[tokio::test]
-    async fn source_batch_get_does_not_cache_a_missing_commit_ts_response() {
+    async fn assert_batch_get_does_not_cache_a_missing_commit_ts_response() {
         let dispatches = Arc::new(AtomicUsize::new(0));
         let captured_dispatches = Arc::clone(&dispatches);
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -11614,7 +11616,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_snapshot_timestamp_reset_discards_cached_reads() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestResetSnapshotTS() {
         let dispatches = Arc::new(AtomicUsize::new(0));
         let captured_dispatches = Arc::clone(&dispatches);
         let versions = Arc::new(Mutex::new(Vec::new()));
@@ -11692,7 +11695,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_max_timestamp_snapshot_never_caches_an_ordinary_transaction_wrapper() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotCacheBypassMaxUint64() {
         let dispatches = Arc::new(AtomicUsize::new(0));
         let captured_dispatches = Arc::clone(&dispatches);
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -11791,7 +11795,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_external_snapshot_thread_safe_workload_uses_native_shared_ownership() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotThreadSafe() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<crate::Snapshot<MockPdClient>>();
 
@@ -11876,7 +11881,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_max_timestamp_point_get_omits_locks_after_the_first_transaction() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestRetryMaxTsPointGetSkipLock() {
         let get_attempts = Arc::new(AtomicUsize::new(0));
         let status_checks = Arc::new(AtomicUsize::new(0));
         let captured_get_attempts = Arc::clone(&get_attempts);
@@ -11936,6 +11942,117 @@ mod tests {
         );
         assert_eq!(get_attempts.load(Ordering::SeqCst), 3);
         assert_eq!(status_checks.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_test_TestPointGetSkipTxnLock() {
+        let get_attempts = Arc::new(AtomicUsize::new(0));
+        let status_checks = Arc::new(AtomicUsize::new(0));
+        let captured_get_attempts = Arc::clone(&get_attempts);
+        let captured_status_checks = Arc::clone(&status_checks);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    if captured_get_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                        assert!(request.context.as_ref().unwrap().committed_locks.is_empty());
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: b"secondary".to_vec(),
+                                    primary_lock: b"primary".to_vec(),
+                                    lock_version: 1,
+                                    lock_ttl: 3_000,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    assert_eq!(request.context.as_ref().unwrap().committed_locks, [1]);
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        value: b"y".to_vec(),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    captured_status_checks.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(request.lock_ts, 1);
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected point-get lock-skip request");
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(u64::MAX),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        assert_eq!(
+            transaction.get(b"secondary".to_vec()).await.unwrap(),
+            Some(b"y".to_vec())
+        );
+        assert_eq!(get_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(status_checks.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestRetryPointGetResolveTS() {
+        let get_attempts = Arc::new(AtomicUsize::new(0));
+        let captured_get_attempts = Arc::clone(&get_attempts);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    if captured_get_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: b"k2".to_vec(),
+                                    primary_lock: b"k1".to_vec(),
+                                    lock_version: 5,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    assert_eq!(request.context.as_ref().unwrap().committed_locks, [5]);
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        value: b"v2".to_vec(),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    assert_eq!(request.lock_ts, 5);
+                    assert_eq!(request.caller_start_ts, u64::MAX);
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 6,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected resolve-TS point-get request");
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(u64::MAX),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        assert_eq!(
+            transaction.get(b"k2".to_vec()).await.unwrap(),
+            Some(b"v2".to_vec())
+        );
+        assert_eq!(get_attempts.load(Ordering::SeqCst), 2);
     }
 
     #[cfg(not(feature = "nextgen"))]
@@ -12070,7 +12187,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_external_batch_get_response_error_retries_the_complete_key_set() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestBatchGetResponseKeyError() {
         let attempts = Arc::new(Mutex::new(Vec::<Vec<Vec<u8>>>::new()));
         let captured_attempts = Arc::clone(&attempts);
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -12149,7 +12267,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_async_batch_get_switch_defaults_off_then_counts_each_initial_shard() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_split_test_TestBatchGetUsingAsyncAPI() {
         let mut first_region = MockPdClient::region1();
         first_region.region.start_key.clear();
         first_region.region.end_key = b"m".to_vec();
@@ -12222,7 +12341,8 @@ mod tests {
 
     #[cfg(not(feature = "nextgen"))]
     #[tokio::test]
-    async fn source_batch_get_replica_adjuster_receives_each_region_batch_size() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_test_TestReplicaReadAdjuster() {
         let mut first_region = MockPdClient::region1();
         first_region.region.start_key.clear();
         first_region.region.end_key = b"m".to_vec();
@@ -12264,6 +12384,12 @@ mod tests {
         adjustment_counts.sort_unstable();
         assert_eq!(adjustment_counts, [1, 1]);
     }
+
+    #[cfg(feature = "nextgen")]
+    #[tokio::test]
+    #[ignore = "client-go skips replica-read adjustment in NextGen"]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_test_TestReplicaReadAdjuster() {}
 
     #[tokio::test]
     async fn source_snapshot_batch_get_caches_missing_keys() {
@@ -12539,7 +12665,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_external_scan_suite_covers_default_batch_and_region_boundaries() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_scan_test_TestScan() {
         fn key(index: usize) -> Vec<u8> {
             format!("k{index:04}").into_bytes()
         }
@@ -12659,6 +12786,117 @@ mod tests {
                 assert_eq!(pair.value(), index.to_string().as_bytes());
             }
         }
+    }
+
+    fn source_alphabet_snapshot() -> crate::Snapshot<MockPdClient> {
+        let client = MockKvClient::with_dispatch_hook(|request: &dyn Any| {
+            let request = request
+                .downcast_ref::<kvrpcpb::ScanRequest>()
+                .expect("alphabet fixture only dispatches ScanRequest");
+            let mut pairs = (b'a'..=b'z')
+                .filter_map(|character| {
+                    let key = vec![character];
+                    let in_range = if request.reverse {
+                        key < request.start_key
+                            && (request.end_key.is_empty() || key >= request.end_key)
+                    } else {
+                        key >= request.start_key
+                            && (request.end_key.is_empty() || key < request.end_key)
+                    };
+                    in_range.then(|| kvrpcpb::KvPair {
+                        key,
+                        value: vec![character],
+                        ..Default::default()
+                    })
+                })
+                .collect::<Vec<_>>();
+            if request.reverse {
+                pairs.reverse();
+            }
+            pairs.truncate(request.limit as usize);
+            Ok(Box::new(kvrpcpb::ScanResponse {
+                pairs,
+                ..Default::default()
+            }) as Box<dyn Any>)
+        });
+        let mut first = MockPdClient::region1();
+        first.region.start_key.clear();
+        first.region.end_key = b"m".to_vec();
+        let mut second = MockPdClient::region2();
+        second.region.start_key = b"m".to_vec();
+        second.region.end_key.clear();
+        let transaction = Transaction::new(
+            Timestamp::from_version(1),
+            Arc::new(MockPdClient::with_client_and_regions(
+                client,
+                vec![first, second],
+            )),
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        let mut snapshot = crate::Snapshot::new(transaction);
+        snapshot.set_scan_batch_size(10);
+        snapshot
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_scan_mock_test_TestScanMultipleRegions() {
+        let mut snapshot = source_alphabet_snapshot();
+        let pairs = snapshot
+            .scan(b"a".to_vec()..Vec::<u8>::new(), 26)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pairs,
+            (b'a'..=b'z')
+                .map(|character| KvPair(vec![character].into(), vec![character]))
+                .collect::<Vec<_>>()
+        );
+
+        let pairs = snapshot
+            .scan(b"a".to_vec()..b"i".to_vec(), 26)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pairs,
+            (b'a'..b'i')
+                .map(|character| KvPair(vec![character].into(), vec![character]))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_scan_mock_test_TestReverseScan() {
+        let mut snapshot = source_alphabet_snapshot();
+        let pairs = snapshot
+            .scan_reverse(Vec::<u8>::new()..b"z".to_vec(), 26)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pairs,
+            (b'a'..b'z')
+                .rev()
+                .map(|character| KvPair(vec![character].into(), vec![character]))
+                .collect::<Vec<_>>()
+        );
+
+        let pairs = snapshot
+            .scan_reverse(b"a".to_vec()..b"i".to_vec(), 26)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pairs,
+            (b'a'..b'i')
+                .rev()
+                .map(|character| KvPair(vec![character].into(), vec![character]))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]
@@ -13017,7 +13255,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_snapshot_scanner_retries_incomplete_response_after_top_level_lock() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestScanResponseKeyError() {
         let scan_attempts = Arc::new(AtomicUsize::new(0));
         let captured_attempts = Arc::clone(&scan_attempts);
         let resolve_requests = Arc::new(AtomicUsize::new(0));
@@ -13999,8 +14238,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
-    #[tokio::test]
-    async fn source_snapshot_buffer_batch_get_requires_pipelined_mode() {
+    async fn assert_snapshot_buffer_batch_get_requires_pipelined_mode() {
         let dispatches = Arc::new(AtomicUsize::new(0));
         let captured_dispatches = Arc::clone(&dispatches);
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -16898,7 +17136,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_pipelined_flush_owns_resolving_lock_observer_until_retry_finishes() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestResolveLockRace() {
         let status_sent = Arc::new(tokio::sync::Notify::new());
         let status_sent_by_hook = status_sent.clone();
         let allow_status_finish = Arc::new(std::sync::Barrier::new(2));
@@ -16978,7 +17217,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_pipelined_rollback_cancels_a_live_flush_retry() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedRollback() {
         let status_sent = Arc::new(tokio::sync::Notify::new());
         let status_sent_by_hook = status_sent.clone();
         let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -17054,7 +17294,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_primary_flush_starts_pipelined_heartbeat_and_status_broadcast() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedCommit() {
         let heartbeats = Arc::new(Mutex::new(Vec::new()));
         let heartbeats_by_hook = heartbeats.clone();
         let statuses = Arc::new(Mutex::new(Vec::new()));
@@ -17147,7 +17388,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_any_pipelined_heartbeat_key_error_stops_later_flushes() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedDMLFailedByPKRollback() {
         let flushes = Arc::new(AtomicUsize::new(0));
         let flushes_by_hook = flushes.clone();
         let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -17211,7 +17453,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_pipelined_heartbeat_closes_after_maximum_lifetime() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedDMLFailedByPKMaxTTLExceeded(
+    ) {
         let flushes = Arc::new(AtomicUsize::new(0));
         let flushes_by_hook = flushes.clone();
         let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -19647,84 +19891,70 @@ mod tests {
         transaction_resource_control_does_not_settle_transport_failures();
     }
 
-    macro_rules! source_go_txnkv_txnsnapshot_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
-    }
-
-    source_go_txnkv_txnsnapshot_tests! {
-        source_go_txnkv_txnsnapshot_snapshot_test_TestPointGetSkipTxnLock
-            => source_max_timestamp_point_get_omits_locks_after_the_first_transaction,
-        source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotThreadSafe
-            => source_external_snapshot_thread_safe_workload_uses_native_shared_ownership,
-        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestBatchGetResponseKeyError
-            => source_external_batch_get_response_error_retries_the_complete_key_set,
-        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestScanResponseKeyError
-            => source_snapshot_scanner_retries_incomplete_response_after_top_level_lock,
-        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestRetryMaxTsPointGetSkipLock
-            => source_max_timestamp_point_get_omits_locks_after_the_first_transaction,
-        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestRetryPointGetResolveTS
-            => source_max_timestamp_point_get_omits_locks_after_the_first_transaction,
-        source_go_txnkv_txnsnapshot_snapshot_fail_test_TestResetSnapshotTS
-            => source_snapshot_timestamp_reset_discards_cached_reads,
-        source_go_txnkv_txnsnapshot_scan_test_TestScan
-            => source_external_scan_suite_covers_default_batch_and_region_boundaries,
-        source_go_txnkv_txnsnapshot_scan_mock_test_TestScanMultipleRegions
-            => source_external_scan_suite_covers_default_batch_and_region_boundaries,
-        source_go_txnkv_txnsnapshot_scan_mock_test_TestReverseScan
-            => source_external_scan_suite_covers_default_batch_and_region_boundaries,
-        source_go_txnkv_txnsnapshot_split_test_TestBatchGetUsingAsyncAPI
-            => source_async_batch_get_switch_defaults_off_then_counts_each_initial_shard,
-        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestResolveLockRace
-            => source_pipelined_flush_owns_resolving_lock_observer_until_retry_finishes,
-        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedCommit
-            => source_primary_flush_starts_pipelined_heartbeat_and_status_broadcast,
-        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedRollback
-            => source_pipelined_rollback_cancels_a_live_flush_retry,
-        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedDMLFailedByPKRollback
-            => source_any_pipelined_heartbeat_key_error_stops_later_flushes,
-        source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedDMLFailedByPKMaxTTLExceeded
-            => source_pipelined_heartbeat_closes_after_maximum_lifetime,
-    }
-
     #[test]
     #[allow(non_snake_case)]
     fn source_go_txnkv_txnsnapshot_snapshot_test_TestBatchGet() {
+        // The pinned source declares rowNums but never populates it, so its
+        // loop has no cases. BatchGet behavior is covered by the direct tests
+        // above and by the split-suite identities.
         let row_nums: [usize; 0] = [];
         assert!(row_nums.is_empty());
-    }
-
-    #[test]
-    #[cfg_attr(
-        feature = "nextgen",
-        ignore = "client-go skips return-commit-TS snapshot reads in NextGen"
-    )]
-    #[allow(non_snake_case)]
-    fn source_go_txnkv_txnsnapshot_snapshot_test_TestGetAndBatchGetWithReturnCommitTS() {
-        #[cfg(not(feature = "nextgen"))]
-        source_snapshot_return_commit_ts_refetches_unknown_cached_entries();
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn source_go_txnkv_txnsnapshot_snapshot_test_TestBatchGetNotExist() {
+        // This source test uses the same unpopulated rowNums slice.
         let row_nums: [usize; 0] = [];
         assert!(row_nums.is_empty());
     }
 
-    #[test]
+    #[tokio::test]
     #[allow(non_snake_case)]
-    fn source_go_txnkv_txnsnapshot_snapshot_test_TestSkipLargeTxnLock() {
-        source_max_timestamp_point_get_omits_locks_after_the_first_transaction();
-        #[cfg(not(feature = "nextgen"))]
-        source_batch_get_retries_only_pair_locked_keys_and_keeps_clean_pairs();
+    async fn source_go_txnkv_txnsnapshot_snapshot_test_TestSkipLargeTxnLock() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let captured_attempts = Arc::clone(&attempts);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    if captured_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: request.key.clone(),
+                                    primary_lock: b"primary".to_vec(),
+                                    lock_version: 1,
+                                    txn_size: 10_000,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    assert_eq!(request.context.as_ref().unwrap().committed_locks, [1]);
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        not_found: true,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("large-lock point read must not dispatch cleanup");
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(u64::MAX),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        assert_eq!(transaction.get(b"secondary".to_vec()).await.unwrap(), None);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -19732,52 +19962,76 @@ mod tests {
     #[allow(non_snake_case)]
     fn source_go_txnkv_txnsnapshot_snapshot_test_TestRCRead() {}
 
-    #[test]
-    #[allow(non_snake_case)]
-    fn source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotCacheBypassMaxUint64() {
-        source_max_timestamp_snapshot_does_not_cache_gets();
-        source_max_timestamp_snapshot_never_caches_an_ordinary_transaction_wrapper();
-    }
-
-    #[test]
-    #[cfg_attr(
-        feature = "nextgen",
-        ignore = "client-go skips replica-read adjustment in NextGen"
-    )]
-    #[allow(non_snake_case)]
-    fn source_go_txnkv_txnsnapshot_snapshot_test_TestReplicaReadAdjuster() {
-        #[cfg(not(feature = "nextgen"))]
-        source_batch_get_replica_adjuster_receives_each_region_batch_size();
-    }
-
-    #[test]
+    #[tokio::test]
     #[cfg_attr(
         feature = "nextgen",
         ignore = "client-go skips commit-TS assertions in NextGen"
     )]
     #[allow(non_snake_case)]
-    fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestCommitTSRequiredAssertion() {
+    async fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestCommitTSRequiredAssertion() {
         #[cfg(not(feature = "nextgen"))]
         {
-            source_snapshot_return_commit_ts_refetches_unknown_cached_entries();
-            source_snapshot_return_commit_ts_rejects_unknown_nonempty_entries();
-            source_point_get_caches_value_before_missing_commit_ts_error();
-            source_batch_get_does_not_cache_a_missing_commit_ts_response();
-            source_snapshot_buffer_batch_get_requires_pipelined_mode();
+            assert_snapshot_return_commit_ts_rejects_unknown_nonempty_entries();
+            assert_point_get_caches_value_before_missing_commit_ts_error().await;
+            assert_batch_get_does_not_cache_a_missing_commit_ts_response().await;
+            assert_snapshot_buffer_batch_get_requires_pipelined_mode().await;
         }
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg_attr(
         feature = "nextgen",
         ignore = "client-go skips read-through-lock snapshot tests in NextGen"
     )]
     #[allow(non_snake_case)]
-    fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestSnapshotUseResolveForRead() {
+    async fn source_go_txnkv_txnsnapshot_snapshot_fail_test_TestSnapshotUseResolveForRead() {
         #[cfg(not(feature = "nextgen"))]
         {
-            source_max_timestamp_point_get_omits_locks_after_the_first_transaction();
-            source_batch_get_retries_only_pair_locked_keys_and_keeps_clean_pairs();
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let captured_attempts = Arc::clone(&attempts);
+            let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request: &dyn Any| {
+                    if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                        if captured_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                            return Ok(Box::new(kvrpcpb::GetResponse {
+                                error: Some(kvrpcpb::KeyError {
+                                    locked: Some(kvrpcpb::LockInfo {
+                                        key: request.key.clone(),
+                                        primary_lock: b"primary".to_vec(),
+                                        lock_version: 5,
+                                        ..Default::default()
+                                    }),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }) as Box<dyn Any>);
+                        }
+                        assert_eq!(request.context.as_ref().unwrap().committed_locks, [5]);
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            value: b"y".to_vec(),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                        return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                            commit_version: 6,
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    panic!("read-through lock must not synchronously clean the secondary");
+                },
+            )));
+            let mut transaction = Transaction::new(
+                Timestamp::from_version(u64::MAX),
+                pd_client,
+                TransactionOptions::new_optimistic().read_only(),
+                Keyspace::Disable,
+            );
+            assert_eq!(
+                transaction.get(b"secondary".to_vec()).await.unwrap(),
+                Some(b"y".to_vec())
+            );
+            assert_eq!(attempts.load(Ordering::SeqCst), 2);
         }
     }
 }

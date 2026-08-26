@@ -2097,27 +2097,179 @@ fn source_go_internal_unionstore_memdb_bench_test_BenchmarkMemBufferSetGetLongKe
     check_both_buffers!(check);
 }
 
-macro_rules! source_go_txnkv_txnsnapshot_tests {
-    ($($name:ident => $target:ident),+ $(,)?) => {
-        $(
-            #[test]
-            #[allow(non_snake_case)]
-            fn $name() {
-                $target();
-            }
-        )+
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedAndFlush() {
+    const MIN_KEYS: usize = 4;
+    let remote = Arc::new(std::sync::Mutex::new(BTreeMap::<Vec<u8>, Vec<u8>>::new()));
+    let remote_get = {
+        let remote = remote.clone();
+        Arc::new(move |keys: &[Vec<u8>]| {
+            let remote = remote.lock().unwrap();
+            Ok(keys
+                .iter()
+                .filter_map(|key| remote.get(key).map(|value| (key.clone(), value.clone())))
+                .collect())
+        })
     };
+    let flush = {
+        let remote = remote.clone();
+        Arc::new(move |_, mem: Arc<MemDb>| {
+            let mut iterator = mem.iter(None, None);
+            let mut remote = remote.lock().unwrap();
+            while iterator.valid() {
+                remote.insert(iterator.key().to_vec(), iterator.value().to_vec());
+                iterator.next().unwrap();
+            }
+            Ok(())
+        })
+    };
+    let mut db = PipelinedMemDb::new(remote_get, flush);
+    db.set_flush_thresholds(MIN_KEYS, 40, 1_000);
+    for index in 0..MIN_KEYS {
+        let key = index.to_string().into_bytes();
+        let value = vec![index as u8; 20];
+        db.set(&key, &value).unwrap();
+        assert_eq!(db.flush(false).unwrap(), index == MIN_KEYS - 1);
+        assert_eq!(db.get(&key).unwrap(), value);
+    }
+    db.flush_wait().unwrap();
+    assert_eq!(
+        db.batch_get(&(0..MIN_KEYS).map(|index| index.to_string().into_bytes()).collect::<Vec<_>>())
+            .unwrap()
+            .len(),
+        MIN_KEYS
+    );
 }
 
-source_go_txnkv_txnsnapshot_tests! {
-    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedAndFlush
-        => source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushTrigger,
-    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedMemDBBufferGet
-        => source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushGet,
-    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedFlushBlock
-        => source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushBlock,
-    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedSkipFlushedLock
-        => source_go_internal_unionstore_pipelined_memdb_test_TestPipelinedFlushSkip,
-    source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedPrefetch
-        => source_go_internal_unionstore_pipelined_memdb_test_TestMemBufferBatchGetCache,
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedMemDBBufferGet() {
+    let remote = Arc::new(std::sync::Mutex::new(BTreeMap::<Vec<u8>, Vec<u8>>::new()));
+    let remote_get = {
+        let remote = remote.clone();
+        Arc::new(move |keys: &[Vec<u8>]| {
+            let remote = remote.lock().unwrap();
+            Ok(keys
+                .iter()
+                .filter_map(|key| remote.get(key).map(|value| (key.clone(), value.clone())))
+                .collect())
+        })
+    };
+    let flush = {
+        let remote = remote.clone();
+        Arc::new(move |_, mem: Arc<MemDb>| {
+            let mut iterator = mem.iter(None, None);
+            let mut remote = remote.lock().unwrap();
+            while iterator.valid() {
+                remote.insert(iterator.key().to_vec(), iterator.value().to_vec());
+                iterator.next().unwrap();
+            }
+            Ok(())
+        })
+    };
+    let mut db = PipelinedMemDb::new(remote_get, flush);
+    for index in 0..100 {
+        let key = index.to_string().into_bytes();
+        db.set(&key, &key).unwrap();
+        assert!(db.flush(true).unwrap());
+    }
+    db.flush_wait().unwrap();
+    for index in 0..100 {
+        let key = index.to_string().into_bytes();
+        assert_eq!(db.get(&key).unwrap(), key);
+    }
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedFlushBlock() {
+    let (flush, started, release) = blocking_flush();
+    let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
+    db.set(b"key1", b"value1").unwrap();
+    assert!(db.flush(true).unwrap());
+    assert_eq!(started.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
+    db.set(b"key2", b"value2").unwrap();
+
+    let (returned_sender, returned_receiver) = mpsc::sync_channel(1);
+    std::thread::scope(|scope| {
+        let handle = scope.spawn(|| returned_sender.send(db.flush(true)).unwrap());
+        assert!(returned_receiver
+            .recv_timeout(Duration::from_millis(100))
+            .is_err());
+        release.send(()).unwrap();
+        assert_eq!(started.recv_timeout(Duration::from_secs(5)).unwrap(), 2);
+        assert!(returned_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap());
+        handle.join().unwrap();
+    });
+    release.send(()).unwrap();
+    db.flush_wait().unwrap();
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedSkipFlushedLock() {
+    let (flush, started, release) = blocking_flush();
+    let mut db = PipelinedMemDb::new(empty_remote_batch_getter(), flush);
+    db.set(b"key1", b"value1").unwrap();
+    assert!(db.flush(true).unwrap());
+    assert_eq!(started.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
+    assert_eq!(db.mem.get(b"key1"), Err(StaticError::NotExist));
+    assert_eq!(db.get_local(b"key1").unwrap(), b"value1");
+    assert_eq!(db.get(b"key1").unwrap(), b"value1");
+    release.send(()).unwrap();
+    db.flush_wait().unwrap();
+    assert_eq!(db.get(b"key1"), Err("key not found".to_owned()));
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedPrefetch() {
+    let remote = Arc::new(std::sync::Mutex::new(BTreeMap::from([(
+        b"k1".to_vec(),
+        b"v1".to_vec(),
+    )])));
+    let remote_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let remote_get = {
+        let remote = remote.clone();
+        let remote_calls = remote_calls.clone();
+        Arc::new(move |keys: &[Vec<u8>]| {
+            remote_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let remote = remote.lock().unwrap();
+            Ok(keys
+                .iter()
+                .filter_map(|key| remote.get(key).map(|value| (key.clone(), value.clone())))
+                .collect())
+        })
+    };
+    let flush = {
+        let remote = remote.clone();
+        Arc::new(move |_, mem: Arc<MemDb>| {
+            let mut iterator = mem.iter(None, None);
+            let mut remote = remote.lock().unwrap();
+            while iterator.valid() {
+                remote.insert(iterator.key().to_vec(), iterator.value().to_vec());
+                iterator.next().unwrap();
+            }
+            Ok(())
+        })
+    };
+    let mut db = PipelinedMemDb::new(remote_get, flush);
+    assert_eq!(
+        db.batch_get(&[b"k1".to_vec(), b"missing".to_vec()])
+            .unwrap(),
+        BTreeMap::from([(b"k1".to_vec(), b"v1".to_vec())])
+    );
+    assert_eq!(remote_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(db.get(b"k1").unwrap(), b"v1");
+    assert_eq!(remote_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    db.set(b"k2", b"v2").unwrap();
+    assert!(db.flush(true).unwrap());
+    db.flush_wait().unwrap();
+    assert_eq!(db.get(b"k1").unwrap(), b"v1");
+    assert!(remote_calls.load(std::sync::atomic::Ordering::SeqCst) >= 2);
 }

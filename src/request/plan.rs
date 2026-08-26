@@ -4648,7 +4648,48 @@ mod test {
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_txnkv_txnsnapshot_split_test_TestStaleEpoch() {
-        source_epoch_not_match_installs_replacements_from_responding_store().await;
+        let pd_client = Arc::new(MockPdClient::default());
+        let mut replacement = MockPdClient::region2().region;
+        replacement.id = 9;
+        replacement.region_epoch = Some(crate::proto::metapb::RegionEpoch {
+            conf_ver: 4,
+            version: 5,
+        });
+        replacement.peers = vec![crate::proto::metapb::Peer {
+            id: 7,
+            store_id: 41,
+            ..Default::default()
+        }];
+        let store = region_store().with_target_peer(replacement.peers[0].clone());
+        let mut store = store;
+        store.region_with_leader.buckets = Some(crate::proto::metapb::Buckets {
+            region_id: 1,
+            version: 3,
+            keys: vec![vec![], vec![9]],
+            ..Default::default()
+        });
+        let old_ver_id = store.region_with_leader.ver_id();
+
+        assert_eq!(
+            on_region_epoch_not_match(
+                pd_client.clone(),
+                store,
+                EpochNotMatch {
+                    current_regions: vec![replacement],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap(),
+            EpochNotMatchOutcome::Stop
+        );
+
+        let installed = pd_client.epoch_not_match_regions();
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].id(), 9);
+        assert_eq!(installed[0].leader.as_ref().map(|peer| peer.id), Some(7));
+        assert_eq!(installed[0].buckets.as_ref().unwrap().version, 3);
+        assert_eq!(pd_client.invalidated_regions(), vec![old_ver_id]);
     }
 
     #[tokio::test]

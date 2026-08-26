@@ -1663,8 +1663,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn source_snapshot_cache_observability_counts_values_and_misses() {
+    fn assert_snapshot_cache_observability_counts_values_and_misses() {
         let key: Key = b"missing".to_vec().into();
         let mut buffer = Buffer::new(false);
 
@@ -1719,8 +1718,7 @@ mod tests {
         assert_eq!(buffer.memory_footprint(), 4 + 5 + 3 + 5 + 5);
     }
 
-    #[test]
-    fn source_snapshot_cache_mutation_preserves_entries_and_cached_misses() {
+    fn assert_snapshot_cache_mutation_preserves_entries_and_cached_misses() {
         let present: Key = b"present".to_vec().into();
         let missing: Key = b"missing".to_vec().into();
         let mut buffer = Buffer::new(false);
@@ -1749,8 +1747,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn source_snapshot_cache_limit_evicts_only_entries_unneeded_by_current_fill() {
+    fn assert_snapshot_cache_limit_evicts_only_entries_unneeded_by_current_fill() {
         let old: Key = b"old".to_vec().into();
         let current: Key = b"current".to_vec().into();
         let old_value = ValueEntry::new(b"old-value".to_vec(), 1);
@@ -1801,8 +1798,7 @@ mod tests {
         assert_eq!(buffer.snapshot_cache_size_bytes, current_size);
     }
 
-    #[test]
-    fn source_snapshot_cache_replacement_and_clean_keep_go_accounting() {
+    fn assert_snapshot_cache_replacement_and_clean_keep_go_accounting() {
         let present: Key = b"present".to_vec().into();
         let absent: Key = b"absent".to_vec().into();
         let first = Some(ValueEntry::new(b"first".to_vec(), 1));
@@ -2028,9 +2024,9 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn source_go_txnkv_txnsnapshot_snapshot_test_TestSnapshotCache() {
-        source_snapshot_cache_observability_counts_values_and_misses();
-        source_snapshot_cache_mutation_preserves_entries_and_cached_misses();
-        source_snapshot_cache_limit_evicts_only_entries_unneeded_by_current_fill();
-        source_snapshot_cache_replacement_and_clean_keep_go_accounting();
+        assert_snapshot_cache_observability_counts_values_and_misses();
+        assert_snapshot_cache_mutation_preserves_entries_and_cached_misses();
+        assert_snapshot_cache_limit_evicts_only_entries_unneeded_by_current_fill();
+        assert_snapshot_cache_replacement_and_clean_keep_go_accounting();
     }
 }
