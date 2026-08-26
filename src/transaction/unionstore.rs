@@ -1187,6 +1187,18 @@ impl RbtMemDb {
         self.rbt.update_flags(key, flags);
     }
 
+    pub fn iter_with_flags(
+        &self,
+        lower: Option<&[u8]>,
+        upper: Option<&[u8]>,
+    ) -> Box<dyn KvIterator> {
+        Box::new(RbtBufferIterator(self.rbt.iter_with_flags(lower, upper)))
+    }
+
+    pub fn iter_reverse_with_flags(&self, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
+        Box::new(RbtBufferIterator(self.rbt.iter_reverse_with_flags(upper)))
+    }
+
     pub fn iter(&self, lower: Option<&[u8]>, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
         Box::new(RbtBufferIterator(self.rbt.iter(lower, upper)))
     }
@@ -1197,6 +1209,10 @@ impl RbtMemDb {
 
     pub fn staging(&mut self) -> usize {
         self.rbt.staging()
+    }
+
+    pub fn is_staging(&self) -> bool {
+        self.rbt.is_staging()
     }
 
     pub fn cleanup(&mut self, handle: usize) {
@@ -1280,6 +1296,10 @@ impl RbtMemDb {
         self.rbt.set_entry_size_limit(entry_limit, buffer_limit);
     }
 
+    pub fn entry_size_limit(&self) -> (u64, u64) {
+        self.rbt.entry_size_limit()
+    }
+
     pub fn checkpoint(&self) -> usize {
         self.rbt.checkpoint()
     }
@@ -1306,6 +1326,18 @@ impl RbtMemDb {
 
     pub fn memory_footprint(&self) -> u64 {
         self.rbt.memory_footprint()
+    }
+
+    pub fn cache_hit_count(&self) -> u64 {
+        self.rbt.cache_hit_count()
+    }
+
+    pub fn cache_miss_count(&self) -> u64 {
+        self.rbt.cache_miss_count()
+    }
+
+    pub fn discard_values(&mut self) {
+        self.rbt.discard_values();
     }
 
     pub fn reset(&mut self) {
@@ -2675,6 +2707,8 @@ mod tests {
     #[test]
     fn rbt_memdb_facade_forwards_batch_snapshot_checkpoint_stage_and_metrics_contracts() {
         let mut db = RbtMemDb::new();
+        assert!(!db.is_staging());
+        assert_eq!(db.entry_size_limit(), (u64::MAX, u64::MAX));
         assert!(!db.flush(false).unwrap());
         assert!(db.flush_wait().is_ok());
         assert_eq!(db.metrics().memdb_miss_count, 0);
@@ -2733,6 +2767,7 @@ mod tests {
         assert_eq!(db.get(b"present"), Err(StaticError::NotExist));
 
         let stage = db.staging();
+        assert!(db.is_staging());
         let checkpoint = db.checkpoint();
         db.set(b"staged", b"value").unwrap();
         let mut staged = Vec::new();
@@ -2753,6 +2788,22 @@ mod tests {
             Some(b"one".to_vec())
         );
         db.cleanup(history);
+
+        let before_hits = db.cache_hit_count();
+        let before_misses = db.cache_miss_count();
+        let _ = db.get(b"history");
+        let _ = db.get(b"history");
+        assert!(db.cache_hit_count() > before_hits);
+        assert!(db.cache_miss_count() >= before_misses);
+        let mut with_flags = db.iter_with_flags(None, None);
+        assert!(with_flags.valid());
+        with_flags.next().unwrap();
+        let reverse_with_flags = db.iter_reverse_with_flags(Some(b""));
+        assert!(reverse_with_flags.valid());
+
+        db.discard_values();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| db.get(b"history")));
+        assert!(panic.is_err());
     }
 
     #[test]

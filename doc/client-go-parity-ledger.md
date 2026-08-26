@@ -25,7 +25,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `internal/unionstore` | `src/transaction/unionstore.rs` plus native ART/RBT/arena adapters | complete | Receipt below; all eight production files and six source test/support/benchmark artifacts are accounted for. Public transaction consumption remains on the separate `txnkv/transaction` row. |
 | `internal/unionstore/arena` | public `src/transaction/arena.rs` plus safe ART/RBT integration decision | complete | Re-audited atomic receipt: [`internal-unionstore-arena-source-artifact-audit.md`](internal-unionstore-arena-source-artifact-audit.md). Both artifacts/508 lines, all allocator/address/checkpoint/hook/value-log behavior, both original tests, and all 16 unionstore importers are assigned. The receipt explicitly distinguishes the complete reusable arena from Rust ART/RBT's safe `BTreeMap` representation. |
 | `internal/unionstore/art` | `src/transaction/art.rs` | complete | Receipt below; all nine source/test artifacts are covered by a safe ordered-map/value-log mapping, with the parent unionstore integration retained on its own row. |
-| `internal/unionstore/rbt` | `src/transaction/rbt.rs` | complete | Receipt below; all five source/test artifacts are covered by a safe ordered-map/value-log mapping, with the parent unionstore integration retained on its own row. |
+| `internal/unionstore/rbt` | `src/transaction/rbt.rs`, `src/transaction/unionstore.rs` adapter | complete | Re-audited atomic receipt: [`internal-unionstore-rbt-source-artifact-audit.md`](internal-unionstore-rbt-source-artifact-audit.md). All five artifacts/1,661 lines, all three original unit tests, every production surface, and the sole direct parent importer are assigned. Five red-then-green fixes restore source `UpdateFlags` guards, empty reverse bounds, reverse value-log stage inspection, value-log storage release/invalidation, and flags-only history errors. |
 | `kvproto` (native crate) | independent `tikv-client-kvproto` workspace crate; `tikv_client::proto` re-export | complete | Atomic receipt: [`kvproto-crate-completion-audit.md`](kvproto-crate-completion-audit.md). All 45 crate artifacts, 56 generator inputs, 41 generated protocol modules, descriptor set, three direct integration edges, and downstream type-identity gate are assigned. The crate is the single generated-type owner shared by direct consumers and `tikv-client`. |
 | `unistore` (native crate) | independent `unistore` workspace crate | complete | Atomic receipt: [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md). All five crate artifacts/2,788 lines, 70 public type/function declaration points, 22 internal tests, two external-consumer tests, dependencies, and native consumers are assigned. Its source-mapped engine belongs to the complete client-go mocktikv receipt. |
 | `TiDB/pkg/store/mockstore/unistore` | no Rust parity claim | not-applicable | This separate TiDB server package is outside the pinned client-go source and the user-requested client parity goal. The native crate deliberately does not claim a partial transcreation of its SQL/RPC/schema/coprocessor inventory. |
@@ -806,37 +806,12 @@ The host has no Go toolchain, so the original Go test target could not run local
 
 ## Complete package receipt: `internal/unionstore/rbt`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is `internal/unionstore/rbt/rbt.go`, `rbt_arena.go`, `rbt_iterator.go`, and `rbt_snapshot.go`, plus the source-derived test file `rbt_test.go`. There is no `doc.go`, build-tag/platform variant, generated input/output, fixture, package-specific build artifact, or leak harness. The parent `internal/unionstore` package and its consumers remain separate atomic claims: this receipt supplies its RBT index only, not buffer composition or ART selection.
-
-Rust implementation is the crate-private `src/transaction/rbt.rs`, registered from `src/transaction/mod.rs`. A safe `BTreeMap` maps the source's arena-backed red-black tree while retaining ordered keys, source-size accounting, staging, value-log history, checkpoints, snapshots, persistent-key-flag behavior, bounds, handles, transaction limits, dirty state, cache counters, and memory-footprint hooks. `DiscardValues` invalidates value reads without changing logical size/entry visibility; handle value reads also fail thereafter. Equal-sized values written after the active stage checkpoint overwrite that stage's logical value-log entry, so checkpoint rollback and value-history selection have the same source behavior.
-
-Arena layout, capacity, raw addresses, and Go's mutable live iterator are deliberately native mappings: `BTreeMap` removes unsafe arena representation; `memory_footprint` reports native payload allocation rather than Go arena capacity; and iterators own a stable copied traversal view rather than becoming invalid after a write. The native `update_flags(key, ops)` operation replaces Go's mutation through a borrow-bound iterator. These mappings preserve all parent-facing ordered/value/flag semantics without exposing unsafe or lifetime-invalid Rust APIs.
-
-The seven Rust tests transcreate every original Go test assertion, including 10,000-key staging cleanup, forward and reverse traversal, empty-buffer seeks, rollback-vs-persistent key flags, flags-only iteration and flag updates that create missing keys. They additionally cover snapshot visibility at the root-stage checkpoint, value-history overwrite rules, checkpoint revert, stage inspection, bounds, reverse bounds, handles, tombstones, entry/buffer limits, memory hooks, cache statistics, discard behavior, and the native flag-update mapping. No unistore fixture is required because this package is deterministic in-process storage.
-
-Validation on `nightly-2026-08-22`:
-
-    rustc --version
-    # rustc 1.100.0-nightly (c656540d6 2026-08-21)
-
-    cargo fmt --all --check
-    # passed
-
-    cargo test transaction::rbt::tests --all-features --quiet
-    # 7 passed; 0 failed
-
-    cargo test --doc --all-features --quiet
-    # 49 passed; 0 failed
-
-    cargo clippy --lib --all-features -- -D warnings -A clippy::redundant_field_names -A clippy::chunks_exact_to_as_chunks
-    # passed; the two exclusions are pre-existing non-RBT findings in request/transaction/store code
-
-    git diff --check
-    # passed
-
-Subsequent nightly crate-wide validation passes all 167 library tests. The host has no Go toolchain, so the original Go tests could not run locally; their complete in-process coverage is transcreated above.
+This coarse historical receipt is superseded by the package-atomic audit in
+[`internal-unionstore-rbt-source-artifact-audit.md`](internal-unionstore-rbt-source-artifact-audit.md).
+The replacement records immutable artifact identities, every production
+surface, exact ports of all three original Go tests, the sole direct importer,
+five red-then-green parity fixes, and current pinned-Go/Rust validation. The
+parent `internal/unionstore` package remains an independent atomic claim.
 
 ## Complete package receipt: `internal/unionstore/art`
 
