@@ -677,7 +677,8 @@ fn source_test_snapshot_iterator_prevent_free_node_native_mapping() {
         tree.set(&[0, count], Some(&[0, count]), &[]).unwrap();
         let mut seen = 0;
         while iterator.valid() {
-            assert_eq!(iterator.key(), iterator.value());
+            let key = iterator.key().to_vec();
+            assert_eq!(key, iterator.value());
             iterator.next().unwrap();
             seen += 1;
         }
@@ -705,7 +706,8 @@ fn source_test_concurrent_snapshot_iter_no_race() {
                 let mut iterator = snapshot.iter(None, None, false);
                 let mut seen = 0;
                 while iterator.valid() {
-                    assert_eq!(iterator.key(), iterator.value());
+                    let key = iterator.key().to_vec();
+                    assert_eq!(key, iterator.value());
                     iterator.next().unwrap();
                     seen += 1;
                 }

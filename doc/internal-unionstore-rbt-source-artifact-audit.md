@@ -42,7 +42,7 @@ selection remain owned by the separate `internal/unionstore` claim.
 | `GetCacheHitCount`, `GetCacheMissCount` | one-key lookup-cache counters, now forwarded by `RbtMemDb`. |
 | `Iter`, `IterReverse`, iterator accessors/advance/`UpdateFlags` | owned ordered traversal preserves value filtering and bytewise bounds. Source empty seek endpoints are normalized as unbounded in both directions. Mutable iterator flag changes map to the key-based parent operation because a copied Rust iterator cannot retain a mutable tree borrow; `Close` is unnecessary. |
 | `IterWithFlags`, `IterReverseWithFlags` | flags-only entries are included with exact forward/reverse bounds; both operations are now exposed by `RbtMemDb`. |
-| `GetSnapshot`, `Snapshot.Get`, `SnapshotIter`, `SnapshotIterReverse` | an immutable owned snapshot replaces checkpoint-plus-arena references while preserving point/history visibility and stable forward/reverse traversal after later writes. |
+| `GetSnapshot`, `Snapshot.Get`, `SnapshotIter`, `SnapshotIterReverse` | a per-snapshot owned key/value-log-version view replaces checkpoint-plus-arena references. Matching equal-size in-place writes remain visible; appended versions, new keys, and physical removals preserve checkpoint visibility and stable forward/reverse traversal. |
 | allocator, node colors/links, rotations, delete fixup, successor/predecessor | deliberate representation mapping to Rust's safe `BTreeMap`. It supplies the same ordered key and deletion behavior without unsafe arena addresses, manual balancing, or free-list reuse. |
 
 ## Unit-test port and differential fixes
@@ -81,6 +81,11 @@ fixes:
 5. `SelectValueHistory` previously returned `Ok(None)` for a flags-only key.
    Source returns `ErrNotExist` before touching the value log; Rust now follows
    that branch exactly.
+
+The later atomic parent `internal/unionstore` audit refined snapshot storage
+from immutable clones to per-snapshot value-log-version views. This retains
+RBT checkpoint behavior across physical removal while matching the parent
+source test for equal-size pre-stage in-place updates.
 
 The parent `RbtMemDb` facade test exercises the newly forwarded flags iterators,
 staging state, limits, cache counters, and discard guard. The complete 17-test

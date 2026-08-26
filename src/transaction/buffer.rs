@@ -102,19 +102,20 @@ fn proto_mutations_from_memdb_with_filter(
     let mut iterator = memdb.iter_with_flags(None, None);
     while iterator.valid() {
         let flags = iterator.flags();
+        let key = iterator.key().to_vec();
         let mut mutation = kvrpcpb::Mutation {
-            key: physical_key(iterator.key()),
+            key: physical_key(&key),
             assertion: assertion_from_flags(flags).to_proto() as i32,
             ..Default::default()
         };
         let operation = if !iterator.has_value() {
             flags.has_locked().then(|| lock_operation(flags))
         } else {
-            let value = iterator.value();
+            let value = iterator.value().to_vec();
             let unnecessary = if let Some(filter) = filter {
                 match filter.is_unnecessary_key_value(
-                    iterator.key(),
-                    value,
+                    &key,
+                    &value,
                     mutation_flags_from_key_flags(flags),
                 ) {
                     Ok(unnecessary) => unnecessary,
@@ -126,7 +127,7 @@ fn proto_mutations_from_memdb_with_filter(
             if !value.is_empty() {
                 // client-go's MemDB-backed mutation retains the original value
                 // even when a filtered, already-locked write lowers to Op_Lock.
-                mutation.value = value.to_vec();
+                mutation.value = value;
                 if unnecessary {
                     flags.has_locked().then(|| lock_operation(flags))
                 } else {

@@ -17,7 +17,7 @@ use crate::error::{KeyExistsError, StaticError};
 use crate::kv::{FlagsOp, GetOption, KeyFlags, ValueEntry};
 
 use super::art::{Art, ArtIterator, ArtSnapshot, SnapshotIterator};
-use super::rbt::{Rbt, RbtIterator, RbtSnapshot};
+use super::rbt::{Rbt, RbtIterator, RbtSnapshot, RbtSnapshotIterator};
 
 /// Source-compatible tombstone predicate: an empty value deletes a key from a
 /// union view while remaining visible in its mutation buffer.
@@ -28,7 +28,7 @@ pub const fn is_tombstone(value: &[u8]) -> bool {
 pub trait KvIterator {
     fn valid(&self) -> bool;
     fn key(&self) -> &[u8];
-    fn value(&self) -> &[u8];
+    fn value(&mut self) -> &[u8];
     fn has_value(&self) -> bool {
         true
     }
@@ -53,7 +53,7 @@ impl KvIterator for ArtBufferIterator {
         self.0.key()
     }
 
-    fn value(&self) -> &[u8] {
+    fn value(&mut self) -> &[u8] {
         self.0.value().unwrap_or_default()
     }
 
@@ -81,7 +81,7 @@ impl KvIterator for ArtSnapshotBufferIterator {
         self.0.key()
     }
 
-    fn value(&self) -> &[u8] {
+    fn value(&mut self) -> &[u8] {
         self.0.value()
     }
 
@@ -114,7 +114,7 @@ impl KvIterator for VecIterator {
         &self.entries[self.index].0
     }
 
-    fn value(&self) -> &[u8] {
+    fn value(&mut self) -> &[u8] {
         &self.entries[self.index].1
     }
 
@@ -143,7 +143,7 @@ impl KvIterator for ErrorIterator {
         &[]
     }
 
-    fn value(&self) -> &[u8] {
+    fn value(&mut self) -> &[u8] {
         &[]
     }
 
@@ -638,13 +638,19 @@ impl MemDb {
             snapshot: self.art.snapshot(),
             expected_sequence: self.art.snapshot_sequence(),
             sequence: self.art.snapshot_sequence_counter(),
+            check_sequence: true,
         }
     }
 
-    /// Deprecated source `SnapshotGetter` mapping; callers receive an owned,
-    /// validity-checked snapshot rather than a borrowed getter.
+    /// Deprecated source `SnapshotGetter` mapping. Unlike `GetSnapshot`, the
+    /// deprecated getter does not perform the wrapper's sequence check.
     pub fn snapshot_getter(&self) -> MemDbSnapshot {
-        self.snapshot()
+        MemDbSnapshot {
+            snapshot: self.art.snapshot(),
+            expected_sequence: self.art.snapshot_sequence(),
+            sequence: self.art.snapshot_sequence_counter(),
+            check_sequence: false,
+        }
     }
 
     pub fn get_memdb(&mut self) -> &mut Self {
@@ -996,6 +1002,7 @@ pub struct MemDbSnapshot {
     snapshot: ArtSnapshot,
     expected_sequence: u64,
     sequence: Arc<AtomicU64>,
+    check_sequence: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1012,7 +1019,7 @@ impl From<StaticError> for SnapshotError {
 
 impl MemDbSnapshot {
     fn check_sequence(&self) -> Result<(), &'static str> {
-        if self.sequence.load(Ordering::Acquire) == self.expected_sequence {
+        if !self.check_sequence || self.sequence.load(Ordering::Acquire) == self.expected_sequence {
             Ok(())
         } else {
             Err("invalid snapshot: snapshot sequence changed")
@@ -1065,7 +1072,9 @@ impl MemDbSnapshot {
         // batched iterator operations check the source snapshot sequence.
         let mut iterator = self.snapshot.iter(lower, upper, reverse);
         while iterator.valid() {
-            if function(iterator.key(), iterator.value())? {
+            let key = iterator.key().to_vec();
+            let value = iterator.value().to_vec();
+            if function(&key, &value)? {
                 return Ok(());
             }
             iterator.next()?;
@@ -1089,7 +1098,7 @@ impl KvIterator for RbtBufferIterator {
         self.0.key()
     }
 
-    fn value(&self) -> &[u8] {
+    fn value(&mut self) -> &[u8] {
         self.0.value().unwrap_or_default()
     }
 
@@ -1107,6 +1116,26 @@ impl KvIterator for RbtBufferIterator {
         }
         self.0.next();
         Ok(())
+    }
+}
+
+struct RbtSnapshotBufferIterator(RbtSnapshotIterator);
+
+impl KvIterator for RbtSnapshotBufferIterator {
+    fn valid(&self) -> bool {
+        self.0.valid()
+    }
+
+    fn key(&self) -> &[u8] {
+        self.0.key()
+    }
+
+    fn value(&mut self) -> &[u8] {
+        self.0.value()
+    }
+
+    fn next(&mut self) -> Result<(), &'static str> {
+        self.0.next()
     }
 }
 
@@ -1280,7 +1309,9 @@ impl RbtMemDb {
     ) -> Result<(), &'static str> {
         let mut iterator = self.snapshot().iter(lower, upper, reverse);
         while iterator.valid() {
-            if function(iterator.key(), iterator.value())? {
+            let key = iterator.key().to_vec();
+            let value = iterator.value().to_vec();
+            if function(&key, &value)? {
                 return Ok(());
             }
             iterator.next()?;
@@ -1406,7 +1437,7 @@ impl RbtMemDbSnapshot {
         } else {
             self.snapshot.iter(lower, upper)
         };
-        Box::new(RbtBufferIterator(iterator))
+        Box::new(RbtSnapshotBufferIterator(iterator))
     }
 
     pub fn close(self) {}
@@ -1439,7 +1470,7 @@ impl BatchedSnapshotIterator {
         self.inner.key()
     }
 
-    pub fn value(&self) -> &[u8] {
+    pub fn value(&mut self) -> &[u8] {
         self.inner.value()
     }
 
@@ -1626,7 +1657,7 @@ impl UnionIterator {
         }
     }
 
-    pub fn value(&self) -> &[u8] {
+    pub fn value(&mut self) -> &[u8] {
         if self.current_is_dirty {
             self.dirty.value()
         } else {
@@ -2562,7 +2593,7 @@ mod tests {
     }
 
     #[test]
-    fn art_memdb_survives_client_go_random_derive_depth_and_mutation_scale() {
+    fn source_test_random_derive() {
         let mut db = MemDb::new();
         let mut oracle = BTreeMap::new();
         deeply_nested_staging_oracle(&mut db, &mut oracle, 0);
@@ -2570,10 +2601,11 @@ mod tests {
     }
 
     #[test]
-    fn source_scale_rbt_random_mutation_and_art_rbt_staging_differential_hold() {
+    fn source_test_random() {
         const COUNT: usize = 50_000;
         let mut state = 0x477d_4f41_1a19_7ad3;
         let mut rbt = RbtMemDb::new();
+        let mut art = MemDb::new();
         let mut oracle = BTreeMap::new();
         let mut keys = Vec::with_capacity(COUNT);
         for _ in 0..COUNT {
@@ -2581,9 +2613,12 @@ mod tests {
             let mut key = next_random(&mut state).to_be_bytes().to_vec();
             key.resize(key_len, (state >> 8) as u8);
             rbt.set(&key, &key).unwrap();
+            art.set(&key, &key).unwrap();
             oracle.insert(key.clone(), key.clone());
             keys.push(key);
         }
+        assert_matches_oracle(&mut rbt, &oracle, COUNT);
+        assert_matches_oracle(&mut art, &oracle, COUNT);
         for key in keys.iter().rev() {
             if next_random(&mut state) % 100 < 35 {
                 rbt.remove_from_buffer(key);
@@ -2597,7 +2632,12 @@ mod tests {
             }
         }
         assert_matches_oracle(&mut rbt, &oracle, COUNT * 2);
+    }
 
+    #[test]
+    fn source_test_random_ab() {
+        const COUNT: usize = 50_000;
+        let mut state = 0x477d_4f41_1a19_7ad3;
         let mut art = MemDb::new();
         let mut rbt = RbtMemDb::new();
         let mut shared_oracle = BTreeMap::new();
@@ -3223,5 +3263,9 @@ mod tests {
         assert!(db.flush(true).unwrap());
         db.flush_wait().unwrap();
         assert_eq!(db.get(b"key"), Err("key not found".to_owned()));
+    }
+
+    mod source_tests {
+        include!("unionstore_source_tests.rs");
     }
 }

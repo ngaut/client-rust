@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex, RwLock, Weak,
 };
 
 use crate::error::{EntryTooLargeError, KeyTooLargeError, StaticError, TransactionTooLargeError};
@@ -72,6 +72,7 @@ pub(crate) struct Art {
     write_sequence: Arc<AtomicU64>,
     snapshot_sequence: Arc<AtomicU64>,
     value_epoch: Arc<AtomicU64>,
+    snapshots: Mutex<Vec<Weak<RwLock<BTreeMap<Vec<u8>, SnapshotValue>>>>>,
 }
 
 impl Art {
@@ -230,6 +231,7 @@ impl Art {
         self.last_key = None;
         self.snapshot_sequence.fetch_add(1, Ordering::Release);
         self.bump_write_sequence();
+        self.clear_snapshot_registry();
         self.notify_memory_change();
     }
 
@@ -244,6 +246,7 @@ impl Art {
             entry.value_log_undo_index = None;
         }
         self.undo = Vec::new();
+        self.clear_snapshot_registry();
         self.notify_memory_change();
     }
 
@@ -303,6 +306,98 @@ impl Art {
         if let Some(hook) = &self.memory_hook {
             hook(self.memory_footprint());
         }
+    }
+
+    fn stage_zero_snapshot_entries(&self) -> BTreeMap<Vec<u8>, SnapshotValue> {
+        let mut entries = self.entries.clone();
+        if let Some(stage) = self.stages.first() {
+            for undo in self.undo[stage.undo_start..].iter().rev() {
+                if let Some(entry) = entries.get_mut(&undo.key) {
+                    match &undo.old_value {
+                        Some(value) => {
+                            entry.value = value.clone();
+                            entry.history.truncate(undo.old_history_len);
+                            entry.value_log_undo_index = undo.old_value_log_undo_index;
+                            entry.deleted = undo.old_deleted;
+                        }
+                        None => {
+                            entries.remove(&undo.key);
+                        }
+                    }
+                }
+            }
+        }
+        entries
+            .iter()
+            .filter_map(|(key, entry)| {
+                (!entry.deleted)
+                    .then(|| {
+                        entry.value.as_ref().map(|value| {
+                            (
+                                key.clone(),
+                                SnapshotValue {
+                                    value: value.clone(),
+                                    version: entry.value_log_undo_index,
+                                },
+                            )
+                        })
+                    })
+                    .flatten()
+            })
+            .collect()
+    }
+
+    fn get_snapshot_entries(&self) -> SnapshotEntries {
+        let entries = Arc::new(RwLock::new(self.stage_zero_snapshot_entries()));
+        self.snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned")
+            .push(Arc::downgrade(&entries));
+        entries
+    }
+
+    fn clear_snapshot_registry(&self) {
+        self.snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned")
+            .clear();
+    }
+
+    fn sync_in_place_snapshot_entry(&self, key: &[u8], can_modify_value: bool) {
+        if self.is_staging() || !can_modify_value {
+            return;
+        }
+        let Some((value, version)) = self
+            .entries
+            .get(key)
+            .filter(|entry| !entry.deleted)
+            .and_then(|entry| {
+                entry
+                    .value
+                    .clone()
+                    .map(|value| (value, entry.value_log_undo_index))
+            })
+        else {
+            return;
+        };
+        let mut snapshots = self
+            .snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned");
+        snapshots.retain(|snapshot| {
+            let Some(snapshot) = snapshot.upgrade() else {
+                return false;
+            };
+            if let Some(snapshot_value) = snapshot
+                .write()
+                .expect("snapshot entries lock poisoned")
+                .get_mut(key)
+                .filter(|snapshot_value| snapshot_value.version == version)
+            {
+                snapshot_value.value.clone_from(&value);
+            }
+            true
+        });
     }
 
     fn entry_mut(&mut self, key: &[u8]) -> (&mut Entry, bool) {
@@ -399,8 +494,7 @@ impl Art {
                 })
             })
         });
-        let appended_value_log_index = if value.is_some() && self.is_staging() && !can_modify_value
-        {
+        let appended_value_log_index = if value.is_some() && !can_modify_value {
             self.undo.push(Undo {
                 key: key.to_vec(),
                 old_value: if existed { old_value } else { None },
@@ -443,6 +537,7 @@ impl Art {
         if persistent {
             self.dirty = true;
         }
+        self.sync_in_place_snapshot_entry(key, can_modify_value);
         if self.size() as u64 > self.buffer_size_limit {
             return Err(Box::new(TransactionTooLargeError {
                 size: self.size() as isize,
@@ -579,26 +674,8 @@ impl Art {
     }
 
     pub(crate) fn snapshot(&self) -> ArtSnapshot {
-        let mut entries = self.entries.clone();
-        if let Some(stage) = self.stages.first() {
-            for undo in self.undo[stage.undo_start..].iter().rev() {
-                if let Some(entry) = entries.get_mut(&undo.key) {
-                    match &undo.old_value {
-                        Some(value) => {
-                            entry.value = value.clone();
-                            entry.history.truncate(undo.old_history_len);
-                            entry.value_log_undo_index = undo.old_value_log_undo_index;
-                            entry.deleted = undo.old_deleted;
-                        }
-                        None => {
-                            entries.remove(&undo.key);
-                        }
-                    }
-                }
-            }
-        }
         ArtSnapshot {
-            entries,
+            entries: self.get_snapshot_entries(),
             value_epoch: self.value_epoch_token(),
         }
     }
@@ -638,6 +715,13 @@ impl Art {
 
 type IteratorItem = (Vec<u8>, Option<Vec<u8>>, KeyFlags, ArtHandle);
 type ValueEpoch = (Arc<AtomicU64>, u64);
+#[derive(Clone)]
+struct SnapshotValue {
+    value: Vec<u8>,
+    version: Option<usize>,
+}
+
+type SnapshotEntries = Arc<RwLock<BTreeMap<Vec<u8>, SnapshotValue>>>;
 
 pub(crate) struct ArtIterator {
     items: Vec<IteratorItem>,
@@ -733,22 +817,21 @@ impl ArtIterator {
 
 #[derive(Clone)]
 pub(crate) struct ArtSnapshot {
-    entries: BTreeMap<Vec<u8>, Entry>,
+    entries: SnapshotEntries,
     value_epoch: Option<ValueEpoch>,
 }
 
 impl ArtSnapshot {
     pub(crate) fn get(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
-        let entry = self
+        let value = self
             .entries
+            .read()
+            .expect("snapshot entries lock poisoned")
             .get(key)
-            .filter(|entry| !entry.deleted)
+            .map(|value| value.value.clone())
             .ok_or(StaticError::NotExist)?;
-        if entry.value.is_none() {
-            return Err(StaticError::NotExist);
-        }
         assert_values_available(&self.value_epoch);
-        Ok(entry.value.clone().expect("value presence checked above"))
+        Ok(value)
     }
 
     pub(crate) fn iter(
@@ -757,48 +840,74 @@ impl ArtSnapshot {
         upper: Option<&[u8]>,
         reverse: bool,
     ) -> SnapshotIterator {
-        let lower = lower.filter(|bound| !bound.is_empty());
-        let upper = upper.filter(|bound| !bound.is_empty());
-        let mut items: Vec<_> = self
-            .entries
-            .iter()
-            .filter(|(key, entry)| {
-                !entry.deleted
-                    && entry.value.is_some()
-                    && lower.is_none_or(|lower| key.as_slice() >= lower)
-                    && upper.is_none_or(|upper| key.as_slice() < upper)
-            })
-            .map(|(key, entry)| (key.clone(), entry.value.clone().unwrap()))
-            .collect();
-        if reverse {
-            items.reverse();
-        }
-        SnapshotIterator {
-            items,
-            index: 0,
-            value_epoch: self.value_epoch.clone(),
-        }
+        SnapshotIterator::new(
+            self.entries.clone(),
+            lower,
+            upper,
+            reverse,
+            self.value_epoch.clone(),
+        )
     }
 
     pub(crate) fn close(self) {}
 }
 
 pub(crate) struct SnapshotIterator {
-    items: Vec<(Vec<u8>, Vec<u8>)>,
+    entries: SnapshotEntries,
+    keys: Vec<Vec<u8>>,
     index: usize,
+    current_value: Vec<u8>,
     value_epoch: Option<ValueEpoch>,
 }
 
 impl SnapshotIterator {
+    fn new(
+        entries: SnapshotEntries,
+        lower: Option<&[u8]>,
+        upper: Option<&[u8]>,
+        reverse: bool,
+        value_epoch: Option<ValueEpoch>,
+    ) -> Self {
+        let lower = lower.filter(|bound| !bound.is_empty());
+        let upper = upper.filter(|bound| !bound.is_empty());
+        let mut keys: Vec<_> = entries
+            .read()
+            .expect("snapshot entries lock poisoned")
+            .keys()
+            .filter(|key| {
+                lower.is_none_or(|lower| key.as_slice() >= lower)
+                    && upper.is_none_or(|upper| key.as_slice() < upper)
+            })
+            .cloned()
+            .collect();
+        if reverse {
+            keys.reverse();
+        }
+        Self {
+            entries,
+            keys,
+            index: 0,
+            current_value: Vec::new(),
+            value_epoch,
+        }
+    }
+
     pub(crate) fn valid(&self) -> bool {
-        self.index < self.items.len()
+        self.index < self.keys.len()
     }
     pub(crate) fn key(&self) -> &[u8] {
-        &self.items[self.index].0
+        &self.keys[self.index]
     }
-    pub(crate) fn value(&self) -> &[u8] {
+    pub(crate) fn value(&mut self) -> &[u8] {
         assert_values_available(&self.value_epoch);
-        &self.items[self.index].1
+        self.current_value = self
+            .entries
+            .read()
+            .expect("snapshot entries lock poisoned")
+            .get(&self.keys[self.index])
+            .map(|value| value.value.clone())
+            .expect("snapshot iterator key disappeared from stage-zero view");
+        &self.current_value
     }
     pub(crate) fn next(&mut self) -> Result<(), &'static str> {
         if !self.valid() {
@@ -1032,7 +1141,8 @@ mod tests {
                 let mut iterator = snapshot.iter(None, None, false);
                 let mut count = 0;
                 while iterator.valid() {
-                    assert_eq!(iterator.key(), iterator.value());
+                    let key = iterator.key().to_vec();
+                    assert_eq!(key, iterator.value());
                     iterator.next().unwrap();
                     count += 1;
                 }

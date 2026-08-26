@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use crate::error::{EntryTooLargeError, KeyTooLargeError, StaticError, TransactionTooLargeError};
 use crate::kv::{apply_flags_ops, FlagsOp, KeyFlags};
@@ -64,6 +64,7 @@ pub(crate) struct Rbt {
     cache_hits: u64,
     cache_misses: u64,
     memory_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    snapshots: Mutex<Vec<Weak<RwLock<BTreeMap<Vec<u8>, SnapshotValue>>>>>,
 }
 
 impl Rbt {
@@ -172,6 +173,7 @@ impl Rbt {
         self.dirty = false;
         self.values_discarded = false;
         self.last_key = None;
+        self.clear_snapshot_registry();
         self.notify_memory_change();
     }
 
@@ -186,6 +188,7 @@ impl Rbt {
             entry.value_log_undo_index = None;
         }
         self.undo = Vec::new();
+        self.clear_snapshot_registry();
         self.notify_memory_change();
     }
 
@@ -230,6 +233,88 @@ impl Rbt {
         if let Some(hook) = &self.memory_hook {
             hook(self.memory_footprint());
         }
+    }
+
+    fn stage_zero_snapshot_entries(&self) -> BTreeMap<Vec<u8>, SnapshotValue> {
+        let mut entries = self.entries.clone();
+        if let Some(stage) = self.stages.first() {
+            for undo in self.undo[stage.undo_start..].iter().rev() {
+                match &undo.old_value {
+                    Some(value) => {
+                        if let Some(entry) = entries.get_mut(&undo.key) {
+                            entry.value = value.clone();
+                            entry.history.truncate(undo.old_history_len);
+                            entry.value_log_undo_index = undo.old_value_log_undo_index;
+                        }
+                    }
+                    None => {
+                        entries.remove(&undo.key);
+                    }
+                }
+            }
+        }
+        entries
+            .iter()
+            .filter_map(|(key, entry)| {
+                entry.value.as_ref().map(|value| {
+                    (
+                        key.clone(),
+                        SnapshotValue {
+                            value: value.clone(),
+                            version: entry.value_log_undo_index,
+                        },
+                    )
+                })
+            })
+            .collect()
+    }
+
+    fn get_snapshot_entries(&self) -> SnapshotEntries {
+        let entries = Arc::new(RwLock::new(self.stage_zero_snapshot_entries()));
+        self.snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned")
+            .push(Arc::downgrade(&entries));
+        entries
+    }
+
+    fn clear_snapshot_registry(&self) {
+        self.snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned")
+            .clear();
+    }
+
+    fn sync_in_place_snapshot_entry(&self, key: &[u8], can_modify_value: bool) {
+        if self.is_staging() || !can_modify_value {
+            return;
+        }
+        let Some((value, version)) = self.entries.get(key).and_then(|entry| {
+            entry
+                .value
+                .clone()
+                .map(|value| (value, entry.value_log_undo_index))
+        }) else {
+            return;
+        };
+        let mut snapshots = self
+            .snapshots
+            .lock()
+            .expect("snapshot registry lock poisoned");
+        snapshots.retain(|snapshot| {
+            let Some(snapshot) = snapshot.upgrade() else {
+                return false;
+            };
+            if let Some(snapshot_value) = snapshot
+                .write()
+                .expect("snapshot entries lock poisoned")
+                .get_mut(key)
+                .filter(|snapshot_value| snapshot_value.version == version)
+            {
+                snapshot_value.value.clone_from(&value);
+            }
+            true
+        });
     }
 
     fn entry_mut(&mut self, key: &[u8]) -> (&mut Entry, bool) {
@@ -303,7 +388,6 @@ impl Rbt {
             .entries
             .get(key)
             .and_then(|entry| entry.value_log_undo_index);
-        let staging = self.is_staging();
         let stage_start = self.stages.last().map(|stage| stage.undo_start);
         let can_modify_value = value.is_some_and(|value| {
             self.entries.get(key).is_some_and(|entry| {
@@ -318,7 +402,7 @@ impl Rbt {
                 })
             })
         });
-        let appended_value_log_index = if value.is_some() && staging && !can_modify_value {
+        let appended_value_log_index = if value.is_some() && !can_modify_value {
             self.undo.push(Undo {
                 key: key.to_vec(),
                 old_value: if existed_before { old } else { None },
@@ -351,6 +435,7 @@ impl Rbt {
         if persistent_flags {
             self.dirty = true;
         }
+        self.sync_in_place_snapshot_entry(key, can_modify_value);
         if value.is_some() {
             if self.size() as u64 > self.buffer_size_limit {
                 return Err(Box::new(TransactionTooLargeError {
@@ -489,25 +574,8 @@ impl Rbt {
     }
 
     pub(crate) fn snapshot(&self) -> RbtSnapshot {
-        let mut entries = self.entries.clone();
-        if let Some(stage) = self.stages.first() {
-            for undo in self.undo[stage.undo_start..].iter().rev() {
-                match &undo.old_value {
-                    Some(value) => {
-                        if let Some(entry) = entries.get_mut(&undo.key) {
-                            entry.value = value.clone();
-                            entry.history.truncate(undo.old_history_len);
-                            entry.value_log_undo_index = undo.old_value_log_undo_index;
-                        }
-                    }
-                    None => {
-                        entries.remove(&undo.key);
-                    }
-                }
-            }
-        }
         RbtSnapshot {
-            entries,
+            entries: self.get_snapshot_entries(),
             value_epoch: self.value_epoch_token(),
         }
     }
@@ -526,6 +594,13 @@ impl Rbt {
 /// by writes; this native iterator instead preserves a stable traversal view.
 type IteratorItem = (Vec<u8>, Option<Vec<u8>>, KeyFlags, RbtHandle);
 type ValueEpoch = (Arc<AtomicU64>, u64);
+#[derive(Clone)]
+struct SnapshotValue {
+    value: Vec<u8>,
+    version: Option<usize>,
+}
+
+type SnapshotEntries = Arc<RwLock<BTreeMap<Vec<u8>, SnapshotValue>>>;
 
 pub(crate) struct RbtIterator {
     items: Vec<IteratorItem>,
@@ -618,26 +693,28 @@ impl RbtIterator {
 
 #[derive(Clone)]
 pub(crate) struct RbtSnapshot {
-    entries: BTreeMap<Vec<u8>, Entry>,
+    entries: SnapshotEntries,
     value_epoch: Option<ValueEpoch>,
 }
 
 impl RbtSnapshot {
     pub(crate) fn get(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
-        let entry = self.entries.get(key).ok_or(StaticError::NotExist)?;
-        if entry.value.is_none() {
-            return Err(StaticError::NotExist);
-        }
+        let value = self
+            .entries
+            .read()
+            .expect("snapshot entries lock poisoned")
+            .get(key)
+            .map(|value| value.value.clone())
+            .ok_or(StaticError::NotExist)?;
         assert_values_available(&self.value_epoch);
-        Ok(entry.value.clone().expect("value presence checked above"))
+        Ok(value)
     }
 
-    pub(crate) fn iter(&self, start: Option<&[u8]>, end: Option<&[u8]>) -> RbtIterator {
-        RbtIterator::from_entries(
-            &self.entries,
+    pub(crate) fn iter(&self, start: Option<&[u8]>, end: Option<&[u8]>) -> RbtSnapshotIterator {
+        RbtSnapshotIterator::new(
+            self.entries.clone(),
             start,
             end,
-            false,
             false,
             self.value_epoch.clone(),
         )
@@ -647,15 +724,86 @@ impl RbtSnapshot {
         &self,
         start_exclusive: Option<&[u8]>,
         lower_bound: Option<&[u8]>,
-    ) -> RbtIterator {
-        RbtIterator::from_entries(
-            &self.entries,
+    ) -> RbtSnapshotIterator {
+        RbtSnapshotIterator::new(
+            self.entries.clone(),
             lower_bound,
             start_exclusive,
             true,
-            false,
             self.value_epoch.clone(),
         )
+    }
+}
+
+pub(crate) struct RbtSnapshotIterator {
+    entries: SnapshotEntries,
+    keys: Vec<Vec<u8>>,
+    index: usize,
+    current_value: Vec<u8>,
+    value_epoch: Option<ValueEpoch>,
+}
+
+impl RbtSnapshotIterator {
+    fn new(
+        entries: SnapshotEntries,
+        mut lower: Option<&[u8]>,
+        mut upper: Option<&[u8]>,
+        reverse: bool,
+        value_epoch: Option<ValueEpoch>,
+    ) -> Self {
+        if !reverse && lower.is_some_and(<[u8]>::is_empty) {
+            lower = None;
+        }
+        if reverse && upper.is_some_and(<[u8]>::is_empty) {
+            upper = None;
+        }
+        let mut keys: Vec<_> = entries
+            .read()
+            .expect("snapshot entries lock poisoned")
+            .keys()
+            .filter(|key| {
+                lower.is_none_or(|lower| key.as_slice() >= lower)
+                    && upper.is_none_or(|upper| key.as_slice() < upper)
+            })
+            .cloned()
+            .collect();
+        if reverse {
+            keys.reverse();
+        }
+        Self {
+            entries,
+            keys,
+            index: 0,
+            current_value: Vec::new(),
+            value_epoch,
+        }
+    }
+
+    pub(crate) fn valid(&self) -> bool {
+        self.index < self.keys.len()
+    }
+
+    pub(crate) fn key(&self) -> &[u8] {
+        &self.keys[self.index]
+    }
+
+    pub(crate) fn value(&mut self) -> &[u8] {
+        assert_values_available(&self.value_epoch);
+        self.current_value = self
+            .entries
+            .read()
+            .expect("snapshot entries lock poisoned")
+            .get(&self.keys[self.index])
+            .map(|value| value.value.clone())
+            .expect("snapshot iterator key disappeared from stage-zero view");
+        &self.current_value
+    }
+
+    pub(crate) fn next(&mut self) -> Result<(), &'static str> {
+        if self.valid() {
+            self.index += 1;
+        }
+        Ok(())
     }
 }
 
@@ -974,7 +1122,7 @@ mod tests {
         let mut reverse = snapshot.iter_reverse(None, Some(b"a"));
         assert!(reverse.valid());
         assert_eq!(reverse.key(), b"b");
-        reverse.next();
+        reverse.next().unwrap();
         assert_eq!(reverse.key(), b"a");
 
         let too_large_key = vec![0; MAX_KEY_LEN + 1];

@@ -46,7 +46,7 @@ independent package claim.
 | `DiscardValues` | releases current, historical, and undo value storage; calls the memory hook; preserves key/flag metadata; and invalidates all old/new value readers through a shared epoch while retaining source miss/flags-only branch ordering. |
 | `Iter`, `IterReverse`, accessors, handle, and advance | owned bytewise ordered traversal preserves inclusive lower/exclusive upper bounds, value filtering, and write-sequence invalidation. Empty byte slices map to the source's unbounded convention; `Close` is ownership-driven. |
 | `IterWithFlags`, `IterReverseWithFlags` | flags-only entries are included in exact forward/reverse order; both are exposed by the parent `MemDb`. |
-| `GetSnapshot`, snapshot `Get`, `SnapIter` | immutable owned entries replace arena checkpoints/reference counts while preserving pre-stage visibility, stable concurrent traversal after writes, bounds, value-discard invalidation, and idempotent `Next` after completion. |
+| `GetSnapshot`, snapshot `Get`, `SnapIter` | per-snapshot owned key/value-log-version views replace arena checkpoints/reference counts. Matching equal-size in-place writes remain visible; appended versions and new keys remain checkpoint-hidden. Stable concurrent traversal, bounds, value-discard invalidation, and idempotent `Next` after completion are preserved. |
 | node4/16/48/256, compressed-prefix internals, bitmaps, growth, raw addresses, and free lists | deliberate native mapping to Rust's safe `BTreeMap`. It supplies identical bytewise order, prefix/bound behavior, replacement, growth-visible capacity sequences, minimum-key behavior, and snapshot lifetime without unsafe arena topology. |
 | `RemoveFromBuffer` | client-go deliberately leaves this parent test helper as `panic("unimplemented")`; Rust retains the already completed physical removal required by its public authoritative `MemDb` and downstream transaction tests. This is an explicit parent integration decision, not an ART behavioral default. |
 
@@ -95,6 +95,12 @@ Five source comparisons produced red-then-green regressions:
 5. parent `MemDb::UpdateFlags` unwrapped `Set` errors and panicked. Source
    intentionally ignores those errors; Rust now does likewise and covers both
    over-limit mutation retention and oversized-key rejection.
+
+The later atomic parent `internal/unionstore` audit refined snapshot storage
+from immutable clones to per-snapshot value-log-version views. This preserves
+the child package's new-key and allocator-lifetime tests while also matching
+the parent source test in which retained pre-stage readers observe equal-size
+in-place updates.
 
 The full matrix then exposed one stale downstream expectation:
 `source_schema_filter_callback_and_memory_contracts` expected the pre-commit
