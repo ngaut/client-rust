@@ -7143,11 +7143,14 @@ impl<PdC: PdClient> Committer<PdC> {
                     ru_details.update(&result.consumption, Duration::ZERO);
                 }
             }
-            Err(error) => warn!(
-                "txn file: resource control accounting failed after commit, start_ts: {}, error: {}",
-                self.start_version.version(),
-                error
-            ),
+            Err(error) => {
+                crate::stats::increment_txn_file_error("accounting");
+                warn!(
+                    "txn file: resource control accounting failed after commit, start_ts: {}, error: {}",
+                    self.start_version.version(),
+                    error
+                );
+            }
         }
     }
 
@@ -18667,6 +18670,11 @@ mod tests {
         }
 
         crate::transaction::close_txn_file_idle_connections();
+        let accounting_errors = crate::metrics::global_metrics()
+            .counter_vec("TiKVTxnFileErrorCounter")
+            .expect("txn-file error metric is registered")
+            .with_label_values(&["accounting"]);
+        let accounting_errors_before = accounting_errors.get();
         let (address, uploaded_chunk) = source_test_txn_chunk_writer().await;
         let restore = crate::config::update_global(|config| {
             config.tikv_client.txn_chunk_writer_addr = address;
@@ -18748,6 +18756,7 @@ mod tests {
         assert_eq!(commit_calls.load(Ordering::SeqCst), 1);
         assert_eq!(rollback_calls.load(Ordering::SeqCst), 0);
         assert_eq!(response_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(accounting_errors.get(), accounting_errors_before + 1.0);
         assert!(committer.committed);
         assert!(!committer.undetermined);
         assert!(values_discarded.load(Ordering::SeqCst));

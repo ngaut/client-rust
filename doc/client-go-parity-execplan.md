@@ -72,6 +72,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-26) Completed the package-atomic `internal/unionstore/art` re-audit and Rust unit-test port. The exact nine-artifact/3,474-line receipt maps all 35 ordinary tests plus the benchmark contract, every production/representation surface, and the sole direct parent importer. Five red-then-green regressions corrected value-log discard release/invalidation/hook delivery, reverse append-order stage inspection, flags-only total-buffer limits, idempotent completed snapshot iteration, and ignored parent flag-update errors. Final gates pass exact Go and race suites for both ART and its complete parent, 47 focused Rust tests and 18 parent tests in both feature configurations, 643/640 source-derived tests, 940/937 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 - [x] (2026-08-26) Re-audited five independent foundation packages in one batch: `txnkv/txnutil`, `util/codec`, `util/intest`, `util/israce`, and `util/redact`. The exact eight-artifact/755-line inventory proves all five have no original Go tests/support, while Rust adds focused and downstream tests for every contract. Repairs preserve arbitrary numeric command priorities end to end, restore codec group-byte error detail, make test/redaction globals sequentially consistent, map the complete source redaction mode matrix, and expose the safe zero-copy arbitrary-byte `String` equivalent. Exact Go ordinary/race/tag gates, 20 focused tests, both two-test downstream configurations, 1,003 active no-default workspace library tests, 1,000 active all-feature library tests, strict check/Clippy/private rustdoc, and 51 doctests pass.
 - [x] (2026-08-26) Independently re-audited `txnkv/txnlock` and ported all five ordinary Go tests as one-to-one Rust tests. Red/green gates corrected cached async-primary metadata loss, absent region-wide pessimistic rollback, rollback of live pessimistic locks, and missing explicit-Lite point cleanup; source-public cache/semaphore constants and every option-setting consumer are assigned. Exact Go normal/race tests, 37 focused tests in both Rust configurations, 749/746 source-derived tests, 1,018 no-default and 1,015 all-feature active library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests pass.
+- [x] (2026-08-26) Independently re-audited `internal/resourcecontrol` and ported all five Go tests under one-to-one Rust names. The complete two-artifact/511-line boundary, five direct importers, and both legacy/NextGen modes are assigned. A red/green consumer regression restored the missing txn-file `TxnFileErrorAccounting` metric without changing the committed result. Exact Go normal/race tests pass in both modes; final Rust gates pass 13 focused tests per mode, 752/749 source-derived tests, 1,021/1,018 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 
 ## Surprises & Discoveries
 
@@ -94,7 +95,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
   Evidence: client-go `config/retry/backoff.go` and tests; client-rust `src/backoff.rs` and request-plan loops.
 
 - Observation: `internal/resourcecontrol` cannot be completed as an isolated context helper because its request consumption logic switches on `tikvrpc.Request` command types and its mode is selected by `config.NextGen`.
-  Evidence: client-go `internal/resourcecontrol` production sources and their imports; the corresponding Rust RPC wrapper/config contracts remain unassessed.
+  Evidence: client-go `internal/resourcecontrol` production sources and imports; the completed Rust receipt therefore audits typed RPC classification, both Cargo modes, physical dispatch, and txn-file accounting together.
 
 - Observation: the small `testutils` package contains only aliases and factories over concrete mocktikv types, while the `error` package's write-conflict construction and diagnostics depend on metrics and log utilities.
   Evidence: client-go `testutils/mockstore.go` and both files under `error`; both were initially held as explicit seeds until their concrete dependencies closed and are now complete by separate atomic receipts.
@@ -1181,5 +1182,24 @@ final pinned-nightly gates pass 37 focused tests in both configurations,
 749/746 source-derived tests, 1,018 no-default workspace and 1,015 all-feature
 active library tests plus one unrelated ignore, three ordinary downstream API
 tests, strict all-target check/Clippy/private rustdoc, all 51 doctests, rustfmt,
-source identity, and whitespace checks. The remaining action is one signed
-package-sized commit and verified push to `origin/master`.
+source identity, and whitespace checks. Signed package-sized commit
+`9f41b18f67d80a7b8d48912f8b6faf1d7c37b27d` is verified on
+`origin/master`.
+
+Plan revision note (2026-08-26): independently re-audited
+`internal/resourcecontrol` against its exact two-artifact/511-line boundary,
+five ordinary tests, five direct importer files, and both legacy/NextGen
+configurations. Each Go declaration now has an independently named Rust port;
+the previous combined response test is split into exact read-byte and batched-
+task cases while stream coverage remains separate. Production request/write/
+size/bypass/route and response/CPU/stream matrices match the source. The
+consumer audit found that txn-file post-commit settlement errors were logged
+and correctly ignored but did not increment `TxnFileErrorAccounting`; the red
+regression observed 0 instead of 1. Rust now increments the source metric once
+without changing the committed result. Exact Go normal and race suites pass in
+both modes. Final pinned-nightly gates pass 13 focused tests per mode, the
+consumer regression in both modes, 752/749 source-derived tests, 1,021 no-
+default workspace and 1,018 all-feature active library tests plus one unrelated
+ignore, strict all-target check/Clippy/private rustdoc, all 51 doctests,
+rustfmt, source identity, declaration/importer reconciliation, and whitespace
+checks. This receipt is the package-sized integration boundary.
