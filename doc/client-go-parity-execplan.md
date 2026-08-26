@@ -1307,3 +1307,22 @@ workspace matrices pass 1,312/1,291 tests plus one unrelated skip in each
 configuration. Clean generation, all-target checking, strict Clippy, private
 rustdoc, all 51 doctests, formatting, inventory/declaration/importer,
 source-identity, and whitespace gates pass on the pinned nightly.
+
+Plan revision note (2026-08-26): independently reopened
+`internal/mockstore/mocktikv` against its exact 14-artifact/6,689-line
+boundary, 23 ordinary tests, `TestMain`, every production surface, and nine
+direct consumers. Each ordinary Go declaration now has an independently
+selectable Rust port across the reusable `unistore` crate and client adapter.
+The assertion audit restored full forward/reverse scan histories, distinct
+lock timestamps and inventories, resolve/batch-resolve keys, cleanup,
+delete/GC/delete-range/RC/status, marshal, region, debug, and heartbeat checks
+that the former grouped evidence omitted. All stronger tests pass without an
+additional production change; the earlier transactional `not_found` fix
+remains covered. Exact Go normal/race suites pass. Final pinned-nightly gates
+pass all 23 ports, 54 UniStore unit plus three reuse tests, nine adapter tests,
+1,261/1,258 active main-library tests plus one unrelated ignore, and
+1,335/1,314 canonical workspace tests plus one unrelated skip. Clean
+generation, all-target checking, strict Clippy/private rustdoc, all 51
+doctests, formatting, exact inventory/declaration/consumer reconciliation,
+source identity, and whitespace gates pass. This receipt is the package-sized
+integration boundary.
