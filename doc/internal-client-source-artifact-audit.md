@@ -90,7 +90,11 @@ the two close-lifecycle tests independent state transitions, gives the sync and
 async transport-failure identities independent dispatches, and makes
 `TestInterceptedClient` execute its own interceptor. The repository-wide
 one-call scan now reports no `internal/client` alias; the sole remaining result
-belongs to the separately tracked `internal/apicodec` receipt. This correction
+belonged to the separately tracked `internal/apicodec` receipt and is corrected
+in the following consolidated batch. A second registered-test scan then found
+that two otherwise-direct BatchCommands encoding ports also invoked
+supplemental functions still marked `#[test]`; those calls are removed while
+the supplemental tests remain independently executable. These corrections
 found no additional production divergence.
 
 | Source file | Source declaration | Independently executable Rust port |
@@ -253,8 +257,8 @@ Final validation uses Go 1.25.12 and `nightly-2026-08-22`:
     # 207 passed; 0 failed
 
     make unit-test
-    # no-default: 1,238 passed; 2 configured skips
-    # all-features library: 1,213 passed; 6 configured skips
+    # no-default: 1,237 passed; 2 configured skips
+    # all-features library: 1,212 passed; 6 configured skips
 
     make check
     make doc
@@ -263,4 +267,4 @@ Final validation uses Go 1.25.12 and `nightly-2026-08-22`:
     cargo +nightly-2026-08-22 fmt --all -- --check
     git diff --check
 
-Mechanical source verification resolves the client-go checkout to `52c1e76cec993571493c81de442bcbef90cdc106`, finds exactly 19 `internal/client` artifacts, 51 distinct source `Test...` declarations, 32 direct importer files, and exactly 50 independently named ordinary Rust ports. Each of those 50 names has exactly one definition and no invocation from another test. The repository-wide one-call scan finds no alias in this package. `TestMain` is the sole harness disposition. The correction removed 40 aliases, activated 22 previously dropped async futures, added the missing `TestPanicInRecvLoop` identity, and found no production divergence; all production and consumer assignments from the 2026-08-25 re-audit remain valid.
+Mechanical source verification resolves the client-go checkout to `52c1e76cec993571493c81de442bcbef90cdc106`, finds exactly 19 `internal/client` artifacts, 51 distinct source `Test...` declarations, 32 direct importer files, and exactly 50 independently named ordinary Rust ports. Each of those 50 names has exactly one definition and no invocation from another registered test. The repository-wide one-call and registered-test scans find no package-local forwarding. `TestMain` is the sole harness disposition. The correction removed 40 aliases, activated 22 previously dropped async futures, added the missing `TestPanicInRecvLoop` identity, removed two residual registered-test calls, and found no production divergence; all production and consumer assignments from the 2026-08-25 re-audit remain valid.
