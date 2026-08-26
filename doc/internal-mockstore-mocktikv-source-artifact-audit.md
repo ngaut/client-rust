@@ -1,6 +1,6 @@
 # `internal/mockstore/mocktikv` source-artifact audit
 
-This is the independently re-audited atomic completion receipt for client-go's `internal/mockstore/mocktikv` package at pinned commit `52c1e76cec993571493c81de442bcbef90cdc106`. The 2026-08-26 re-audit reran the exact Go normal/race package suites, replayed every source assertion, and replaced grouped test evidence with 23 independently selectable Rust ports. It found omitted assertion rows but no additional production divergence. Earlier runtime testing already corrected transactional Get to set `GetResponse.not_found` for an absent key, matching real TiKV, client-go's response contract, and client-rust's transaction response processor. The Rust owner remains the hidden `tikv_client::mock::mocktikv` adapter plus the reusable standalone `unistore` engine crate, and validation uses `nightly-2026-08-22`.
+This is the independently re-audited atomic completion receipt for client-go's `internal/mockstore/mocktikv` package at pinned commit `52c1e76cec993571493c81de442bcbef90cdc106`. The 2026-08-26 re-audit reran the exact Go normal/race package suites and replayed every source assertion. A repository-wide follow-up then found that 22 of the 23 exact identities still came from a forwarding macro; those wrappers and the redundant marshal aggregate are now gone, and every source identity owns its Rust actions and assertions directly. The stronger ports found omitted assertion rows but no additional production divergence. Earlier runtime testing already corrected transactional Get to set `GetResponse.not_found` for an absent key, matching real TiKV, client-go's response contract, and client-rust's transaction response processor. The Rust owner remains the hidden `tikv_client::mock::mocktikv` adapter plus the reusable standalone `unistore` engine crate, and validation uses `nightly-2026-08-22`.
 
 ## Complete source inventory
 
@@ -43,36 +43,36 @@ There is no package `doc.go`, non-Go fixture, package-specific build file, gener
 
 ## Original tests and support artifacts
 
-All 23 ordinary source test declarations have independently selectable Rust identities named `source_go_internal_mockstore_mocktikv_<Go-name>`. `TestMain` is the separate goleak/lifecycle disposition.
+All 23 ordinary source test declarations have direct, independently selectable Rust identities named `source_go_internal_mockstore_mocktikv_<Go-name>`. There is no identity-generating macro, registered test-to-test call, or helper alias standing in for a Go test. `TestMain` is the separate goleak/lifecycle disposition.
 
-| client-go test | Independently executed Rust body |
+| client-go test | Direct Rust body |
 | --- | --- |
-| `TestMarshalmvccLock` | `assert_source_marshal_mvcc_lock` |
-| `TestMarshalmvccValue` | `assert_source_marshal_mvcc_value` |
-| `TestRegionContains` | `assert_source_test_region_contains` |
-| `TestGet` | `source_test_get` |
-| `TestGetWithLock` | `source_test_get_with_lock` |
-| `TestDelete` | `source_test_delete` |
-| `TestCleanupRollback` | `source_test_cleanup_rollback` |
-| `TestReverseScan` | `assert_source_test_reverse_scan` |
-| `TestScan` | `assert_source_test_scan` |
-| `TestBatchGet` | `source_test_batch_get` |
-| `TestScanLock` | `assert_source_test_scan_lock` |
-| `TestScanWithResolvedLock` | `assert_source_test_scan_with_resolved_lock` |
-| `TestCommitConflict` | `source_test_commit_conflict_and_idempotence` |
-| `TestResolveLock` | `assert_source_test_resolve_lock` |
-| `TestBatchResolveLock` | `assert_source_test_batch_resolve_lock` |
-| `TestGC` | `source_test_gc` |
-| `TestRollbackAndWriteConflict` | `source_test_rollback_and_write_conflict` |
-| `TestDeleteRange` | `source_test_delete_range` |
-| `TestRC` | `source_test_read_committed` |
-| `TestCheckTxnStatus` | `assert_source_test_check_txn_status` |
-| `TestRejectCommitTS` | `assert_source_test_reject_commit_ts` |
-| `TestMvccGetByKey` | `assert_source_test_mvcc_get_by_key` |
-| `TestTxnHeartBeat` | `assert_source_test_txn_heartbeat` |
+| `TestMarshalmvccLock` | `source_go_internal_mockstore_mocktikv_TestMarshalmvccLock` |
+| `TestMarshalmvccValue` | `source_go_internal_mockstore_mocktikv_TestMarshalmvccValue` |
+| `TestRegionContains` | `source_go_internal_mockstore_mocktikv_TestRegionContains` |
+| `TestGet` | `source_go_internal_mockstore_mocktikv_TestGet` |
+| `TestGetWithLock` | `source_go_internal_mockstore_mocktikv_TestGetWithLock` |
+| `TestDelete` | `source_go_internal_mockstore_mocktikv_TestDelete` |
+| `TestCleanupRollback` | `source_go_internal_mockstore_mocktikv_TestCleanupRollback` |
+| `TestReverseScan` | `source_go_internal_mockstore_mocktikv_TestReverseScan` |
+| `TestScan` | `source_go_internal_mockstore_mocktikv_TestScan` |
+| `TestBatchGet` | `source_go_internal_mockstore_mocktikv_TestBatchGet` |
+| `TestScanLock` | `source_go_internal_mockstore_mocktikv_TestScanLock` |
+| `TestScanWithResolvedLock` | `source_go_internal_mockstore_mocktikv_TestScanWithResolvedLock` |
+| `TestCommitConflict` | `source_go_internal_mockstore_mocktikv_TestCommitConflict` |
+| `TestResolveLock` | `source_go_internal_mockstore_mocktikv_TestResolveLock` |
+| `TestBatchResolveLock` | `source_go_internal_mockstore_mocktikv_TestBatchResolveLock` |
+| `TestGC` | `source_go_internal_mockstore_mocktikv_TestGC` |
+| `TestRollbackAndWriteConflict` | `source_go_internal_mockstore_mocktikv_TestRollbackAndWriteConflict` |
+| `TestDeleteRange` | `source_go_internal_mockstore_mocktikv_TestDeleteRange` |
+| `TestRC` | `source_go_internal_mockstore_mocktikv_TestRC` |
+| `TestCheckTxnStatus` | `source_go_internal_mockstore_mocktikv_TestCheckTxnStatus` |
+| `TestRejectCommitTS` | `source_go_internal_mockstore_mocktikv_TestRejectCommitTS` |
+| `TestMvccGetByKey` | `source_go_internal_mockstore_mocktikv_TestMvccGetByKey` |
+| `TestTxnHeartBeat` | `source_go_internal_mockstore_mocktikv_TestTxnHeartBeat` |
 | `TestMain` goleak harness | no spawned engine/cluster/PD tasks; handler and store close are explicit; both complete library configurations and doctests are awaited |
 
-The former grouped mapping omitted source assertions even though its production conclusions were correct. The independent ports restore every forward/reverse scan boundary and historical version, the distinct `ScanLock` start timestamps and four-lock inventory, resolved-lock setup, all resolve/batch-resolve keys and values, the second cleanup lock read, the post-delete timestamp, batch-pair errors, pre/post-GC visibility, intermediate delete-range snapshots, both RC timestamps, full transaction-status tuples/error metadata, exact marshal/region tables, and source heartbeat timestamps. All stronger tests pass without a production change.
+The former grouped mapping omitted source assertions even though its production conclusions were correct. A later exact-name layer made the tests selectable but still forwarded 22 names through `source_go_mocktikv_tests!`; this correction promotes those assertion bodies themselves to the exact identities and removes the duplicate executions. The direct ports retain every forward/reverse scan boundary and historical version, the distinct `ScanLock` start timestamps and four-lock inventory, resolved-lock setup, all resolve/batch-resolve keys and values, the second cleanup lock read, the post-delete timestamp, batch-pair errors, pre/post-GC visibility, intermediate delete-range snapshots, both RC timestamps, full transaction-status tuples/error metadata, exact marshal/region tables, and source heartbeat timestamps. All stronger tests pass without a production change.
 
 The Rust matrix adds coverage needed by production files that have no dedicated
 source test: pessimistic result/deadlock/rollback paths, ordered multiple wait
@@ -103,10 +103,10 @@ Completion requires 14/14 pinned artifact identity and the 6,689-line total; a 2
 Independent re-audit evidence on 2026-08-26:
 
 - exact source identity is `52c1e76cec993571493c81de442bcbef90cdc106`; all 14 hashes and 6,689 lines match, mechanical reconciliation finds 23 ordinary Go tests, 23 unique Rust identities, `TestMain`, and exactly nine direct consumers;
-- Go 1.25.12 passes the package normally in 0.021s and under the race detector in 1.074s;
-- all 23 independently named ports pass; UniStore passes 54 unit tests plus three external reuse tests, and the no-default client adapter passes all nine tests;
-- source-derived workspace inventories contain 1,063 no-default and 1,058 all-feature-library tests; complete main-library matrices pass 1,261/1,258 active tests plus one unrelated ignore;
-- canonical workspace matrices pass 1,335/1,314 tests plus one unrelated skip in each configuration;
+- Go 1.25.12 passes the package normally in 0.022s and under the race detector in 1.073s;
+- all 23 direct ports pass in both feature selections, with no identity macro, test-to-test call, missing name, extra name, or duplicate name; UniStore passes 43 unit tests plus three external reuse tests;
+- source-derived workspace inventories contain 1,040 no-default and 1,035 all-feature-library tests;
+- canonical workspace matrices pass 1,302/1,276 tests with two/six configured skips;
 - `make check` completes clean protocol generation, workspace all-target/all-feature checking, rustfmt, and strict Clippy; `make doc` completes private-item rustdoc and all 51 doctests; final formatting, source identity, inventory/declaration/consumer, and whitespace gates pass.
 
 The public generated-protocol namespace, downstream `CoprocessorHandler` implementation, ordinary-build injected-client construction, authoritative-MemDB transaction path, and transactional missing-versus-empty regression remain covered by their external tests. This independent unit-test audit found no reason to alter those production remediations.

@@ -1751,7 +1751,9 @@ mod tests {
         }
     }
 
-    fn assert_source_marshal_mvcc_lock() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestMarshalmvccLock() {
         let lock = LockRecord {
             start_ts: 47,
             primary: b"abc".to_vec(),
@@ -1768,7 +1770,9 @@ mod tests {
         );
     }
 
-    fn assert_source_marshal_mvcc_value() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestMarshalmvccValue() {
         let write = WriteRecord {
             write_type: WriteType::Put,
             start_ts: 42,
@@ -1779,12 +1783,6 @@ mod tests {
             WriteRecord::unmarshal_binary(&write.marshal_binary()).unwrap(),
             write
         );
-    }
-
-    #[test]
-    fn lock_and_write_binary_formats_round_trip() {
-        assert_source_marshal_mvcc_lock();
-        assert_source_marshal_mvcc_value();
     }
 
     #[test]
@@ -1853,7 +1851,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_get() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestGet() {
         let engine = MockEngine::new();
         assert_eq!(get(&engine, b"x", 10).unwrap(), None);
         put(&engine, b"x", b"x", 5, 10);
@@ -1863,7 +1862,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_get_with_lock() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestGetWithLock() {
         let engine = MockEngine::new();
         put(&engine, b"key", b"value", 5, 10);
         let errors = engine.prewrite(&PrewriteRequest {
@@ -1907,7 +1907,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_delete() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestDelete() {
         let engine = MockEngine::new();
         put(&engine, b"x", b"x5-10", 5, 10);
         delete(&engine, b"x", 15, 20);
@@ -1920,7 +1921,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_cleanup_rollback() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestCleanupRollback() {
         let engine = MockEngine::new();
         put(&engine, b"secondary", b"s-0", 1, 2);
         assert_eq!(
@@ -2083,7 +2085,9 @@ mod tests {
         engine
     }
 
-    fn assert_source_test_scan() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestScan() {
         let engine = source_scan_history();
 
         assert_scan(&engine, b"", b"", 0, 10, false, &[]);
@@ -2230,7 +2234,9 @@ mod tests {
         assert_scan(&engine, b"", b"", 5, 100, false, &latest);
     }
 
-    fn assert_source_test_reverse_scan() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestReverseScan() {
         let engine = source_scan_history();
 
         assert_scan(&engine, b"", b"Z", 0, 10, true, &[]);
@@ -2379,7 +2385,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_batch_get() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestBatchGet() {
         let engine = MockEngine::new();
         put(&engine, b"k1", b"v1", 1, 2);
         put(&engine, b"k2", b"v2", 1, 2);
@@ -2449,7 +2456,9 @@ mod tests {
         assert!(pairs.iter().all(|pair| pair.error.is_none()));
     }
 
-    fn assert_source_test_scan_lock() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestScanLock() {
         let engine = MockEngine::new();
         put(&engine, b"k1", b"v1", 1, 2);
         assert_eq!(
@@ -2489,7 +2498,9 @@ mod tests {
         );
     }
 
-    fn assert_source_test_scan_with_resolved_lock() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestScanWithResolvedLock() {
         let engine = MockEngine::new();
         assert_eq!(
             prewrite(&engine, &[(b"p1", b"v5"), (b"s1", b"v5")], b"p1", 5, 0),
@@ -2528,7 +2539,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_commit_conflict_and_idempotence() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestCommitConflict() {
         let engine = MockEngine::new();
         assert_eq!(prewrite(&engine, &[(b"x", b"A")], b"x", 5, 0), vec![None]);
         assert!(matches!(
@@ -2598,7 +2610,9 @@ mod tests {
         assert!(engine.scan_locks(b"", b"", 30).unwrap().is_empty());
     }
 
-    fn assert_source_test_resolve_lock() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestResolveLock() {
         let engine = MockEngine::new();
         assert_eq!(
             prewrite(&engine, &[(b"p1", b"v5"), (b"s1", b"v5")], b"p1", 5, 0),
@@ -2617,7 +2631,9 @@ mod tests {
         assert!(engine.scan_locks(b"", b"", 30).unwrap().is_empty());
     }
 
-    fn assert_source_test_batch_resolve_lock() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestBatchResolveLock() {
         let engine = MockEngine::new();
         for (start_ts, primary, pairs) in [
             (
@@ -2686,7 +2702,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_gc() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestGC() {
         let engine = MockEngine::new();
         put(&engine, b"k1", b"v1", 1, 2);
         put(&engine, b"k1", b"v2", 11, 12);
@@ -2724,7 +2741,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_rollback_and_write_conflict() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestRollbackAndWriteConflict() {
         let engine = MockEngine::new();
         put(&engine, b"test", b"test", 1, 3);
         let errors = prewrite(
@@ -2744,7 +2762,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_delete_range() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestDeleteRange() {
         let engine = MockEngine::new();
         for index in 1..=5_u64 {
             let key = index.to_string().into_bytes();
@@ -2812,7 +2831,8 @@ mod tests {
     }
 
     #[test]
-    fn source_test_read_committed() {
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestRC() {
         let engine = MockEngine::new();
         put(&engine, b"key", b"v1", 5, 10);
         assert_eq!(
@@ -2922,7 +2942,9 @@ mod tests {
         ));
     }
 
-    fn assert_source_test_check_txn_status() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestCheckTxnStatus() {
         let engine = MockEngine::new();
         let start_ts = 5_u64 << 18;
         assert_eq!(
@@ -2998,7 +3020,9 @@ mod tests {
         assert!(errors[0].is_some());
     }
 
-    fn assert_source_test_reject_commit_ts() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestRejectCommitTS() {
         let engine = MockEngine::new();
         assert_eq!(prewrite(&engine, &[(b"x", b"A")], b"x", 5, 0), vec![None]);
         engine
@@ -3039,7 +3063,9 @@ mod tests {
         assert!(engine.txn_heartbeat(b"pk", 6, 1000).is_err());
     }
 
-    fn assert_source_test_mvcc_get_by_key() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestMvccGetByKey() {
         let engine = MockEngine::new();
         assert_eq!(
             prewrite(&engine, &[(b"q1", b"v5")], b"p1", 5, 0),
@@ -3055,7 +3081,9 @@ mod tests {
         assert_eq!(lock.value, b"v5");
     }
 
-    fn assert_source_test_txn_heartbeat() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_internal_mockstore_mocktikv_TestTxnHeartBeat() {
         let engine = MockEngine::new();
         assert_eq!(
             prewrite(&engine, &[(b"pk", b"val")], b"pk", 5, 666),
@@ -3268,55 +3296,5 @@ mod tests {
         assert_eq!(reopened.raw_get("default", b"raw"), Some(b"value".to_vec()));
         reopened.close();
         std::fs::remove_dir_all(path).unwrap();
-    }
-
-    macro_rules! source_go_mocktikv_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
-    }
-
-    source_go_mocktikv_tests! {
-        source_go_internal_mockstore_mocktikv_TestMarshalmvccLock =>
-            assert_source_marshal_mvcc_lock,
-        source_go_internal_mockstore_mocktikv_TestMarshalmvccValue =>
-            assert_source_marshal_mvcc_value,
-        source_go_internal_mockstore_mocktikv_TestGet => source_test_get,
-        source_go_internal_mockstore_mocktikv_TestGetWithLock => source_test_get_with_lock,
-        source_go_internal_mockstore_mocktikv_TestDelete => source_test_delete,
-        source_go_internal_mockstore_mocktikv_TestCleanupRollback =>
-            source_test_cleanup_rollback,
-        source_go_internal_mockstore_mocktikv_TestReverseScan =>
-            assert_source_test_reverse_scan,
-        source_go_internal_mockstore_mocktikv_TestScan => assert_source_test_scan,
-        source_go_internal_mockstore_mocktikv_TestBatchGet => source_test_batch_get,
-        source_go_internal_mockstore_mocktikv_TestScanLock => assert_source_test_scan_lock,
-        source_go_internal_mockstore_mocktikv_TestScanWithResolvedLock =>
-            assert_source_test_scan_with_resolved_lock,
-        source_go_internal_mockstore_mocktikv_TestCommitConflict =>
-            source_test_commit_conflict_and_idempotence,
-        source_go_internal_mockstore_mocktikv_TestResolveLock =>
-            assert_source_test_resolve_lock,
-        source_go_internal_mockstore_mocktikv_TestBatchResolveLock =>
-            assert_source_test_batch_resolve_lock,
-        source_go_internal_mockstore_mocktikv_TestGC => source_test_gc,
-        source_go_internal_mockstore_mocktikv_TestRollbackAndWriteConflict =>
-            source_test_rollback_and_write_conflict,
-        source_go_internal_mockstore_mocktikv_TestDeleteRange => source_test_delete_range,
-        source_go_internal_mockstore_mocktikv_TestRC => source_test_read_committed,
-        source_go_internal_mockstore_mocktikv_TestCheckTxnStatus =>
-            assert_source_test_check_txn_status,
-        source_go_internal_mockstore_mocktikv_TestRejectCommitTS =>
-            assert_source_test_reject_commit_ts,
-        source_go_internal_mockstore_mocktikv_TestMvccGetByKey =>
-            assert_source_test_mvcc_get_by_key,
-        source_go_internal_mockstore_mocktikv_TestTxnHeartBeat =>
-            assert_source_test_txn_heartbeat,
     }
 }
