@@ -692,10 +692,15 @@ where
         let store_token_count = self.store_token_count(target_peer.store_id);
         let physical_store_id = physical_store.id;
         let physical_endpoint_type = crate::store::EndpointType::from_store(&physical_store);
+        let logical_endpoint_type = crate::store::EndpointType::from_store(&target_store);
+        let access_index =
+            self.region_cache
+                .access_index(&region, &target_peer, logical_endpoint_type);
         let mut route = RegionStore::new(region, Arc::new(kv_client))
             .with_target(physical_store.address)
             .with_physical_store(physical_store_id, physical_endpoint_type)
             .with_target_peer(target_peer)
+            .with_access_index(access_index)
             .with_resource_control_access_location(&self.zone_label, &target_store)
             .with_store_token_count(store_token_count);
         if let Some(health_status) = health_status {

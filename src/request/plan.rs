@@ -31,7 +31,10 @@ use crate::proto::pdpb::Timestamp;
 use crate::region::StoreId;
 use crate::region::{RegionVerId, RegionWithLeader};
 use crate::region_request::RpcCanceller;
-use crate::region_request::{region_error_access_message, region_error_label};
+use crate::region_request::{
+    backoff_error_with_rpc_context_and_advice, region_error_access_message, region_error_label,
+    request_error_message, RpcContext,
+};
 use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
@@ -420,7 +423,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 runtime_stats.record_rpc(command, started_at.elapsed());
             }
             if let Err(error) = &result {
-                let error = request_error_message(error);
+                let error = request_error_message(Some(error));
                 runtime_stats.record_error(error.clone());
                 if let (Some(peer_id), Some(store_id)) =
                     (self.logical_peer_id, self.logical_store_id)
@@ -600,13 +603,6 @@ const MULTI_STORES_CONCURRENCY: usize = 16;
 pub(crate) fn is_grpc_error(e: &Error) -> bool {
     matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
         || matches!(e, Error::Connection { source, .. } if is_grpc_error(source))
-}
-
-fn request_error_message(error: &Error) -> String {
-    match error {
-        Error::Connection { source, .. } => request_error_message(source),
-        _ => error.to_string(),
-    }
 }
 
 fn is_grpc_deadline_exceeded(e: &Error) -> bool {
@@ -1758,10 +1754,23 @@ where
         if is_grpc_error(&e) && invalidate_region {
             invalidate_connection_for_error(pd_client.as_ref(), &e, store).await;
         }
-        match backoff
-            .backoff(transport_backoff, format!("send store request error: {e}"))
-            .await
-        {
+        let rpc_context = route.as_ref().map(RpcContext::from_region_store);
+        let endpoint = route
+            .as_ref()
+            .map_or(crate::store::EndpointType::TiKv, |route| {
+                route.physical_endpoint_type
+            });
+        let transport_reason = if endpoint.is_tiflash_related() {
+            format!("send tiflash request error: {e}")
+        } else {
+            format!("send tikv request error: {e}")
+        };
+        let transport_reason = backoff_error_with_rpc_context_and_advice(
+            transport_reason,
+            rpc_context.as_ref(),
+            "try next peer later",
+        );
+        match backoff.backoff(transport_backoff, transport_reason).await {
             Ok(true) => {
                 plan.mark_retry_request();
                 if let Some(region) = retained_region {
@@ -3312,6 +3321,42 @@ mod test {
     use crate::proto::kvrpcpb::BatchGetResponse;
     use crate::request::PlanBuilder;
     use crate::store::Request;
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request3_TestLogging() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed_attempts = Arc::clone(&attempts);
+        let client = MockKvClient::with_dispatch_hook(move |request| {
+            assert!(request.is::<kvrpcpb::GetRequest>());
+            observed_attempts.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(kvrpcpb::GetResponse {
+                region_error: Some(errorpb::Error {
+                    not_leader: Some(errorpb::NotLeader::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let result = PlanBuilder::new(
+            Arc::new(MockPdClient::new(client)),
+            crate::request::Keyspace::Disable,
+            kvrpcpb::GetRequest {
+                key: b"key".to_vec(),
+                ..Default::default()
+            },
+        )
+        .retry_multi_region(Backoff::no_backoff())
+        .plan()
+        .execute()
+        .await;
+
+        let Error::RegionError(region_error) = result.unwrap_err() else {
+            panic!("hintless NotLeader must remain a typed region error")
+        };
+        assert!(region_error.not_leader.is_some());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
 
     fn region_store() -> RegionStore {
         RegionStore::new(MockPdClient::region1(), Arc::new(MockKvClient::default()))

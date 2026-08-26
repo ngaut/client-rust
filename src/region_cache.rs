@@ -3013,6 +3013,36 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .count()
     }
 
+    /// Returns the selected peer's index in client-go's endpoint-specific
+    /// `accessIndex` list. The list follows region peer order after excluding
+    /// unroutable peers and stores of the other endpoint class.
+    pub(crate) fn access_index(
+        &self,
+        region: &RegionWithLeader,
+        selected_peer: &metapb::Peer,
+        endpoint_type: EndpointType,
+    ) -> usize {
+        let stores = self.store_cache.read().unwrap();
+        let selected_is_tiflash = endpoint_type.is_tiflash_related();
+        let mut access_index = 0;
+        for peer in &region.region.peers {
+            if is_unroutable_peer(region, peer) {
+                continue;
+            }
+            let peer_is_tiflash = stores
+                .get(&peer.store_id)
+                .is_some_and(|store| EndpointType::from_store(&store.meta).is_tiflash_related());
+            if peer_is_tiflash != selected_is_tiflash {
+                continue;
+            }
+            if peer.id == selected_peer.id {
+                return access_index;
+            }
+            access_index += 1;
+        }
+        0
+    }
+
     pub(crate) fn set_store_liveness(&self, store_id: StoreId, liveness: StoreLiveness) -> bool {
         let store = self
             .store_cache

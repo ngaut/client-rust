@@ -1390,3 +1390,23 @@ tests, 1,386 all-feature library tests, strict clean-generation/check/Clippy,
 private rustdoc, all 51 doctests, rustfmt, exact inventory/declaration/importer
 reconciliation, source identity, and whitespace checks. This receipt is the
 package-sized integration boundary.
+
+Plan correction (2026-08-26): a repository-wide forwarding-macro scan found
+six `internal/locate` source identities in `src/region_request.rs` that the
+earlier file-scoped closeout scan had missed. The package was reopened before
+starting another batch. The forwarding macro and two aggregate owner tests are
+gone; `TestRegionRequestSenderString`, `TestRegionRequestStats`,
+`TestGetErrMsg`, `TestRPCContextString`, `TestBackoffErrWithRPCContext`, and
+`TestLogging` are now independent direct ports, with the last test exercising
+an actual Get/NotLeader request path. Assertion-level comparison also restored
+the production diagnostic boundary: executable routes carry source access
+indexes, derive logical/proxy RPC context, print complete descriptor-driven
+gogo protobuf text, unwrap transport causes, and attach context plus source
+advice to TiKV/TiFlash backoff reasons. Mechanical reconciliation again finds
+142/142 unique identities, with zero differences, duplicates, forwarding
+mappings, or registered test-to-test calls. The complete source-derived suites
+pass 328 tests plus one source skip without default features and 324 tests plus
+five source skips with all features. Canonical workspace matrices pass 1,326
+no-default tests with two configured skips and 1,300 all-feature library tests
+with six configured skips. This correction supersedes the earlier claim that
+the first closeout scan itself had already proved zero forwarding mappings.
