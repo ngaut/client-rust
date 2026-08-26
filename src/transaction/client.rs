@@ -93,6 +93,7 @@ pub struct Client {
     keyspace_name: Option<String>,
     latches: Option<Arc<LatchesScheduler>>,
     lock_resolver_context: ResolveLocksContext,
+    enable_async_batch_get: bool,
 }
 
 impl Clone for Client {
@@ -104,6 +105,7 @@ impl Clone for Client {
             keyspace_name: self.keyspace_name.clone(),
             latches: self.latches.clone(),
             lock_resolver_context: self.lock_resolver_context.clone(),
+            enable_async_batch_get: self.enable_async_batch_get,
         }
     }
 }
@@ -244,6 +246,7 @@ impl Client {
             keyspace_name,
             latches,
             lock_resolver_context: ResolveLocksContext::default(),
+            enable_async_batch_get: config.enable_async_batch_get,
         })
     }
 
@@ -278,6 +281,7 @@ impl Client {
             keyspace_name: None,
             latches,
             lock_resolver_context: ResolveLocksContext::default(),
+            enable_async_batch_get: config.enable_async_batch_get,
         })
     }
 
@@ -638,6 +642,7 @@ impl Client {
         );
         transaction.set_lock_resolver_context(self.lock_resolver_context.clone());
         transaction.set_read_timestamp_validator(self.read_timestamp_validator.clone());
+        transaction.set_enable_async_batch_get(self.enable_async_batch_get);
         transaction
     }
 

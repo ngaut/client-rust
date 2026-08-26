@@ -277,6 +277,36 @@ impl PdClient for MockPdClient {
         Ok(RegionStore::new(region, Arc::new(self.client.clone())))
     }
 
+    async fn map_region_to_store_with_replica(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        config: crate::ReplicaReadConfig,
+        _selector_state: crate::locate::ReplicaSelectorState,
+        _is_read_request: bool,
+    ) -> Result<RegionStore> {
+        if config.stale_read
+            || matches!(
+                config.read_type,
+                crate::ReplicaReadType::Follower | crate::ReplicaReadType::Mixed
+            )
+        {
+            let leader_id = region.leader.as_ref().map(|peer| peer.id);
+            if let Some(follower) = region
+                .region
+                .peers
+                .iter()
+                .find(|peer| Some(peer.id) != leader_id)
+                .cloned()
+            {
+                return Ok(RegionStore::new(region, Arc::new(self.client.clone()))
+                    .with_target_peer(follower)
+                    .with_stale_read(config.stale_read)
+                    .with_busy_threshold(config.busy_threshold_ms));
+            }
+        }
+        self.map_region_to_store(region).await
+    }
+
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let bytes: &[_] = key.into();
         if let Some(regions) = self.regions.lock().unwrap().as_ref() {

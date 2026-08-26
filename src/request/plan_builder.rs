@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use super::plan::CountLockResolverAction;
 use super::plan::PreserveShard;
+use super::plan::ValidateSnapshotVisibility;
 use super::Keyspace;
 use crate::backoff::Backoff;
 use crate::interceptor::RpcInterceptorChain;
@@ -87,6 +88,9 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 target: String::new(),
                 forwarded_host: String::new(),
                 replica_read_config: ReplicaReadConfig::default(),
+                snapshot_replica_read_base_config: None,
+                snapshot_replica_read_adjuster: None,
+                region_with_leader: None,
                 replica_selector_state: crate::locate::ReplicaSelectorState::default(),
                 store_health: None,
                 record_client_side_slow_score: false,
@@ -197,6 +201,19 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self
     }
 
+    /// Apply client-go's snapshot BatchGet replica adjustment after each
+    /// physical region shard is known, rather than to the logical key set.
+    pub(crate) fn snapshot_replica_read_adjuster(
+        mut self,
+        adjuster: Option<crate::ReplicaReadAdjuster>,
+    ) -> Self {
+        self.plan.snapshot_replica_read_base_config = adjuster
+            .as_ref()
+            .map(|_| self.plan.replica_read_config.clone());
+        self.plan.snapshot_replica_read_adjuster = adjuster;
+        self
+    }
+
     /// Attach client-go-compatible physical request runtime statistics.
     /// The collector is shared by every shard and sender retry.
     pub fn region_request_runtime_stats(
@@ -254,6 +271,33 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 option: crate::oracle::OracleOption { txn_scope },
             });
         self
+    }
+
+    /// Check source snapshot visibility after a successful physical response.
+    /// Scanner plans place this wrapper inside lock resolution so a stale
+    /// snapshot fails before resolving a response-level lock.
+    pub(crate) fn validate_snapshot_visibility(
+        self,
+        validator: Option<Arc<dyn crate::SnapshotVisibilityValidator>>,
+        read_timestamp: u64,
+    ) -> PlanBuilder<PdC, ValidateSnapshotVisibility<Dispatch<Req>>, NoTarget>
+    where
+        Req::Response: HasRegionError,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client,
+            plan: ValidateSnapshotVisibility {
+                inner: self.plan,
+                validator,
+                read_timestamp,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
     }
 
     /// Set the API V2 keyspace name carried by every clone and shard of this request.
@@ -504,17 +548,15 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         }
     }
 
-    /// Resolve only a response-level snapshot lock. Pair-level errors remain
-    /// attached for the scanner to recover with key-local point reads.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn resolve_response_lock_for_read(
+    /// Resolve only a response-level scanner lock with client-go's ordinary
+    /// `LockResolver.ResolveLocks` path. Pair-level errors remain attached for
+    /// key-local point reads, which separately use read-through resolution.
+    pub(crate) fn resolve_response_lock_for_scan(
         self,
         timestamp: Timestamp,
         backoff: Backoff,
         keyspace: Keyspace,
-        read_lock_context: ReadLockContext,
         mut resolve_locks_context: ResolveLocksContext,
-        snapshot_runtime_stats: Option<Arc<crate::SnapshotRuntimeStats>>,
         snapshot_variables: Arc<crate::Variables>,
     ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
@@ -539,12 +581,9 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 resource_control: self.resource_control.clone(),
                 ru_details: self.ru_details.clone(),
                 resolve_locks_context,
-                read_lock_context: Some(read_lock_context),
-                snapshot_lock_backoff: Some(SnapshotLockBackoff::new(
-                    snapshot_runtime_stats.clone(),
-                    snapshot_variables,
-                )),
-                snapshot_runtime_stats,
+                read_lock_context: None,
+                snapshot_lock_backoff: Some(SnapshotLockBackoff::new(None, snapshot_variables)),
+                snapshot_runtime_stats: None,
                 response_locks_only: true,
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
@@ -884,6 +923,7 @@ where
                 concurrency: concurrency.max(1),
                 one_region: None,
                 snapshot_region_scope: None,
+                snapshot_async_batch_get: false,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -911,6 +951,12 @@ where
     /// Record the source snapshot's initial distinct-region count.
     pub(crate) fn observe_snapshot_regions(mut self, internal: bool) -> Self {
         self.plan.snapshot_region_scope = Some(internal);
+        self
+    }
+
+    /// Enable client-go's callback-path-only BatchGet result counters.
+    pub(crate) fn async_batch_get_metrics(mut self, enabled: bool) -> Self {
+        self.plan.snapshot_async_batch_get = enabled;
         self
     }
 }

@@ -20,7 +20,7 @@ use crate::async_util::Cancellation;
 use crate::backoff::Backoff;
 use crate::interceptor::RpcInterceptorChain;
 use crate::kv::Variables;
-use crate::kv::{AccessLocationType, ReplicaReadConfig};
+use crate::kv::{AccessLocationType, ReplicaReadAdjuster, ReplicaReadConfig};
 use crate::locate::ReplicaSelectorState;
 use crate::oracle::{OracleOption, ReadTimestampValidator};
 use crate::pd::PdClient;
@@ -104,6 +104,42 @@ impl<P: Plan> Plan for RpcCancellable<P> {
     }
 }
 
+/// Run the store-owned GC visibility check after a successful physical
+/// response but before scanner lock processing.
+///
+/// client-go's scanner handles region errors first, then calls
+/// `CheckVisibility`, and only afterwards resolves response-level key locks.
+#[derive(Clone)]
+pub struct ValidateSnapshotVisibility<P> {
+    pub inner: P,
+    pub validator: Option<Arc<dyn crate::SnapshotVisibilityValidator>>,
+    pub read_timestamp: u64,
+}
+
+#[async_trait]
+impl<P> Plan for ValidateSnapshotVisibility<P>
+where
+    P: Plan,
+    P::Result: HasRegionError,
+{
+    type Result = P::Result;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut response = self.inner.execute().await?;
+        if response.region_error().is_none() {
+            if let Some(validator) = &self.validator {
+                validator.check_visibility(self.read_timestamp).await?;
+            }
+        }
+        Ok(response)
+    }
+
+    fn set_read_lock_context(&mut self, resolved_locks: Vec<u64>, committed_locks: Vec<u64>) {
+        self.inner
+            .set_read_lock_context(resolved_locks, committed_locks);
+    }
+}
+
 /// The simplest plan which just dispatches a request to a specific kv server.
 #[derive(Clone)]
 pub struct Dispatch<Req: KvRequest> {
@@ -139,6 +175,13 @@ pub struct Dispatch<Req: KvRequest> {
     pub forwarded_host: String,
     /// Stable source replica-read selector settings for this sharded plan.
     pub replica_read_config: ReplicaReadConfig,
+    /// Unadjusted snapshot selector settings used to recompute client-go's
+    /// per-region BatchGet adjustment after sharding and locked-key retries.
+    pub(crate) snapshot_replica_read_base_config: Option<ReplicaReadConfig>,
+    pub(crate) snapshot_replica_read_adjuster: Option<ReplicaReadAdjuster>,
+    /// Region route retained so a stale read that meets a lock can rebuild a
+    /// direct leader request before its next physical send.
+    pub(crate) region_with_leader: Option<RegionWithLeader>,
     /// Per-request source selector state. This remains internal so public
     /// replica-read configuration stays stable across independent requests.
     pub(crate) replica_selector_state: ReplicaSelectorState,
@@ -182,6 +225,38 @@ pub(crate) struct ReadTimestampValidation {
     pub(crate) read_timestamp: u64,
     pub(crate) stale_read: bool,
     pub(crate) option: OracleOption,
+}
+
+impl<Req: KvRequest> Dispatch<Req> {
+    pub(crate) fn refresh_snapshot_replica_read_adjustment(&mut self) {
+        let (Some(base), Some(adjuster)) = (
+            self.snapshot_replica_read_base_config.as_ref(),
+            self.snapshot_replica_read_adjuster.as_ref(),
+        ) else {
+            return;
+        };
+        let request = &self.request as &dyn std::any::Any;
+        let item_count = request
+            .downcast_ref::<kvrpcpb::BatchGetRequest>()
+            .map(|request| request.keys.len())
+            .or_else(|| {
+                request
+                    .downcast_ref::<kvrpcpb::BufferBatchGetRequest>()
+                    .map(|request| request.keys.len())
+            });
+        let Some(item_count) = item_count else {
+            return;
+        };
+
+        let mut config = base.clone();
+        if config.read_type.is_follower_read() {
+            config.apply_adjustment(adjuster(item_count));
+        }
+        self.replica_read_config = config;
+        // client-go creates a new RegionRequestSender for every reconstructed
+        // BatchGet request, including a locked-key-only retry.
+        self.replica_selector_state = ReplicaSelectorState::default();
+    }
 }
 
 #[async_trait]
@@ -479,10 +554,18 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
     /// error unchanged.
     async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool>;
 
-    /// Create a child retry state for a concurrently dispatched shard. The
-    /// cancellation handle is shared by sibling children for first-error
-    /// cancellation, as in RawKV's `Backoffer.Fork` topology.
+    /// Create a child retry state for a concurrently dispatched request. The
+    /// cancellation handle is shared by descendant children. RawKV uses a
+    /// child per shard for first-error cancellation; snapshot BatchGet keeps
+    /// this first child as its final region backoffer.
     fn fork(&self) -> (Self, Cancellation);
+
+    /// Clone the already-forked state for a concurrent snapshot sibling.
+    /// Unlike [`Clone`], implementations backed by a shared retry owner must
+    /// copy the owner state while retaining the fork's cancellation context.
+    fn clone_for_snapshot_sibling(&self) -> Self {
+        self.clone()
+    }
 
     /// Merge the accounting from the final completed child once it is no
     /// longer used. Legacy `Backoff` intentionally keeps its old independent
@@ -641,6 +724,19 @@ impl RegionRetryState for SnapshotRegionBackoff {
         )
     }
 
+    fn clone_for_snapshot_sibling(&self) -> Self {
+        let backoff = self
+            .backoff
+            .try_lock()
+            .expect("snapshot retry owner must be idle while it is cloned")
+            .clone();
+        Self {
+            backoff: Arc::new(Mutex::new(backoff)),
+            stats: self.stats.clone(),
+            disabled: self.disabled,
+        }
+    }
+
     fn update_using_forked(&mut self, forked: &Self) {
         let forked = forked
             .backoff
@@ -781,6 +877,9 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient, R: RegionRetryState = Ba
     /// Initial batch-get sharding reports the number of distinct regions for
     /// client-go's snapshot metric. Retries deliberately clear this field.
     pub(crate) snapshot_region_scope: Option<bool>,
+    /// Whether the source async-callback BatchGet path is enabled. This only
+    /// controls callback-specific outcome counters; both source paths fan out.
+    pub(crate) snapshot_async_batch_get: bool,
 }
 
 #[allow(private_bounds)]
@@ -798,6 +897,7 @@ where
         preserve_region_results: bool,
         one_region: Option<bool>,
         snapshot_region_scope: Option<bool>,
+        snapshot_async_batch_get: bool,
     ) -> (Result<<Self as Plan>::Result>, R) {
         let mut shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
         if let Some(internal) = snapshot_region_scope {
@@ -810,6 +910,16 @@ where
                 crate::stats::observe_snapshot_regions(internal, regions);
             }
         }
+        if let Some(error_index) = shards.iter().position(Result::is_err) {
+            let error = match shards.remove(error_index) {
+                Err(error) => error,
+                Ok(_) => unreachable!("selected shard entry must be an error"),
+            };
+            // client-go finishes GroupKeysByRegion/LocateKey before spawning
+            // any physical request. A later grouping failure therefore must
+            // not race already-started shards.
+            return (Err(error), backoff);
+        }
         if let Some(reverse) = one_region {
             let selected = if reverse {
                 shards.pop()
@@ -821,22 +931,64 @@ where
             shards = selected.into_iter().collect();
         }
         let shards_len = shards.len();
-        let record_async_batch_get_metric = snapshot_region_scope.is_some() && shards_len > 1;
+        let record_async_batch_get_metric =
+            snapshot_region_scope.is_some() && snapshot_async_batch_get && shards_len > 1;
         debug!("single_plan_handler, shards: {}", shards_len);
+        if shards_len == 0 {
+            return (Ok(Vec::new()), backoff);
+        }
+        if shards_len == 1 {
+            let (shard, region) = shards
+                .pop()
+                .expect("single shard must exist")
+                .expect("all shard lookups were validated before dispatch");
+            let mut plan = current_plan.clone_then_apply_shard(shard);
+            plan.set_async_batch_get_metrics(false);
+            if let Some(owner) = backoff.snapshot_retry_owner() {
+                plan.set_snapshot_retry_owner(owner);
+            }
+            // Get, one-region BatchGet, and scanner refills use their owning
+            // backoffer directly in client-go. Forking is fanout-only.
+            return Self::single_shard_handler(
+                pd_client,
+                plan,
+                region,
+                backoff,
+                permits,
+                preserve_region_results,
+                one_region,
+            )
+            .await;
+        }
         let (forked_backoff, cancel) = backoff.fork();
+        let mut forked_backoff = Some(forked_backoff);
         let mut join_set = JoinSet::new();
         for (idx, shard) in shards.into_iter().enumerate() {
-            let (shard, region) = match shard {
-                Ok(shard) => shard,
-                Err(e) => {
-                    join_set.shutdown().await;
-                    return (Err(e), backoff);
-                }
-            };
+            let (shard, region) = shard.expect("all shard lookups were validated before fanout");
             let mut clone = current_plan.clone_then_apply_shard(shard);
             clone.set_async_batch_get_metrics(record_async_batch_get_metric);
             let pd_client = pd_client.clone();
-            let (backoff, _) = forked_backoff.fork();
+            let backoff = if snapshot_region_scope.is_some() {
+                // client-go forks the request backoffer once, clones that
+                // fork for every non-final region batch, and gives the fork
+                // itself to the final batch.
+                if idx + 1 == shards_len {
+                    forked_backoff
+                        .take()
+                        .expect("final snapshot shard must own the forked backoffer")
+                } else {
+                    forked_backoff
+                        .as_ref()
+                        .expect("snapshot backoffer must exist before the final shard")
+                        .clone_for_snapshot_sibling()
+                }
+            } else {
+                forked_backoff
+                    .as_ref()
+                    .expect("raw multi-region parent backoffer must exist")
+                    .fork()
+                    .0
+            };
             if let Some(owner) = backoff.snapshot_retry_owner() {
                 clone.set_snapshot_retry_owner(owner);
             }
@@ -861,16 +1013,26 @@ where
         let mut results = std::iter::repeat_with(|| None)
             .take(shards_len)
             .collect::<Vec<Option<Result<<Self as Plan>::Result>>>>();
-        let mut has_error = false;
+        let snapshot_waits_for_all_shards = snapshot_region_scope.is_some();
+        let mut selected_error_index = None;
         let mut last_forked = None;
         while let Some(joined) = join_set.join_next().await {
             let (index, (result, forked)) = match joined {
                 Ok(joined) => joined,
                 Err(error) => return (Err(error.into()), backoff),
             };
-            if result.is_err() && !has_error {
-                cancel.cancel();
-                has_error = true;
+            if result.is_err() {
+                if snapshot_waits_for_all_shards {
+                    // client-go's synchronous and callback BatchGet fanout
+                    // both wait for every region and overwrite the returned
+                    // error in completion order.
+                    selected_error_index = Some(index);
+                } else if selected_error_index.is_none() {
+                    // RawKV fanout cancels sibling retry owners and retains
+                    // the first completed error.
+                    selected_error_index = Some(index);
+                    cancel.cancel();
+                }
             }
             last_forked = Some(forked);
             results[index] = Some(result);
@@ -878,15 +1040,16 @@ where
         if let Some(forked) = last_forked.as_ref() {
             backoff.update_using_forked(forked);
         }
-        let results = results
-            .into_iter()
-            .map(|result| result.expect("successful shard task must produce a result"))
-            .collect::<Vec<_>>();
 
-        if !has_error {
-            cancel.cancel();
-        }
+        // client-go defers the fork cancellation: snapshot errors must not
+        // cancel in-flight siblings, but the fork is always released after
+        // every region callback or goroutine has completed.
+        cancel.cancel();
         if preserve_region_results {
+            let results = results
+                .into_iter()
+                .map(|result| result.expect("completed shard task must produce a result"))
+                .collect::<Vec<_>>();
             (
                 Ok(results
                     .into_iter()
@@ -895,7 +1058,22 @@ where
                     .collect()),
                 backoff,
             )
+        } else if let Some(error_index) = selected_error_index {
+            let error = match results
+                .into_iter()
+                .nth(error_index)
+                .expect("selected shard index must exist")
+                .expect("completed failing shard must produce a result")
+            {
+                Err(error) => error,
+                Ok(_) => unreachable!("selected shard result must be an error"),
+            };
+            (Err(error), backoff)
         } else {
+            let results = results
+                .into_iter()
+                .map(|result| result.expect("completed shard task must produce a result"))
+                .collect::<Vec<_>>();
             (
                 results
                     .into_iter()
@@ -1255,6 +1433,7 @@ where
                                 preserve_region_results,
                                 one_region,
                                 None,
+                                false,
                             )
                             .await;
                         }
@@ -1454,6 +1633,7 @@ where
                         preserve_region_results,
                         one_region,
                         None,
+                        false,
                     )
                     .await
                 }
@@ -1902,6 +2082,7 @@ impl<P: Plan, PdC: PdClient, R: RegionRetryState> Clone for RetryableMultiRegion
             concurrency: self.concurrency,
             one_region: self.one_region,
             snapshot_region_scope: self.snapshot_region_scope,
+            snapshot_async_batch_get: self.snapshot_async_batch_get,
         }
     }
 }
@@ -1916,10 +2097,15 @@ where
     type Result = Vec<Result<P::Result>>;
 
     async fn execute(&self) -> Result<Self::Result> {
-        // Limit the maximum concurrency of multi-region request. If there are
-        // too many concurrent requests, TiKV is more likely to return a "TiKV
-        // is busy" error
-        let concurrency_permits = Arc::new(Semaphore::new(self.concurrency.max(1)));
+        // The generic Rust plan caps multi-region concurrency. client-go's
+        // snapshot BatchGet sends every initial region batch concurrently;
+        // its optional worker pool applies only to callback retry work.
+        let concurrency = if self.snapshot_region_scope.is_some() {
+            Semaphore::MAX_PERMITS
+        } else {
+            self.concurrency.max(1)
+        };
+        let concurrency_permits = Arc::new(Semaphore::new(concurrency));
         Self::single_plan_handler(
             self.pd_client.clone(),
             self.inner.clone(),
@@ -1928,6 +2114,7 @@ where
             self.preserve_region_results,
             self.one_region,
             self.snapshot_region_scope,
+            self.snapshot_async_batch_get,
         )
         .await
         .0
@@ -2318,6 +2505,9 @@ where
                 }
                 return Ok(result);
             }
+            // client-go consumes a configurable snapshot read timeout on the
+            // first physical send only. Any resend after observing a lock is
+            // a retry request and uses the normal short/medium deadline.
             // Response keys are logical after API V2 transport decoding, but
             // Rust's sharding and request objects retain physical keys.
             let resolver_locks = locks.clone().encode_keyspace(self.keyspace, KeyMode::Txn);
@@ -2347,7 +2537,7 @@ where
                         });
                     }
                     if locks.is_empty() {
-                        result = clone.execute_inner().await?;
+                        result = clone.execute_inner_retry().await?;
                         continue;
                     }
                 } else {
@@ -2424,7 +2614,7 @@ where
             let lock_result = lock_result?;
             let live_locks = lock_result.live_locks;
             if live_locks.is_empty() {
-                result = clone.execute_inner().await?;
+                result = clone.execute_inner_retry().await?;
             } else if let Some(snapshot_lock_backoff) = clone.snapshot_lock_backoff.as_mut() {
                 // client-go only waits when the resolver reports a positive
                 // remaining TTL. A zero TTL is retried immediately.
@@ -2437,7 +2627,7 @@ where
                         )
                         .await?;
                 }
-                result = clone.execute_inner().await?;
+                result = clone.execute_inner_retry().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError(live_locks)),
@@ -2453,7 +2643,7 @@ where
                         if let Some(stats) = &self.snapshot_runtime_stats {
                             stats.record_backoff("txnLockFast", delay_duration);
                         }
-                        result = clone.execute_inner().await?;
+                        result = clone.execute_inner_retry().await?;
                     }
                 }
             }
@@ -2469,6 +2659,26 @@ impl<P: Plan, PdC: PdClient> ResolveLock<P, PdC> {
             inner.set_read_lock_context(resolved_locks, committed_locks);
         }
         inner.execute().await
+    }
+}
+
+impl<P: Plan + Shardable, PdC: PdClient> ResolveLock<P, PdC> {
+    async fn execute_inner_retry(&mut self) -> Result<P::Result> {
+        self.inner.mark_retry_request();
+        if let Some(region) = self.inner.lock_retry_region() {
+            let store = self
+                .pd_client
+                .clone()
+                .map_region_to_store_with_replica(
+                    region,
+                    self.inner.replica_read_config(),
+                    ReplicaSelectorState::default(),
+                    self.inner.is_read_request(),
+                )
+                .await?;
+            self.inner.apply_store(&store)?;
+        }
+        self.execute_inner().await
     }
 }
 
@@ -2788,6 +2998,66 @@ mod test {
     use tokio::sync::Barrier;
 
     use super::*;
+
+    #[derive(Clone)]
+    struct VisibilityResponsePlan(kvrpcpb::BatchGetResponse);
+
+    #[async_trait]
+    impl Plan for VisibilityResponsePlan {
+        type Result = kvrpcpb::BatchGetResponse;
+
+        async fn execute(&self) -> Result<Self::Result> {
+            Ok(self.0.clone())
+        }
+    }
+
+    struct VisibilityFailure {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl crate::SnapshotVisibilityValidator for VisibilityFailure {
+        async fn check_visibility(&self, _: u64) -> Result<()> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(Error::StringError("snapshot visibility failed".to_owned()))
+        }
+    }
+
+    #[tokio::test]
+    async fn source_scanner_visibility_precedes_key_lock_processing_and_skips_region_errors() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let validator: Arc<dyn crate::SnapshotVisibilityValidator> = Arc::new(VisibilityFailure {
+            calls: Arc::clone(&calls),
+        });
+        let key_locked = ValidateSnapshotVisibility {
+            inner: VisibilityResponsePlan(kvrpcpb::BatchGetResponse {
+                error: Some(kvrpcpb::KeyError {
+                    locked: Some(kvrpcpb::LockInfo::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            validator: Some(Arc::clone(&validator)),
+            read_timestamp: 42,
+        };
+
+        assert_eq!(
+            key_locked.execute().await.unwrap_err().to_string(),
+            "snapshot visibility failed"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let region_error = ValidateSnapshotVisibility {
+            inner: VisibilityResponsePlan(kvrpcpb::BatchGetResponse {
+                region_error: Some(errorpb::Error::default()),
+                ..Default::default()
+            }),
+            validator: Some(validator),
+            read_timestamp: 42,
+        };
+        assert!(region_error.execute().await.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn source_multi_region_retry_reshards_terminal_region_errors() {
@@ -4039,6 +4309,7 @@ mod test {
     #[derive(Clone)]
     struct RecordingRetryState {
         forks: Arc<AtomicUsize>,
+        snapshot_sibling_clones: Arc<AtomicUsize>,
         merges: Arc<AtomicUsize>,
     }
 
@@ -4053,6 +4324,11 @@ mod test {
             (self.clone(), Cancellation::default())
         }
 
+        fn clone_for_snapshot_sibling(&self) -> Self {
+            self.snapshot_sibling_clones.fetch_add(1, Ordering::SeqCst);
+            self.clone()
+        }
+
         fn update_using_forked(&mut self, _forked: &Self) {
             self.merges.fetch_add(1, Ordering::SeqCst);
         }
@@ -4065,6 +4341,7 @@ mod test {
     struct CancellationProbeRetryState {
         cancellation: Cancellation,
         cancellation_seen: Arc<AtomicUsize>,
+        backoff_completed: Arc<AtomicUsize>,
     }
 
     #[async_trait]
@@ -4075,7 +4352,10 @@ mod test {
                     self.cancellation_seen.fetch_add(1, Ordering::SeqCst);
                     Err(Error::StringError("sibling retry cancelled".to_owned()))
                 }
-                _ = sleep(Duration::from_secs(1)) => Ok(true),
+                _ = sleep(Duration::from_millis(25)) => {
+                    self.backoff_completed.fetch_add(1, Ordering::SeqCst);
+                    Err(Error::StringError("sibling retry completed".to_owned()))
+                },
             }
         }
 
@@ -4085,6 +4365,7 @@ mod test {
                 Self {
                     cancellation: cancellation.clone(),
                     cancellation_seen: self.cancellation_seen.clone(),
+                    backoff_completed: self.backoff_completed.clone(),
                 },
                 cancellation,
             )
@@ -4396,6 +4677,7 @@ mod test {
             concurrency: MULTI_REGION_CONCURRENCY,
             one_region: None,
             snapshot_region_scope: None,
+            snapshot_async_batch_get: false,
         };
         assert!(plan.execute().await.is_err())
     }
@@ -4421,6 +4703,7 @@ mod test {
     async fn cumulative_retry_state_forks_each_shard_and_merges_the_final_child() {
         let retry = RecordingRetryState {
             forks: Arc::new(AtomicUsize::new(0)),
+            snapshot_sibling_clones: Arc::new(AtomicUsize::new(0)),
             merges: Arc::new(AtomicUsize::new(0)),
         };
         let forks = retry.forks.clone();
@@ -4433,12 +4716,66 @@ mod test {
             concurrency: MULTI_REGION_CONCURRENCY,
             one_region: None,
             snapshot_region_scope: None,
+            snapshot_async_batch_get: false,
         };
 
         assert_eq!(plan.execute().await.unwrap().len(), 2);
         // One parent child plus one child for each source region batch.
         assert_eq!(forks.load(Ordering::SeqCst), 3);
         assert_eq!(merges.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_forks_once_and_clones_non_final_region_backoffers() {
+        let retry = RecordingRetryState {
+            forks: Arc::new(AtomicUsize::new(0)),
+            snapshot_sibling_clones: Arc::new(AtomicUsize::new(0)),
+            merges: Arc::new(AtomicUsize::new(0)),
+        };
+        let forks = retry.forks.clone();
+        let snapshot_sibling_clones = retry.snapshot_sibling_clones.clone();
+        let merges = retry.merges.clone();
+        let plan = RetryableMultiRegion {
+            inner: TwoShardPlan,
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: retry,
+            preserve_region_results: false,
+            concurrency: MULTI_REGION_CONCURRENCY,
+            one_region: None,
+            snapshot_region_scope: Some(false),
+            snapshot_async_batch_get: false,
+        };
+
+        assert_eq!(plan.execute().await.unwrap().len(), 2);
+        assert_eq!(forks.load(Ordering::SeqCst), 1);
+        assert_eq!(snapshot_sibling_clones.load(Ordering::SeqCst), 1);
+        assert_eq!(merges.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn source_single_region_snapshot_paths_do_not_fork_the_backoffer() {
+        let retry = RecordingRetryState {
+            forks: Arc::new(AtomicUsize::new(0)),
+            snapshot_sibling_clones: Arc::new(AtomicUsize::new(0)),
+            merges: Arc::new(AtomicUsize::new(0)),
+        };
+        let forks = retry.forks.clone();
+        let merges = retry.merges.clone();
+        let plan = RetryableMultiRegion {
+            inner: TwoShardPlan,
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: retry,
+            preserve_region_results: false,
+            concurrency: MULTI_REGION_CONCURRENCY,
+            // Scanner routing narrows the candidate regions before dispatch.
+            one_region: Some(false),
+            snapshot_region_scope: None,
+            snapshot_async_batch_get: false,
+        };
+
+        assert_eq!(plan.execute().await.unwrap().len(), 1);
+        assert_eq!(forks.load(Ordering::SeqCst), 0);
+        assert_eq!(merges.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -4453,14 +4790,57 @@ mod test {
             backoff: CancellationProbeRetryState {
                 cancellation: Cancellation::default(),
                 cancellation_seen: cancellation_seen.clone(),
+                backoff_completed: Arc::new(AtomicUsize::new(0)),
             },
             preserve_region_results: false,
             concurrency: MULTI_REGION_CONCURRENCY,
             one_region: None,
             snapshot_region_scope: None,
+            snapshot_async_batch_get: false,
         };
 
         assert!(plan.execute().await.is_err());
         assert_eq!(cancellation_seen.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_batch_get_waits_for_sibling_after_a_shard_error() {
+        let cancellation_seen = Arc::new(AtomicUsize::new(0));
+        let backoff_completed = Arc::new(AtomicUsize::new(0));
+        let plan = RetryableMultiRegion {
+            inner: CancellationProbePlan {
+                fails_immediately: false,
+                dispatched: Arc::new(Barrier::new(2)),
+            },
+            pd_client: Arc::new(MockPdClient::default()),
+            backoff: CancellationProbeRetryState {
+                cancellation: Cancellation::default(),
+                cancellation_seen: cancellation_seen.clone(),
+                backoff_completed: backoff_completed.clone(),
+            },
+            preserve_region_results: false,
+            // Snapshot BatchGet dispatches all initial regions even when the
+            // generic multi-region cap is smaller than the shard count.
+            concurrency: 1,
+            one_region: None,
+            snapshot_region_scope: Some(false),
+            snapshot_async_batch_get: false,
+        };
+
+        let error = tokio::time::timeout(Duration::from_secs(1), plan.execute())
+            .await
+            .expect("snapshot fanout must not serialize initial region batches")
+            .unwrap_err();
+        assert_eq!(
+            cancellation_seen.load(Ordering::SeqCst),
+            0,
+            "client-go snapshot fanout waits for every shard instead of cancelling siblings"
+        );
+        assert_eq!(backoff_completed.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            error.to_string(),
+            "sibling retry completed",
+            "client-go returns the last completed failing snapshot shard"
+        );
     }
 }

@@ -59,8 +59,8 @@ use crate::transaction::latch::LatchesScheduler;
 use crate::transaction::lock::format_key_for_log;
 use crate::transaction::lowering::*;
 use crate::transaction::requests::{
-    new_resolve_lock_request, CollectPessimisticLock, CollectScannerPairs,
-    CollectScannerRegionBatch, PessimisticLockOutput, PreserveScannerPairErrors,
+    new_resolve_lock_request, CollectPessimisticLock, CollectScannerRegionBatch,
+    PessimisticLockOutput, PreserveScannerPairErrors,
 };
 use crate::transaction::snapshot_stats::snapshot_read_sli_interceptor;
 use crate::transaction::txn_file::{
@@ -1079,6 +1079,9 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     snapshot_variables: Arc<Variables>,
     /// Enables client-go's pipelined BufferBatchGet tier for this snapshot.
     snapshot_pipelined: bool,
+    /// Selects client-go's async callback BatchGet accounting path. Both
+    /// source paths dispatch all initial region batches concurrently.
+    enable_async_batch_get: bool,
     /// Snapshot-only request-context settings retained through physical read
     /// retries, matching client-go `KVSnapshot`.
     not_fill_cache: bool,
@@ -1216,6 +1219,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             snapshot_runtime_stats: None,
             snapshot_variables: DEFAULT_VARIABLES.clone(),
             snapshot_pipelined: false,
+            enable_async_batch_get: false,
             not_fill_cache: false,
             isolation_level: kvrpcpb::IsolationLevel::Si,
             task_id: 0,
@@ -1266,6 +1270,10 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// returned by client-go `KVTxn.GetSnapshot`.
     pub fn set_replica_read_config(&mut self, config: ReplicaReadConfig) {
         self.replica_read_config = config;
+    }
+
+    pub(crate) fn set_enable_async_batch_get(&mut self, enabled: bool) {
+        self.enable_async_batch_get = enabled;
     }
 
     /// Set the replica-read type for this transaction's snapshot.
@@ -1648,6 +1656,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let remote_lock_resolver_context = self.lock_resolver_context.clone();
         let remote_request_source = self.commit_settings.request_source.context_value();
         let remote_internal = self.commit_settings.request_source.is_internal();
+        let remote_enable_async_batch_get = self.enable_async_batch_get;
         self.buffer
             .mem_buffer()
             .configure_managed_remote_batch_get(move |logical_keys| {
@@ -1688,11 +1697,6 @@ impl<PdC: PdClient> Transaction<PdC> {
                                 Key::from(key).encode_keyspace(remote_keyspace, KeyMode::Txn)
                             })
                             .collect::<Vec<_>>();
-                        let replica_read_config = adjusted_replica_read_config(
-                            &replica_read_config,
-                            replica_read_adjuster.as_ref(),
-                            physical_keys.len(),
-                        );
                         let stale_read = replica_read_config.stale_read;
                         let mut request = new_buffer_batch_get_request(
                             physical_keys.into_iter(),
@@ -1716,6 +1720,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                             replica_read_config,
                             request,
                         )
+                        .snapshot_replica_read_adjuster(replica_read_adjuster)
                         .request_source(request_source)
                         .priority(remote_priority)
                         .not_fill_cache(remote_not_fill_cache)
@@ -1747,6 +1752,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                             snapshot_variables,
                         )
                         .observe_snapshot_regions(remote_internal)
+                        .async_batch_get_metrics(remote_enable_async_batch_get)
                         .merge(Collect)
                         .plan();
                         let pairs = plan
@@ -1804,6 +1810,14 @@ impl<PdC: PdClient> Transaction<PdC> {
             }
         }
         config
+    }
+
+    fn snapshot_scanner_replica_read_config(&self) -> ReplicaReadConfig {
+        ReplicaReadConfig {
+            read_type: self.replica_read_config.read_type,
+            busy_threshold_ms: self.replica_read_config.busy_threshold_ms,
+            ..Default::default()
+        }
     }
 
     /// Replace the RPC interceptor used by this transaction's reads, writes,
@@ -1885,7 +1899,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
         let timestamp = self.snapshot_timestamp.clone();
         let snapshot_version = timestamp.version();
-        let cache_snapshot_read = !self.options.read_only || timestamp.version() != u64::MAX;
+        let cache_snapshot_read = timestamp.version() != u64::MAX;
         let rpc = self.rpc.clone();
         let key = key.encode_keyspace(self.keyspace, KeyMode::Txn);
         let retry_options = self.options.retry_options.clone();
@@ -2006,7 +2020,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let return_commit_ts = get_options.return_commit_ts();
         let timestamp = self.snapshot_timestamp.clone();
         let snapshot_version = timestamp.version();
-        let cache_snapshot_read = !self.options.read_only || timestamp.version() != u64::MAX;
+        let cache_snapshot_read = timestamp.version() != u64::MAX;
         let rpc = self.rpc.clone();
         let key = key.encode_keyspace(self.keyspace, KeyMode::Txn);
         let retry_options = self.options.retry_options.clone();
@@ -2038,7 +2052,8 @@ impl<PdC: PdClient> Transaction<PdC> {
         let request_source = self.commit_settings.request_source.context_value();
         let max_timestamp_point_get = timestamp.version() == u64::MAX;
 
-        self.buffer
+        let entry = self
+            .buffer
             .get_snapshot_entry_or_else(
                 key,
                 return_commit_ts,
@@ -2098,13 +2113,17 @@ impl<PdC: PdClient> Transaction<PdC> {
                     if let Some(validator) = snapshot_visibility_validator {
                         validator.check_visibility(snapshot_version).await?;
                     }
-                    let entry = (!response.not_found)
+                    let entry = (!response.not_found && !response.value.is_empty())
                         .then(|| ValueEntry::new(response.value, response.commit_ts));
-                    ensure_snapshot_commit_ts(return_commit_ts, entry.as_ref())?;
                     Ok(entry)
                 },
             )
-            .await
+            .await?;
+        // client-go inserts a successful point-read result into the snapshot
+        // cache before enforcing the ReturnCommitTS assertion. BatchGet keeps
+        // its distinct check-before-cache ordering.
+        ensure_snapshot_commit_ts(return_commit_ts, entry.as_ref())?;
+        Ok(entry)
     }
 
     /// Create a `get for update` request.
@@ -2258,7 +2277,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
         let timestamp = self.snapshot_timestamp.clone();
         let snapshot_version = timestamp.version();
-        let cache_snapshot_read = !self.options.read_only || timestamp.version() != u64::MAX;
+        let cache_snapshot_read = timestamp.version() != u64::MAX;
         let rpc = self.rpc.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
@@ -2292,16 +2311,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         let lock_resolver_context = self.lock_resolver_context.clone();
         let request_source = self.commit_settings.request_source.context_value();
         let internal = self.commit_settings.request_source.is_internal();
+        let enable_async_batch_get = self.enable_async_batch_get;
 
         self.buffer
             .batch_get_or_else_with_cache(keys, cache_snapshot_read, move |keys| async move {
                 let _timer = crate::stats::snapshot_command_timer("batch_get", internal);
                 let keys = keys.collect::<Vec<_>>();
-                let replica_read_config = adjusted_replica_read_config(
-                    &replica_read_config,
-                    replica_read_adjuster.as_ref(),
-                    keys.len(),
-                );
                 let stale_read = replica_read_config.stale_read;
                 let mut request = new_batch_get_request(keys.into_iter(), timestamp.clone());
                 let resource_group_tag = apply_snapshot_resource_group_tag(
@@ -2322,6 +2337,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     replica_read_config,
                     request,
                 )
+                .snapshot_replica_read_adjuster(replica_read_adjuster)
                 .request_source(request_source)
                 .priority(priority)
                 .not_fill_cache(not_fill_cache)
@@ -2350,6 +2366,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     snapshot_variables,
                 )
                 .observe_snapshot_regions(internal)
+                .async_batch_get_metrics(enable_async_batch_get)
                 .merge(Collect)
                 .plan();
                 let pairs = plan.execute().await?;
@@ -2358,6 +2375,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 }
                 Ok(pairs
                     .into_iter()
+                    .filter(|pair| !pair.1.is_empty())
                     .map(|pair| pair.encode_keyspace(keyspace, KeyMode::Txn))
                     .collect())
             })
@@ -2395,7 +2413,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let return_commit_ts = get_options.return_commit_ts();
         let timestamp = self.snapshot_timestamp.clone();
         let snapshot_version = timestamp.version();
-        let cache_snapshot_read = !self.options.read_only || timestamp.version() != u64::MAX;
+        let cache_snapshot_read = timestamp.version() != u64::MAX;
         let rpc = self.rpc.clone();
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
@@ -2429,6 +2447,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let lock_resolver_context = self.lock_resolver_context.clone();
         let request_source = self.commit_settings.request_source.context_value();
         let internal = self.commit_settings.request_source.is_internal();
+        let enable_async_batch_get = self.enable_async_batch_get;
 
         self.buffer
             .batch_get_snapshot_entries_or_else(
@@ -2438,11 +2457,6 @@ impl<PdC: PdClient> Transaction<PdC> {
                 move |keys| async move {
                     let _timer = crate::stats::snapshot_command_timer("batch_get", internal);
                     let keys = keys.collect::<Vec<_>>();
-                    let replica_read_config = adjusted_replica_read_config(
-                        &replica_read_config,
-                        replica_read_adjuster.as_ref(),
-                        keys.len(),
-                    );
                     let stale_read = replica_read_config.stale_read;
                     let mut request = new_batch_get_request(keys.into_iter(), timestamp.clone());
                     request.need_commit_ts = return_commit_ts;
@@ -2464,6 +2478,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         replica_read_config,
                         request,
                     )
+                    .snapshot_replica_read_adjuster(replica_read_adjuster)
                     .request_source(request_source)
                     .priority(priority)
                     .not_fill_cache(not_fill_cache)
@@ -2492,6 +2507,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         snapshot_variables,
                     )
                     .observe_snapshot_regions(internal)
+                    .async_batch_get_metrics(enable_async_batch_get)
                     .plan();
                     let responses = plan.execute().await?;
                     if let Some(validator) = snapshot_visibility_validator {
@@ -2501,6 +2517,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     let entries: BTreeMap<_, _> = responses
                         .into_iter()
                         .flat_map(|response| response.pairs)
+                        .filter(|pair| !pair.value.is_empty())
                         .map(|pair| {
                             (
                                 Key::from(pair.key).encode_keyspace(keyspace, KeyMode::Txn),
@@ -2532,6 +2549,24 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        self.batch_get_from_buffer_with_options(keys, &[]).await
+    }
+
+    /// Read values from the pipelined transaction buffer tier with point-read
+    /// options. [`GetOption::ReturnCommitTs`] is accepted but intentionally
+    /// ignored: client-go's buffer-tier values are not committed and therefore
+    /// have no commit timestamp.
+    pub async fn batch_get_from_buffer_with_options(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        _options: &[GetOption],
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        let keys = keys.into_iter().map(Into::into).collect::<Vec<Key>>();
+        if keys.is_empty() {
+            // client-go returns before validating the tier, constructing a
+            // backoffer, recording metrics, or checking visibility.
+            return Ok(Vec::<KvPair>::new().into_iter());
+        }
         let _timer = crate::stats::snapshot_command_timer(
             "batch_get",
             self.commit_settings.request_source.is_internal(),
@@ -2558,7 +2593,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let ru_details = self.ru_details.clone();
         let keys = keys
             .into_iter()
-            .map(move |key| key.into().encode_keyspace(keyspace, KeyMode::Txn))
+            .map(move |key| key.encode_keyspace(keyspace, KeyMode::Txn))
             .collect::<Vec<_>>();
         let retry_options = self.options.retry_options.clone();
         let priority = self.options.priority;
@@ -2572,16 +2607,14 @@ impl<PdC: PdClient> Transaction<PdC> {
         let read_timestamp_validator = self.read_timestamp_validator.clone();
         let snapshot_visibility_validator = self.snapshot_visibility_validator.clone();
         let read_replica_scope = self.read_replica_scope.clone();
-        let replica_read_config = adjusted_replica_read_config(
-            &self.replica_read_config,
-            self.replica_read_adjuster.as_ref(),
-            keys.len(),
-        );
+        let replica_read_config = self.replica_read_config.clone();
+        let replica_read_adjuster = self.replica_read_adjuster.clone();
         let stale_read = replica_read_config.stale_read;
         let read_lock_context = self.read_lock_context.clone();
         let lock_resolver_context = self.lock_resolver_context.clone();
         let request_source = self.commit_settings.request_source.context_value();
         let internal = self.commit_settings.request_source.is_internal();
+        let enable_async_batch_get = self.enable_async_batch_get;
         let mut request = new_buffer_batch_get_request(keys.into_iter(), timestamp.clone());
         let resource_group_tag = apply_snapshot_resource_group_tag(
             &mut request,
@@ -2601,6 +2634,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             replica_read_config,
             request,
         )
+        .snapshot_replica_read_adjuster(replica_read_adjuster)
         .request_source(request_source)
         .priority(priority)
         .not_fill_cache(not_fill_cache)
@@ -2629,6 +2663,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             snapshot_variables,
         )
         .observe_snapshot_regions(internal)
+        .async_batch_get_metrics(enable_async_batch_get)
         .merge(Collect)
         .plan();
         let pairs = plan.execute().await?;
@@ -2638,9 +2673,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         Ok(pairs
             .into_iter()
             .map(|pair| pair.encode_keyspace(keyspace, KeyMode::Txn))
+            .map(move |pair| pair.truncate_keyspace(keyspace))
             .collect::<Vec<_>>()
-            .into_iter()
-            .map(move |pair| pair.truncate_keyspace(keyspace)))
+            .into_iter())
     }
 
     /// Create a new 'batch get for update' request.
@@ -4180,7 +4215,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let transaction_resource_group_tagger = self.transaction_resource_group_tagger.clone();
         let read_timestamp_validator = self.read_timestamp_validator.clone();
         let snapshot_visibility_validator = self.snapshot_visibility_validator.clone();
-        let replica_read_config = self.replica_read_config.clone();
+        let replica_read_config = self.snapshot_scanner_replica_read_config();
         let get_replica_read_config = self.replica_read_config_for_items(1);
         let snapshot_read_timeout = self.snapshot_read_timeout;
         let read_replica_scope = self.read_replica_scope.clone();
@@ -4234,13 +4269,12 @@ impl<PdC: PdClient> Transaction<PdC> {
                 replica_read_config.stale_read,
                 String::new(),
             )
-            .resolve_response_lock_for_read(
+            .validate_snapshot_visibility(snapshot_visibility_validator.clone(), snapshot_version)
+            .resolve_response_lock_for_scan(
                 timestamp.clone(),
                 retry_options.lock_backoff.clone(),
                 keyspace,
-                read_lock_context.clone(),
                 lock_resolver_context.clone(),
-                snapshot_runtime_stats.clone(),
                 snapshot_variables.clone(),
             )
             .without_snapshot_lock_backoff_stats()
@@ -4256,9 +4290,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             .merge(CollectScannerRegionBatch)
             .plan();
             let region_batch = plan.execute().await?;
-            if let Some(validator) = &snapshot_visibility_validator {
-                validator.check_visibility(snapshot_version).await?;
-            }
             let raw_batch_len = region_batch.pairs.len();
             let raw_last_key = region_batch.pairs.last().map(|pair| -> Result<Key> {
                 if pair.key.is_empty() {
@@ -4453,7 +4484,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let transaction_resource_group_tagger = self.transaction_resource_group_tagger.clone();
         let read_timestamp_validator = self.read_timestamp_validator.clone();
         let snapshot_visibility_validator = self.snapshot_visibility_validator.clone();
-        let replica_read_config = self.replica_read_config.clone();
+        let replica_read_config = self.snapshot_scanner_replica_read_config();
         let get_replica_read_config = self.replica_read_config_for_items(1);
         let snapshot_read_timeout = self.snapshot_read_timeout;
         let read_replica_scope = self.read_replica_scope.clone();
@@ -4471,6 +4502,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                 reverse,
                 move |new_range, new_limit| async move {
                     let mut range = new_range;
+                    let (scan_start, scan_end) = range.clone().into_keys();
                     let mut pairs = Vec::new();
 
                     while pairs.len() < new_limit as usize {
@@ -4515,44 +4547,46 @@ impl<PdC: PdClient> Transaction<PdC> {
                             replica_read_config.stale_read,
                             String::new(),
                         )
-                        .resolve_response_lock_for_read(
+                        .validate_snapshot_visibility(
+                            snapshot_visibility_validator.clone(),
+                            snapshot_version,
+                        )
+                        .resolve_response_lock_for_scan(
                             timestamp.clone(),
                             retry_options.lock_backoff.clone(),
                             keyspace,
-                            read_lock_context.clone(),
                             lock_resolver_context.clone(),
-                            snapshot_runtime_stats.clone(),
                             snapshot_variables.clone(),
                         )
                         .without_snapshot_lock_backoff_stats()
                         .process(PreserveScannerPairErrors)
+                        .preserve_shard()
                         .retry_multi_region_with_snapshot_stats(
                             retry_options.region_backoff.clone(),
                             None,
                             snapshot_variables.clone(),
                         )
                         .snapshot_retry_owner(Arc::clone(&scanner_retry_owner))
-                        .merge(CollectScannerPairs)
+                        .one_region(reverse)
+                        .merge(CollectScannerRegionBatch)
                         .plan();
-                        let raw_batch = plan.execute().await?;
-                        if let Some(validator) = &snapshot_visibility_validator {
-                            validator.check_visibility(snapshot_version).await?;
-                        }
-                        if raw_batch.is_empty() {
-                            break;
-                        }
+                        let region_batch = plan.execute().await?;
+                        let region_start: Key = region_batch.range.0.into();
+                        let region_end: Key = region_batch.range.1.into();
+                        let raw_batch = region_batch.pairs;
                         let raw_batch_len = raw_batch.len();
-                        let raw_last = raw_batch.last().expect("non-empty raw scan batch");
-                        let raw_last_key: Key = if raw_last.key.is_empty() {
-                            let error = raw_last.error.as_ref().ok_or_else(|| {
-                                Error::StringError(
-                                    "scan pair has neither a key nor a key error".to_owned(),
-                                )
-                            })?;
-                            extract_lock_from_key_error(error)?.key.into()
-                        } else {
-                            raw_last.key.clone().into()
-                        };
+                        let raw_last_key = raw_batch.last().map(|raw_last| -> Result<Key> {
+                            if raw_last.key.is_empty() {
+                                let error = raw_last.error.as_ref().ok_or_else(|| {
+                                    Error::StringError(
+                                        "scan pair has neither a key nor a key error".to_owned(),
+                                    )
+                                })?;
+                                Ok(extract_lock_from_key_error(error)?.key.into())
+                            } else {
+                                Ok(raw_last.key.clone().into())
+                            }
+                        });
                         let mut batch = Vec::new();
                         for mut pair in raw_batch {
                             if pair.error.is_none() {
@@ -4645,14 +4679,40 @@ impl<PdC: PdClient> Transaction<PdC> {
                             }
                         });
                         pairs.extend(batch);
-                        if raw_batch_len < request_limit as usize {
+                        if pairs.len() >= new_limit as usize {
                             break;
                         }
-                        let last_key = raw_last_key.encode_keyspace(keyspace, KeyMode::Txn);
-                        if reverse {
-                            range.to = Bound::Excluded(last_key);
+
+                        let next_key = if raw_batch_len < request_limit as usize {
+                            if reverse {
+                                region_start
+                            } else {
+                                region_end
+                            }
                         } else {
-                            range.from = Bound::Included(last_key.next_key());
+                            let raw_last_key = raw_last_key.ok_or_else(|| {
+                                Error::StringError("full scanner batch is empty".to_owned())
+                            })??;
+                            let raw_last_key = raw_last_key.encode_keyspace(keyspace, KeyMode::Txn);
+                            if reverse {
+                                raw_last_key
+                            } else {
+                                raw_last_key.next_key()
+                            }
+                        };
+                        let exhausted = if reverse {
+                            next_key.is_empty() || next_key <= scan_start
+                        } else {
+                            next_key.is_empty()
+                                || scan_end.as_ref().is_some_and(|end| next_key >= *end)
+                        };
+                        if exhausted {
+                            break;
+                        }
+                        if reverse {
+                            range.to = Bound::Excluded(next_key);
+                        } else {
+                            range.from = Bound::Included(next_key);
                         }
                     }
 
@@ -5528,20 +5588,6 @@ fn plan_with_keyspace_name<PdC: PdClient, Req: KvRequest>(
         .resource_control_option(resource_control)
         .ru_details_option(ru_details)
         .replica_read(replica_read_config)
-}
-
-fn adjusted_replica_read_config(
-    stable: &ReplicaReadConfig,
-    adjuster: Option<&ReplicaReadAdjuster>,
-    item_count: usize,
-) -> ReplicaReadConfig {
-    let mut config = stable.clone();
-    if config.read_type.is_follower_read() {
-        if let Some(adjuster) = adjuster {
-            config.apply_adjustment(adjuster(item_count));
-        }
-    }
-    config
 }
 
 impl<PdC: PdClient> std::fmt::Display for Transaction<PdC> {
@@ -9055,6 +9101,7 @@ mod tests {
     use super::PrewriteEncounterLockPolicy;
     use super::TransactionStatus;
     use super::WriteAccessLevel;
+    use super::DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE;
     use super::MAX_TTL;
     use crate::transaction::txn_file::{ChunkBatch, TxnChunkRange, TxnChunkSlice};
     use crate::transaction::unionstore::PipelinedError;
@@ -11442,6 +11489,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_point_get_caches_value_before_missing_commit_ts_error() {
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                assert!(request.is::<kvrpcpb::GetRequest>());
+                captured_dispatches.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(kvrpcpb::GetResponse {
+                    value: b"value".to_vec(),
+                    commit_ts: 0,
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        assert_eq!(
+            transaction
+                .get_with_options("key".to_owned(), &[GetOption::ReturnCommitTs])
+                .await
+                .unwrap_err()
+                .to_string(),
+            "commit timestamp is required but not returned"
+        );
+        assert_eq!(
+            transaction.get("key".to_owned()).await.unwrap(),
+            Some(b"value".to_vec())
+        );
+        assert_eq!(dispatches.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn source_batch_get_does_not_cache_a_missing_commit_ts_response() {
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::BatchGetRequest>()
+                    .expect("commit-ts batch test dispatches BatchGet");
+                captured_dispatches.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(kvrpcpb::BatchGetResponse {
+                    pairs: vec![kvrpcpb::KvPair {
+                        key: request.keys[0].clone(),
+                        value: b"value".to_vec(),
+                        commit_ts: 0,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        assert_eq!(
+            transaction
+                .batch_get_with_options(vec!["key".to_owned()], &[GetOption::ReturnCommitTs])
+                .await
+                .unwrap_err()
+                .to_string(),
+            "commit timestamp is required but not returned"
+        );
+        assert_eq!(
+            transaction
+                .batch_get(vec!["key".to_owned()])
+                .await
+                .unwrap()
+                .collect::<Vec<_>>(),
+            [KvPair(Key::from("key".to_owned()), b"value".to_vec())]
+        );
+        assert_eq!(dispatches.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
     async fn source_snapshot_timestamp_reset_discards_cached_reads() {
         let dispatches = Arc::new(AtomicUsize::new(0));
         let captured_dispatches = Arc::clone(&dispatches);
@@ -11519,6 +11650,178 @@ mod tests {
         assert_eq!(dispatches.load(Ordering::SeqCst), 2);
     }
 
+    #[tokio::test]
+    async fn source_max_timestamp_snapshot_never_caches_an_ordinary_transaction_wrapper() {
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let sequence = captured_dispatches.fetch_add(1, Ordering::SeqCst) + 1;
+                if request.is::<kvrpcpb::GetRequest>() {
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        value: vec![sequence as u8],
+                        commit_ts: sequence as u64,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                        pairs: vec![kvrpcpb::KvPair {
+                            key: request.keys[0].clone(),
+                            value: vec![sequence as u8],
+                            commit_ts: sequence as u64,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected latest-snapshot request")
+            },
+        )));
+        let transaction = Transaction::new(
+            Timestamp::from_version(u64::MAX),
+            pd_client,
+            TransactionOptions::new_optimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let mut snapshot = crate::Snapshot::new(transaction);
+
+        assert_eq!(snapshot.get("key".to_owned()).await.unwrap(), Some(vec![1]));
+        assert_eq!(snapshot.get("key".to_owned()).await.unwrap(), Some(vec![2]));
+        assert_eq!(
+            snapshot
+                .get_with_options("get-options".to_owned(), &[GetOption::ReturnCommitTs])
+                .await
+                .unwrap(),
+            Some(ValueEntry::new(vec![3], 3))
+        );
+        assert_eq!(
+            snapshot
+                .get_with_options("get-options".to_owned(), &[GetOption::ReturnCommitTs])
+                .await
+                .unwrap(),
+            Some(ValueEntry::new(vec![4], 4))
+        );
+        assert_eq!(
+            snapshot
+                .batch_get(vec!["batch".to_owned()])
+                .await
+                .unwrap()
+                .next()
+                .unwrap()
+                .1,
+            vec![5]
+        );
+        assert_eq!(
+            snapshot
+                .batch_get(vec!["batch".to_owned()])
+                .await
+                .unwrap()
+                .next()
+                .unwrap()
+                .1,
+            vec![6]
+        );
+        assert_eq!(
+            snapshot
+                .batch_get_with_options(
+                    vec!["batch-options".to_owned()],
+                    &[GetOption::ReturnCommitTs],
+                )
+                .await
+                .unwrap()
+                .values()
+                .next(),
+            Some(&ValueEntry::new(vec![7], 7))
+        );
+        assert_eq!(
+            snapshot
+                .batch_get_with_options(
+                    vec!["batch-options".to_owned()],
+                    &[GetOption::ReturnCommitTs],
+                )
+                .await
+                .unwrap()
+                .values()
+                .next(),
+            Some(&ValueEntry::new(vec![8], 8))
+        );
+        assert_eq!(dispatches.load(Ordering::SeqCst), 8);
+    }
+
+    #[tokio::test]
+    async fn source_external_snapshot_thread_safe_workload_uses_native_shared_ownership() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<crate::Snapshot<MockPdClient>>();
+
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        value: (request.key == b"key")
+                            .then(|| b"x".to_vec())
+                            .unwrap_or_default(),
+                        not_found: request.key != b"key",
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    let pairs = request
+                        .keys
+                        .iter()
+                        .filter(|key| key.as_slice() == b"key")
+                        .map(|key| kvrpcpb::KvPair {
+                            key: key.clone(),
+                            value: b"x".to_vec(),
+                            ..Default::default()
+                        })
+                        .collect();
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                        pairs,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("snapshot thread-safety workload sent an unexpected request");
+            },
+        )));
+        let transaction = Transaction::new(
+            Timestamp::from_version(u64::MAX),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        let snapshot = Arc::new(tokio::sync::Mutex::new(crate::Snapshot::new(transaction)));
+
+        let tasks = (0..5)
+            .map(|_| {
+                let snapshot = Arc::clone(&snapshot);
+                tokio::spawn(async move {
+                    for _ in 0..30 {
+                        assert_eq!(
+                            snapshot.lock().await.get(b"key".to_vec()).await?,
+                            Some(b"x".to_vec())
+                        );
+                        let entries = snapshot
+                            .lock()
+                            .await
+                            .batch_get([b"key".to_vec(), b"missing".to_vec()])
+                            .await?
+                            .map(Into::<(Key, Value)>::into)
+                            .collect::<BTreeMap<_, _>>();
+                        assert_eq!(
+                            entries,
+                            BTreeMap::from([(Key::from(b"key".to_vec()), b"x".to_vec())])
+                        );
+                    }
+                    Ok::<(), Error>(())
+                })
+            })
+            .collect::<Vec<_>>();
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+    }
+
     #[test]
     #[should_panic(expected = "try to get snapshot with a large ts")]
     fn source_snapshot_constructor_rejects_non_max_u64_large_values() {
@@ -11594,66 +11897,119 @@ mod tests {
         assert_eq!(status_checks.load(Ordering::SeqCst), 1);
     }
 
+    #[cfg(not(feature = "nextgen"))]
     #[tokio::test]
     async fn source_batch_get_retries_only_pair_locked_keys_and_keeps_clean_pairs() {
         let batch_attempts = Arc::new(Mutex::new(Vec::<Vec<Vec<u8>>>::new()));
         let captured_batch_attempts = Arc::clone(&batch_attempts);
-        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            move |request: &dyn Any| {
-                if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
-                    let mut attempts = captured_batch_attempts.lock().unwrap();
-                    attempts.push(request.keys.clone());
-                    if attempts.len() == 1 {
-                        return Ok(Box::new(kvrpcpb::BatchGetResponse {
-                            pairs: vec![
-                                kvrpcpb::KvPair {
-                                    key: b"clean".to_vec(),
-                                    value: b"clean-value".to_vec(),
-                                    ..Default::default()
-                                },
-                                kvrpcpb::KvPair {
-                                    key: b"locked".to_vec(),
-                                    error: Some(kvrpcpb::KeyError {
-                                        locked: Some(kvrpcpb::LockInfo {
-                                            key: b"locked".to_vec(),
-                                            primary_lock: b"locked".to_vec(),
-                                            lock_version: 1,
-                                            ..Default::default()
-                                        }),
+        let adjustment_counts = Arc::new(Mutex::new(Vec::new()));
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                let mut attempts = captured_batch_attempts.lock().unwrap();
+                attempts.push(request.keys.clone());
+                if attempts.len() == 1 {
+                    assert_eq!(
+                        request
+                            .context
+                            .as_ref()
+                            .unwrap()
+                            .peer
+                            .as_ref()
+                            .unwrap()
+                            .store_id,
+                        42
+                    );
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                        pairs: vec![
+                            kvrpcpb::KvPair {
+                                key: b"clean".to_vec(),
+                                value: b"clean-value".to_vec(),
+                                ..Default::default()
+                            },
+                            kvrpcpb::KvPair {
+                                key: b"locked".to_vec(),
+                                error: Some(kvrpcpb::KeyError {
+                                    locked: Some(kvrpcpb::LockInfo {
+                                        key: b"locked".to_vec(),
+                                        primary_lock: b"locked".to_vec(),
+                                        lock_version: 1,
                                         ..Default::default()
                                     }),
                                     ..Default::default()
-                                },
-                            ],
-                            ..Default::default()
-                        }) as Box<dyn Any>);
-                    }
-                    assert_eq!(request.keys, [b"locked".to_vec()]);
-                    assert_eq!(request.context.as_ref().unwrap().committed_locks, [1]);
-                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
-                        pairs: vec![kvrpcpb::KvPair {
-                            key: b"locked".to_vec(),
-                            value: b"locked-value".to_vec(),
-                            ..Default::default()
-                        }],
+                                }),
+                                ..Default::default()
+                            },
+                        ],
                         ..Default::default()
                     }) as Box<dyn Any>);
                 }
-                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
-                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
-                        commit_version: 2,
+                assert_eq!(request.keys, [b"locked".to_vec()]);
+                assert_eq!(request.context.as_ref().unwrap().committed_locks, [1]);
+                assert_eq!(
+                    request
+                        .context
+                        .as_ref()
+                        .unwrap()
+                        .peer
+                        .as_ref()
+                        .unwrap()
+                        .store_id,
+                    41
+                );
+                return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                    pairs: vec![kvrpcpb::KvPair {
+                        key: b"locked".to_vec(),
+                        value: b"locked-value".to_vec(),
                         ..Default::default()
-                    }) as Box<dyn Any>);
-                }
-                panic!("unexpected request while retrying locked batch-get keys");
-            },
-        )));
+                    }],
+                    ..Default::default()
+                }) as Box<dyn Any>);
+            }
+            if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                    commit_version: 2,
+                    ..Default::default()
+                }) as Box<dyn Any>);
+            }
+            panic!("unexpected request while retrying locked batch-get keys");
+        });
+        let mut region = MockPdClient::region1();
+        let leader = crate::proto::metapb::Peer {
+            id: 1,
+            store_id: 41,
+            ..Default::default()
+        };
+        let follower = crate::proto::metapb::Peer {
+            id: 2,
+            store_id: 42,
+            ..Default::default()
+        };
+        region.leader = Some(leader.clone());
+        region.region.peers = vec![leader, follower];
+        region.region.end_key.clear();
+        let pd_client = Arc::new(MockPdClient::with_client_and_regions(client, vec![region]));
         let mut transaction = Transaction::new(
             Timestamp::from_version(3),
             pd_client,
             TransactionOptions::new_optimistic().read_only(),
             Keyspace::Disable,
         );
+        transaction.set_replica_read_config(ReplicaReadConfig {
+            read_type: ReplicaReadType::Follower,
+            ..Default::default()
+        });
+        let captured_adjustment_counts = Arc::clone(&adjustment_counts);
+        transaction.set_replica_read_adjuster(Arc::new(move |item_count| {
+            captured_adjustment_counts.lock().unwrap().push(item_count);
+            ReplicaReadAdjustment::new(
+                None,
+                if item_count == 2 {
+                    ReplicaReadType::Mixed
+                } else {
+                    ReplicaReadType::Leader
+                },
+            )
+        }));
 
         let result = transaction
             .batch_get([b"clean".to_vec(), b"locked".to_vec()])
@@ -11669,10 +12025,90 @@ mod tests {
             ])
         );
         assert_eq!(batch_attempts.lock().unwrap().len(), 2);
+        assert_eq!(*adjustment_counts.lock().unwrap(), [2, 1]);
     }
 
     #[tokio::test]
-    async fn source_async_batch_get_counts_each_initial_concurrent_shard() {
+    async fn source_external_batch_get_response_error_retries_the_complete_key_set() {
+        let attempts = Arc::new(Mutex::new(Vec::<Vec<Vec<u8>>>::new()));
+        let captured_attempts = Arc::clone(&attempts);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    let mut attempts = captured_attempts.lock().unwrap();
+                    attempts.push(request.keys.clone());
+                    if attempts.len() == 1 {
+                        return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: b"locked".to_vec(),
+                                    primary_lock: b"locked".to_vec(),
+                                    lock_version: 1,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            pairs: vec![kvrpcpb::KvPair {
+                                key: b"incomplete".to_vec(),
+                                value: b"must-not-escape".to_vec(),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    assert_eq!(request.keys, [b"clean".to_vec(), b"locked".to_vec()]);
+                    assert_eq!(request.context.as_ref().unwrap().committed_locks, [1]);
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                        pairs: vec![
+                            kvrpcpb::KvPair {
+                                key: b"clean".to_vec(),
+                                value: b"clean-value".to_vec(),
+                                ..Default::default()
+                            },
+                            kvrpcpb::KvPair {
+                                key: b"locked".to_vec(),
+                                value: b"locked-value".to_vec(),
+                                ..Default::default()
+                            },
+                        ],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 2,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected response-level BatchGet retry request");
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(3),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        let entries = transaction
+            .batch_get([b"clean".to_vec(), b"locked".to_vec()])
+            .await
+            .unwrap()
+            .map(Into::<(Key, Value)>::into)
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            entries,
+            BTreeMap::from([
+                (Key::from(b"clean".to_vec()), b"clean-value".to_vec()),
+                (Key::from(b"locked".to_vec()), b"locked-value".to_vec()),
+            ])
+        );
+        assert_eq!(attempts.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn source_async_batch_get_switch_defaults_off_then_counts_each_initial_shard() {
         let mut first_region = MockPdClient::region1();
         first_region.region.start_key.clear();
         first_region.region.end_key = b"m".to_vec();
@@ -11682,9 +12118,24 @@ mod tests {
         let dispatches = Arc::new(AtomicUsize::new(0));
         let captured_dispatches = Arc::clone(&dispatches);
         let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
-            assert!(request.is::<kvrpcpb::BatchGetRequest>());
+            let request = request
+                .downcast_ref::<kvrpcpb::BatchGetRequest>()
+                .expect("multi-region BatchGet sends BatchGetRequest");
             captured_dispatches.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::new(kvrpcpb::BatchGetResponse::default()) as Box<dyn Any>)
+            let pairs = request
+                .keys
+                .iter()
+                .filter(|key| key.as_slice() == b"a" || key.as_slice() == b"b")
+                .map(|key| kvrpcpb::KvPair {
+                    key: key.clone(),
+                    value: [key.as_slice(), b"-value"].concat(),
+                    ..Default::default()
+                })
+                .collect();
+            Ok(Box::new(kvrpcpb::BatchGetResponse {
+                pairs,
+                ..Default::default()
+            }) as Box<dyn Any>)
         });
         let pd_client = Arc::new(MockPdClient::with_client_and_regions(
             client,
@@ -11702,11 +12153,75 @@ mod tests {
             .batch_get([b"a".to_vec(), b"n".to_vec()])
             .await
             .unwrap()
-            .collect::<Vec<_>>();
+            .map(Into::<(Key, Value)>::into)
+            .collect::<BTreeMap<_, _>>();
 
-        assert!(pairs.is_empty());
+        assert_eq!(
+            pairs,
+            BTreeMap::from([(Key::from(b"a".to_vec()), b"a-value".to_vec())])
+        );
         assert_eq!(dispatches.load(Ordering::SeqCst), 2);
+        assert_eq!(crate::stats::async_batch_get_count("ok"), before);
+
+        transaction.set_enable_async_batch_get(true);
+        let pairs = transaction
+            .batch_get([b"b".to_vec(), b"o".to_vec()])
+            .await
+            .unwrap()
+            .map(Into::<(Key, Value)>::into)
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            pairs,
+            BTreeMap::from([(Key::from(b"b".to_vec()), b"b-value".to_vec())])
+        );
+        assert_eq!(dispatches.load(Ordering::SeqCst), 4);
         assert!(crate::stats::async_batch_get_count("ok") >= before + 2);
+    }
+
+    #[cfg(not(feature = "nextgen"))]
+    #[tokio::test]
+    async fn source_batch_get_replica_adjuster_receives_each_region_batch_size() {
+        let mut first_region = MockPdClient::region1();
+        first_region.region.start_key.clear();
+        first_region.region.end_key = b"m".to_vec();
+        let mut second_region = MockPdClient::region2();
+        second_region.region.start_key = b"m".to_vec();
+        second_region.region.end_key.clear();
+        let client = MockKvClient::with_dispatch_hook(|request: &dyn Any| {
+            assert!(request.is::<kvrpcpb::BatchGetRequest>());
+            Ok(Box::new(kvrpcpb::BatchGetResponse::default()) as Box<dyn Any>)
+        });
+        let pd_client = Arc::new(MockPdClient::with_client_and_regions(
+            client,
+            vec![first_region, second_region],
+        ));
+        let adjustment_counts = Arc::new(Mutex::new(Vec::new()));
+        let captured_counts = Arc::clone(&adjustment_counts);
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_replica_read_config(ReplicaReadConfig {
+            read_type: ReplicaReadType::Follower,
+            ..Default::default()
+        });
+        transaction.set_replica_read_adjuster(Arc::new(move |item_count| {
+            captured_counts.lock().unwrap().push(item_count);
+            ReplicaReadAdjustment::new(None, ReplicaReadType::Leader)
+        }));
+
+        assert!(transaction
+            .batch_get([b"a".to_vec(), b"n".to_vec()])
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .is_empty());
+        let mut adjustment_counts = adjustment_counts.lock().unwrap().clone();
+        adjustment_counts.sort_unstable();
+        assert_eq!(adjustment_counts, [1, 1]);
     }
 
     #[tokio::test]
@@ -11740,6 +12255,80 @@ mod tests {
         assert!(first.is_empty());
         assert!(second.is_empty());
         assert_eq!(dispatches.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn source_empty_snapshot_values_are_missing_but_buffer_deletes_are_retained() {
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |request: &dyn Any| {
+                if request.is::<kvrpcpb::GetRequest>() {
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        value: Vec::new(),
+                        not_found: false,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                        pairs: vec![kvrpcpb::KvPair {
+                            key: request.keys[0].clone(),
+                            value: Vec::new(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BufferBatchGetRequest>() {
+                    return Ok(Box::new(kvrpcpb::BufferBatchGetResponse {
+                        pairs: vec![kvrpcpb::KvPair {
+                            key: request.keys[0].clone(),
+                            value: Vec::new(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request while testing empty snapshot values")
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+
+        assert_eq!(transaction.get("get-empty".to_owned()).await.unwrap(), None);
+        assert!(transaction
+            .batch_get(["batch-empty".to_owned()])
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .is_empty());
+
+        transaction.set_snapshot_pipelined(1);
+        assert_eq!(
+            transaction
+                .batch_get_from_buffer(["buffer-delete".to_owned()])
+                .await
+                .unwrap()
+                .collect::<Vec<_>>(),
+            [KvPair(Key::from("buffer-delete".to_owned()), Vec::new())]
+        );
+        assert_eq!(
+            transaction
+                .batch_get_from_buffer_with_options(
+                    ["buffer-delete-with-options".to_owned()],
+                    &[GetOption::ReturnCommitTs],
+                )
+                .await
+                .unwrap()
+                .collect::<Vec<_>>(),
+            [KvPair(
+                Key::from("buffer-delete-with-options".to_owned()),
+                Vec::new(),
+            )]
+        );
     }
 
     #[tokio::test]
@@ -11909,6 +12498,129 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_external_scan_suite_covers_default_batch_and_region_boundaries() {
+        fn key(index: usize) -> Vec<u8> {
+            format!("k{index:04}").into_bytes()
+        }
+
+        for row_count in [
+            1,
+            DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE as usize,
+            DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE as usize + 1,
+            DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE as usize * 3,
+        ] {
+            let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::ScanRequest>()
+                    .expect("the external scan matrix only sends ScanRequest");
+                assert!(request.limit <= DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE);
+                let mut pairs = (0..row_count)
+                    .filter_map(|index| {
+                        let key = key(index);
+                        let in_range = if request.reverse {
+                            key < request.start_key
+                                && (request.end_key.is_empty() || key >= request.end_key)
+                        } else {
+                            key >= request.start_key
+                                && (request.end_key.is_empty() || key < request.end_key)
+                        };
+                        in_range.then(|| kvrpcpb::KvPair {
+                            key,
+                            value: (!request.key_only)
+                                .then(|| index.to_string().into_bytes())
+                                .unwrap_or_default(),
+                            ..Default::default()
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if request.reverse {
+                    pairs.reverse();
+                }
+                pairs.truncate(request.limit as usize);
+                Ok(Box::new(kvrpcpb::ScanResponse {
+                    pairs,
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            });
+
+            let mut first = MockPdClient::region1();
+            first.region.start_key.clear();
+            first.region.end_key = (row_count > 123).then(|| key(123)).unwrap_or_default();
+            let mut regions = vec![first];
+            if row_count > 123 {
+                let mut second = MockPdClient::region2();
+                second.region.start_key = key(123);
+                second.region.end_key = (row_count > 456).then(|| key(456)).unwrap_or_default();
+                regions.push(second);
+            }
+            if row_count > 456 {
+                let mut third = MockPdClient::region3();
+                third.region.start_key = key(456);
+                third.region.end_key.clear();
+                regions.push(third);
+            }
+            let pd_client = Arc::new(MockPdClient::with_client_and_regions(client, regions));
+            let transaction = Transaction::new(
+                Timestamp::from_version(1),
+                pd_client,
+                TransactionOptions::new_optimistic().read_only(),
+                Keyspace::Disable,
+            );
+            let mut snapshot = crate::Snapshot::new(transaction);
+            snapshot.set_scan_batch_size(DEFAULT_SNAPSHOT_SCAN_BATCH_SIZE);
+
+            let pairs = snapshot
+                .scan(key(0)..b"z".to_vec(), row_count as u32)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(pairs.len(), row_count);
+            for (index, pair) in pairs.iter().enumerate() {
+                assert_eq!(pair.key(), &Key::from(key(index)));
+                assert_eq!(pair.value(), index.to_string().as_bytes());
+            }
+
+            let upper = row_count / 2;
+            let pairs = snapshot
+                .scan(key(0)..key(upper), row_count as u32)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(pairs.len(), upper);
+
+            snapshot.set_key_only(true);
+            let pairs = snapshot
+                .scan(key(0)..b"z".to_vec(), row_count as u32)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(pairs.len(), row_count);
+            assert!(pairs.iter().all(|pair| pair.value().is_empty()));
+
+            snapshot.set_key_only(false);
+            let pair = snapshot
+                .scan(key(0)..key(1), 1)
+                .await
+                .unwrap()
+                .next()
+                .expect("restoring key-only must restore values");
+            assert_eq!(pair.value(), b"0");
+
+            snapshot.set_scan_batch_size(10);
+            let pairs = snapshot
+                .scan_reverse(key(0)..b"z".to_vec(), row_count as u32)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(pairs.len(), row_count);
+            for (pair, index) in pairs.iter().zip((0..row_count).rev()) {
+                assert_eq!(pair.key(), &Key::from(key(index)));
+                assert_eq!(pair.value(), index.to_string().as_bytes());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn source_snapshot_iterator_fetches_and_advances_one_batch_at_a_time() {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured_requests = Arc::clone(&requests);
@@ -11974,6 +12686,10 @@ mod tests {
         );
         assert!(iterator.next().await.unwrap().is_none());
         assert!(!iterator.is_valid());
+        assert_eq!(
+            iterator.next().await.unwrap_err().to_string(),
+            "scanner iterator is invalid"
+        );
         assert_eq!(
             *requests.lock().unwrap(),
             [(b"a".to_vec(), 2), (b"b\0".to_vec(), 2)]
@@ -12263,6 +12979,8 @@ mod tests {
     async fn source_snapshot_scanner_retries_incomplete_response_after_top_level_lock() {
         let scan_attempts = Arc::new(AtomicUsize::new(0));
         let captured_attempts = Arc::clone(&scan_attempts);
+        let resolve_requests = Arc::new(AtomicUsize::new(0));
+        let captured_resolve_requests = Arc::clone(&resolve_requests);
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |request: &dyn Any| {
                 if let Some(request) = request.downcast_ref::<kvrpcpb::ScanRequest>() {
@@ -12274,7 +12992,7 @@ mod tests {
                             error: Some(kvrpcpb::KeyError {
                                 locked: Some(kvrpcpb::LockInfo {
                                     key: b"a".to_vec(),
-                                    primary_lock: b"a".to_vec(),
+                                    primary_lock: b"primary".to_vec(),
                                     lock_version: 1,
                                     ..Default::default()
                                 }),
@@ -12288,7 +13006,8 @@ mod tests {
                             ..Default::default()
                         }) as Box<dyn Any>);
                     }
-                    assert_eq!(context.committed_locks, [1]);
+                    assert!(context.committed_locks.is_empty());
+                    assert!(context.resolved_locks.is_empty());
                     return Ok(Box::new(kvrpcpb::ScanResponse {
                         pairs: vec![kvrpcpb::KvPair {
                             key: b"a".to_vec(),
@@ -12303,6 +13022,10 @@ mod tests {
                         commit_version: 2,
                         ..Default::default()
                     }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::ResolveLockRequest>() {
+                    captured_resolve_requests.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::new(kvrpcpb::ResolveLockResponse::default()) as Box<dyn Any>);
                 }
                 panic!("unexpected scanner response-lock request")
             },
@@ -12322,6 +13045,7 @@ mod tests {
             Some(KvPair(b"a".to_vec().into(), b"a-value".to_vec()))
         );
         assert_eq!(scan_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(resolve_requests.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -12625,6 +13349,37 @@ mod tests {
     }
 
     #[test]
+    fn source_snapshot_scanner_inherits_only_read_type_and_busy_threshold() {
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_replica_read_config(ReplicaReadConfig {
+            read_type: ReplicaReadType::Mixed,
+            leader_only: true,
+            prefer_leader: true,
+            stale_read: true,
+            labels: vec![crate::proto::metapb::StoreLabel {
+                key: "zone".to_owned(),
+                value: "east".to_owned(),
+            }],
+            stores: vec![7, 8],
+            busy_threshold_ms: 73,
+        });
+
+        assert_eq!(
+            transaction.snapshot_scanner_replica_read_config(),
+            ReplicaReadConfig {
+                read_type: ReplicaReadType::Mixed,
+                busy_threshold_ms: 73,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
     fn source_snapshot_pipelined_marks_its_flushed_lock_resolved() {
         let mut transaction = Transaction::new(
             Timestamp::from_version(1),
@@ -12768,6 +13523,168 @@ mod tests {
             .collect();
 
         assert_eq!(*calls.lock().unwrap(), vec!["get", "batch-get", "scan"]);
+    }
+
+    #[tokio::test]
+    async fn source_lock_retries_drop_the_configurable_snapshot_read_timeout() {
+        let get_attempts = Arc::new(AtomicUsize::new(0));
+        let batch_attempts = Arc::new(AtomicUsize::new(0));
+        let captured_get_attempts = Arc::clone(&get_attempts);
+        let captured_batch_attempts = Arc::clone(&batch_attempts);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    let attempt = captured_get_attempts.fetch_add(1, Ordering::SeqCst);
+                    let context = request.context.as_ref().unwrap();
+                    if attempt == 0 {
+                        assert_eq!(context.max_execution_duration_ms, 17);
+                        assert!(!context.is_retry_request);
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: b"get".to_vec(),
+                                    primary_lock: b"get".to_vec(),
+                                    lock_version: 1,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    assert_eq!(context.max_execution_duration_ms, 30_000);
+                    assert!(context.is_retry_request);
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        not_found: true,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                    let attempt = captured_batch_attempts.fetch_add(1, Ordering::SeqCst);
+                    let context = request.context.as_ref().unwrap();
+                    if attempt == 0 {
+                        assert_eq!(context.max_execution_duration_ms, 17);
+                        assert!(!context.is_retry_request);
+                        return Ok(Box::new(kvrpcpb::BatchGetResponse {
+                            pairs: vec![kvrpcpb::KvPair {
+                                key: b"batch".to_vec(),
+                                error: Some(kvrpcpb::KeyError {
+                                    locked: Some(kvrpcpb::LockInfo {
+                                        key: b"batch".to_vec(),
+                                        primary_lock: b"batch".to_vec(),
+                                        lock_version: 2,
+                                        ..Default::default()
+                                    }),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    assert_eq!(context.max_execution_duration_ms, 60_000);
+                    assert!(context.is_retry_request);
+                    return Ok(Box::new(kvrpcpb::BatchGetResponse::default()) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: request.lock_ts + 10,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request while retrying snapshot locks");
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(20),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_snapshot_read_timeout(Duration::from_millis(17));
+
+        assert_eq!(transaction.get("get".to_owned()).await.unwrap(), None);
+        assert!(transaction
+            .batch_get(vec!["batch".to_owned()])
+            .await
+            .unwrap()
+            .next()
+            .is_none());
+        assert_eq!(get_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(batch_attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[cfg(not(feature = "nextgen"))]
+    #[tokio::test]
+    async fn source_stale_snapshot_lock_retry_is_a_threshold_free_leader_read() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let captured_attempts = Arc::clone(&attempts);
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                let context = request.context.as_ref().unwrap();
+                if captured_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                    assert!(context.stale_read);
+                    assert_eq!(context.busy_threshold_ms, 50);
+                    assert_eq!(context.peer.as_ref().unwrap().store_id, 42);
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        error: Some(kvrpcpb::KeyError {
+                            locked: Some(kvrpcpb::LockInfo {
+                                key: b"key".to_vec(),
+                                primary_lock: b"key".to_vec(),
+                                lock_version: 1,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                assert!(!context.stale_read);
+                assert_eq!(context.busy_threshold_ms, 0);
+                assert_eq!(context.peer.as_ref().unwrap().store_id, 41);
+                return Ok(Box::new(kvrpcpb::GetResponse {
+                    not_found: true,
+                    ..Default::default()
+                }) as Box<dyn Any>);
+            }
+            if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                    commit_version: 2,
+                    ..Default::default()
+                }) as Box<dyn Any>);
+            }
+            panic!("unexpected request while retrying a stale snapshot lock");
+        });
+        let mut region = MockPdClient::region1();
+        let leader = crate::proto::metapb::Peer {
+            id: 1,
+            store_id: 41,
+            ..Default::default()
+        };
+        let follower = crate::proto::metapb::Peer {
+            id: 2,
+            store_id: 42,
+            ..Default::default()
+        };
+        region.leader = Some(leader.clone());
+        region.region.peers = vec![leader, follower];
+        region.region.end_key.clear();
+        let pd_client = Arc::new(MockPdClient::with_client_and_regions(client, vec![region]));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(3),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_replica_read_config(ReplicaReadConfig {
+            read_type: ReplicaReadType::Mixed,
+            stale_read: true,
+            busy_threshold_ms: 50,
+            ..Default::default()
+        });
+
+        assert_eq!(transaction.get("key".to_owned()).await.unwrap(), None);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -13083,6 +14000,13 @@ mod tests {
         );
         assert_eq!(dispatches.load(Ordering::SeqCst), 0);
 
+        assert!(transaction
+            .batch_get_from_buffer(Vec::<String>::new())
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .is_empty());
+        assert_eq!(dispatches.load(Ordering::SeqCst), 0);
         transaction.set_snapshot_pipelined(1);
         let pairs: Vec<_> = transaction
             .batch_get_from_buffer(vec!["buffer".to_owned()])
@@ -13146,7 +14070,7 @@ mod tests {
             vec![
                 (7, true, "zone-a".to_owned()),
                 (7, true, "zone-a".to_owned()),
-                (7, true, String::new()),
+                (7, false, String::new()),
             ]
         );
     }
@@ -13613,7 +14537,10 @@ mod tests {
                     }
                     assert_eq!(context.committed_locks, [1]);
                     assert!(context.resolved_locks.is_empty());
-                    return Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>);
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        not_found: true,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
                 }
                 if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
                     std::thread::sleep(Duration::from_millis(2));
@@ -13637,7 +14564,7 @@ mod tests {
         let stats = Arc::new(crate::SnapshotRuntimeStats::new());
         txn.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
 
-        assert_eq!(txn.get("read".to_owned()).await.unwrap(), Some(Vec::new()));
+        assert_eq!(txn.get("read".to_owned()).await.unwrap(), None);
         assert_eq!(get_attempts.load(Ordering::SeqCst), 2);
         assert_eq!(stats.rpc_count(crate::SnapshotRpcCommand::Get), 2);
         assert!(stats.resolve_lock_duration() >= Duration::from_millis(2));
@@ -13671,7 +14598,10 @@ mod tests {
                             ..Default::default()
                         }) as Box<dyn Any>);
                     }
-                    return Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>);
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        not_found: true,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
                 }
                 if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
                     return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
@@ -13711,7 +14641,7 @@ mod tests {
         let stats = Arc::new(crate::SnapshotRuntimeStats::new());
         txn.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
 
-        assert_eq!(txn.get("read".to_owned()).await.unwrap(), Some(Vec::new()));
+        assert_eq!(txn.get("read".to_owned()).await.unwrap(), None);
         assert_eq!(get_attempts.load(Ordering::SeqCst), 2);
         assert_eq!(stats.backoff_count("txnLockFast"), 1);
         assert_eq!(
@@ -13749,7 +14679,10 @@ mod tests {
                             ..Default::default()
                         }) as Box<dyn Any>);
                     }
-                    return Ok(Box::new(kvrpcpb::GetResponse::default()) as Box<dyn Any>);
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        not_found: true,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
                 }
                 if req.is::<kvrpcpb::CheckTxnStatusRequest>() {
                     status_checks_by_hook.fetch_add(1, Ordering::SeqCst);
@@ -13773,11 +14706,8 @@ mod tests {
         );
         txn.set_lock_resolver_context(shared_context);
 
-        assert_eq!(txn.get("first".to_owned()).await.unwrap(), Some(Vec::new()));
-        assert_eq!(
-            txn.get("second".to_owned()).await.unwrap(),
-            Some(Vec::new())
-        );
+        assert_eq!(txn.get("first".to_owned()).await.unwrap(), None);
+        assert_eq!(txn.get("second".to_owned()).await.unwrap(), None);
         assert_eq!(status_checks.load(Ordering::SeqCst), 1);
     }
 
@@ -15198,7 +16128,13 @@ mod tests {
         let key = b"deadlock-key".to_vec();
         let key_hash = farmhash::fingerprint64(&key);
         let deadlock_rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            move |_| {
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                assert!(request.is::<kvrpcpb::PessimisticLockRequest>());
                 Ok(Box::new(kvrpcpb::PessimisticLockResponse {
                     errors: vec![kvrpcpb::KeyError {
                         deadlock: Some(kvrpcpb::Deadlock {

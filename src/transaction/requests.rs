@@ -242,7 +242,9 @@ impl Process<kvrpcpb::GetResponse> for DefaultProcessor {
 
     fn process(&self, input: Result<kvrpcpb::GetResponse>) -> Result<Self::Out> {
         let input = input?;
-        Ok(if input.not_found {
+        // client-go's KVSnapshot.Get treats an empty ValueEntry as absent in
+        // addition to TiKV's explicit not_found bit.
+        Ok(if input.not_found || input.value.is_empty() {
             None
         } else {
             Some(input.value)

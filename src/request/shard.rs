@@ -5,6 +5,7 @@ use std::sync::Arc;
 use futures::stream::BoxStream;
 
 use super::plan::PreserveShard;
+use super::plan::ValidateSnapshotVisibility;
 use crate::kv::ReplicaReadConfig;
 use crate::locate::ReplicaSelectorState;
 use crate::pd::PdClient;
@@ -139,6 +140,10 @@ macro_rules! impl_inner_shardable {
         fn disable_stale_read_after_lock(&mut self) -> bool {
             self.inner.disable_stale_read_after_lock()
         }
+
+        fn lock_retry_region(&self) -> Option<RegionWithLeader> {
+            self.inner.lock_retry_region()
+        }
     };
 }
 
@@ -244,6 +249,12 @@ pub trait Shardable {
     /// leader read. Plans without replica-routing state retain a no-op.
     fn disable_stale_read_after_lock(&mut self) -> bool {
         false
+    }
+
+    /// Region metadata used to rebuild a direct leader route after a stale
+    /// read encounters a lock.
+    fn lock_retry_region(&self) -> Option<RegionWithLeader> {
+        None
     }
 
     /// Bind snapshot region and lock retries to one source Backoffer owner.
@@ -374,6 +385,7 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             }
         }
         self.decorated_shard_identity = identity;
+        self.refresh_snapshot_replica_read_adjustment();
     }
 
     fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
@@ -390,7 +402,7 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
                 decorate(&mut request);
             }
         }
-        Dispatch {
+        let mut dispatch = Dispatch {
             request,
             request_shard_decorator: self.request_shard_decorator.clone(),
             request_shard_identity: self.request_shard_identity.clone(),
@@ -403,6 +415,9 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             target: self.target.clone(),
             forwarded_host: self.forwarded_host.clone(),
             replica_read_config: self.replica_read_config.clone(),
+            snapshot_replica_read_base_config: self.snapshot_replica_read_base_config.clone(),
+            snapshot_replica_read_adjuster: self.snapshot_replica_read_adjuster.clone(),
+            region_with_leader: self.region_with_leader.clone(),
             replica_selector_state: self.replica_selector_state.clone(),
             store_health: self.store_health.clone(),
             record_client_side_slow_score: self.record_client_side_slow_score,
@@ -425,10 +440,13 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             resource_control: self.resource_control.clone(),
             response_codec: self.response_codec,
             v1_response_codec: self.v1_response_codec,
-        }
+        };
+        dispatch.refresh_snapshot_replica_read_adjustment();
+        dispatch
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.region_with_leader = Some(store.region_with_leader.clone());
         self.kv_client = Some(store.client.clone());
         self.target = store.target.clone();
         self.forwarded_host = store.forwarded_host.clone();
@@ -581,6 +599,10 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         true
     }
 
+    fn lock_retry_region(&self) -> Option<RegionWithLeader> {
+        self.region_with_leader.clone()
+    }
+
     fn retry_only_lock_keys(&mut self, locks: &[crate::proto::kvrpcpb::LockInfo]) -> bool {
         let keys = locks
             .iter()
@@ -589,11 +611,13 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         let request = &mut self.request as &mut dyn std::any::Any;
         if let Some(request) = request.downcast_mut::<crate::proto::kvrpcpb::BatchGetRequest>() {
             request.keys = keys;
+            self.refresh_snapshot_replica_read_adjustment();
             true
         } else if let Some(request) =
             request.downcast_mut::<crate::proto::kvrpcpb::BufferBatchGetRequest>()
         {
             request.keys = keys;
+            self.refresh_snapshot_replica_read_adjustment();
             true
         } else {
             false
@@ -701,6 +725,16 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
         owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
     ) {
         self.inner.set_snapshot_retry_owner(owner);
+    }
+}
+
+impl<P: Plan + Shardable> Shardable for ValidateSnapshotVisibility<P> {
+    impl_inner_shardable!();
+}
+
+impl<P: Plan + NextBatch> NextBatch for ValidateSnapshotVisibility<P> {
+    fn next_batch(&mut self, range: (Vec<u8>, Vec<u8>)) {
+        self.inner.next_batch(range);
     }
 }
 
@@ -952,6 +986,9 @@ mod test {
                 busy_threshold_ms: 50,
                 ..Default::default()
             },
+            snapshot_replica_read_base_config: None,
+            snapshot_replica_read_adjuster: None,
+            region_with_leader: None,
             replica_selector_state: ReplicaSelectorState::default(),
             store_health: None,
             record_client_side_slow_score: false,
@@ -1020,6 +1057,9 @@ mod test {
             target: String::new(),
             forwarded_host: String::new(),
             replica_read_config: ReplicaReadConfig::default(),
+            snapshot_replica_read_base_config: None,
+            snapshot_replica_read_adjuster: None,
+            region_with_leader: None,
             replica_selector_state: ReplicaSelectorState::default(),
             store_health: None,
             record_client_side_slow_score: false,
@@ -1085,6 +1125,9 @@ mod test {
             target: String::new(),
             forwarded_host: String::new(),
             replica_read_config: ReplicaReadConfig::default(),
+            snapshot_replica_read_base_config: None,
+            snapshot_replica_read_adjuster: None,
+            region_with_leader: None,
             replica_selector_state: ReplicaSelectorState::default(),
             store_health: None,
             record_client_side_slow_score: false,
