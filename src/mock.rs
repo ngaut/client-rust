@@ -7,7 +7,6 @@
 
 #[doc(hidden)]
 pub mod cluster;
-pub(crate) mod deadlock;
 pub mod mocktikv;
 
 use std::any::Any;

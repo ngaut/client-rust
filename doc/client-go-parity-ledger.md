@@ -18,8 +18,8 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `internal/latch` | `src/transaction/latch.rs`, transaction client/commit | complete | Re-audited atomic receipt: [`internal-latch-source-artifact-audit.md`](internal-latch-source-artifact-audit.md). All five artifacts/758 lines, all four ordinary tests plus `TestMain`, and all four direct importers are assigned. The differential fixes shared-scheduler shutdown during client close; source ports retain the exact 10-worker/999-transaction stress shape. |
 | `internal/locate` | `src/region.rs`, `src/region_cache.rs`, `src/pd`, `src/request`, `src/store`, `src/traffic.rs` | complete | Complete package receipt below and full 17-artifact/production-symbol/147-test/dependency/consumer mapping in [`internal-locate-source-artifact-audit.md`](internal-locate-source-artifact-audit.md). Region coding and indexes, TTL/GC/refresh, store discovery/liveness/health, replica and proxy selection, sender retry/error precedence, runtime diagnostics, network accounting, configurable PD region-meta circuit breaking, native async ownership, and validation gates are accounted for. Raw, snapshot, transaction, root `tikv`, and other consumers retain independent statuses. |
 | `internal/logutil` | public-but-hidden `src/logutil.rs`, Rust `log` call sites, generated protobuf descriptors/type names | complete | Atomic receipt: [`internal-logutil-source-artifact-audit.md`](internal-logutil-source-artifact-audit.md). All three production files (237 lines), every exported/mutable surface, all 44 direct importers, and the no-test/no-support inventory are assigned. The 977 generated `prost::Name` implementations and complete 1,029-message descriptor pool give `Hex` generic recursive schema reflection and byte redaction instead of a lossy `Debug` substitute; typed logger/span contexts preserve fallback, event, formatted-event, tag, and testing-assertion behavior. |
-| `internal/mockstore/cluster` | `src/mock/cluster.rs` | complete | Receipt below; all interface methods, protobuf shapes, nullable results, signed counts, and ownership boundaries are covered. |
-| `internal/mockstore/deadlock` | `src/mock/deadlock.rs` | complete | Receipt below; synchronized detection, source-exact cycle hash, deduplication, cleanup, expiry, and all original tests are covered. |
+| `internal/mockstore/cluster` | public test-support `src/mock/cluster.rs` trait plus concrete mocktikv implementation | complete | Re-audited atomic receipt: [`internal-mockstore-cluster-source-artifact-audit.md`](internal-mockstore-cluster-source-artifact-audit.md). The sole 65-line source artifact, all nine interface methods, no-test/support boundary, both direct importers, concrete implementation, and ordinary-build alias are assigned. |
+| `internal/mockstore/deadlock` | reusable `unistore/src/deadlock.rs` plus live `MockEngine` integration | complete | Re-audited atomic receipt: [`internal-mockstore-deadlock-source-artifact-audit.md`](internal-mockstore-deadlock-source-artifact-audit.md). All three artifacts/257 lines, `TestDeadlock`, `TestMain`, and the sole source importer are assigned. The audit removes the test-only duplicate and fixes live multiple-edge retention plus source-exact terminal/range-resolve cleanup behavior. |
 | `internal/mockstore/mocktikv` | hidden `src/mock/mocktikv`, reusable `unistore` engine crate, mock stream adapters | complete | Atomic receipt: [`internal-mockstore-mocktikv-source-artifact-audit.md`](internal-mockstore-mocktikv-source-artifact-audit.md). Runtime remediation now sets transactional `GetResponse.not_found` exactly as real TiKV/client-go require. Both the adapter matrix and an external `Transaction<MockPdClient>` regression prove an absent key decodes as `None`; the reusable engine and all other inventoried behavior remain assigned. |
 | `internal/resourcecontrol` | `src/resource_control.rs`, `src/request/{plan,plan_builder}.rs`, `src/store/{mod,request}.rs`, transaction request contexts / resource-manager proto | complete | Complete package receipt below and full artifact/symbol/consumer mapping in [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). Both production/test files, both legacy/NextGen variants, exact request/response accounting matrices, stream paths, bypass, routing inputs, controller ordering, RU updates, public native interfaces, and validation gates are covered. The external PD controller algorithm and downstream txn-file protocol retain separate ownership. |
 | `internal/unionstore` | `src/transaction/unionstore.rs` plus native ART/RBT/arena adapters | complete | Receipt below; all eight production files and six source test/support/benchmark artifacts are accounted for. Public transaction consumption remains on the separate `txnkv/transaction` row. |
@@ -27,7 +27,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `internal/unionstore/art` | `src/transaction/art.rs`, `src/transaction/art_source_tests.rs`, `src/transaction/unionstore.rs` adapter | complete | Re-audited atomic receipt: [`internal-unionstore-art-source-artifact-audit.md`](internal-unionstore-art-source-artifact-audit.md). All nine artifacts/3,474 lines, all 35 original tests plus the benchmark contract, every production surface, and the sole direct parent importer are assigned. Five red-then-green fixes restore discard release/invalidation, append-order stage inspection, flags-only buffer limits, idempotent snapshot completion, and ignored adapter flag-update errors. |
 | `internal/unionstore/rbt` | `src/transaction/rbt.rs`, `src/transaction/unionstore.rs` adapter | complete | Re-audited atomic receipt: [`internal-unionstore-rbt-source-artifact-audit.md`](internal-unionstore-rbt-source-artifact-audit.md). All five artifacts/1,661 lines, all three original unit tests, every production surface, and the sole direct parent importer are assigned. Five red-then-green fixes restore source `UpdateFlags` guards, empty reverse bounds, reverse value-log stage inspection, value-log storage release/invalidation, and flags-only history errors. |
 | `kvproto` (native crate) | independent `tikv-client-kvproto` workspace crate; `tikv_client::proto` re-export | complete | Atomic receipt: [`kvproto-crate-completion-audit.md`](kvproto-crate-completion-audit.md). All 45 crate artifacts, 56 generator inputs, 41 generated protocol modules, descriptor set, three direct integration edges, and downstream type-identity gate are assigned. The crate is the single generated-type owner shared by direct consumers and `tikv-client`. |
-| `unistore` (native crate) | independent `unistore` workspace crate | complete | Atomic receipt: [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md). All five crate artifacts/2,788 lines, 70 public type/function declaration points, 22 internal tests, two external-consumer tests, dependencies, and native consumers are assigned. Its source-mapped engine belongs to the complete client-go mocktikv receipt. |
+| `unistore` (native crate) | independent `unistore` workspace crate | complete | Re-audited atomic receipt: [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md). All six crate artifacts/3,203 lines, 80 public declaration points, 32 unit tests, three external-consumer tests, dependencies, and native consumers are assigned. The single reusable deadlock graph now serves the live source-mapped engine. |
 | `TiDB/pkg/store/mockstore/unistore` | no Rust parity claim | not-applicable | This separate TiDB server package is outside the pinned client-go source and the user-requested client parity goal. The native crate deliberately does not claim a partial transcreation of its SQL/RPC/schema/coprocessor inventory. |
 | `kv` | public `src/kv`, root exports, and typed consumers | complete | Re-audited atomic receipt: [`kv-source-artifact-audit.md`](kv-source-artifact-audit.md). All eight artifacts/995 lines, every production surface, all four ordinary tests plus `TestMain`, and all 69 direct importers are assigned. The formerly combined option/value test is replaced by source-named case-level ports; source-uncovered gates execute all 22 flag operations and every foundational state branch. |
 | `metrics` | public `src/metrics.rs`, `src/metrics/shortcuts.rs`, process-wide integration in `src/stats.rs` | complete | Atomic receipt: [`metrics-source-artifact-audit.md`](metrics-source-artifact-audit.md). Both production files (1,726 lines), all 98 declarations/97 constructed and registered collectors, all 151 declarations/149 initialized shortcuts, exact names/help/labels/buckets/subsystems/const labels, native no-quantile summaries, initialization/registration, commit counters, read SLI, and the 15-vector stale-store lifecycle are covered. Mechanical source reconciliation reports zero metadata/order mismatches; all 34 importers are assigned. `rawkv`, root `tikv`, and integration update sites retain their own rows and are not promoted. |
@@ -575,38 +575,12 @@ No real-cluster validation is required for the package primitive because tests i
 
 ## Complete package receipt: `internal/mockstore/cluster`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete production inventory is `internal/mockstore/cluster/cluster.go` (65 lines). It defines only the `Cluster` interface and has no `doc.go`, colocated Go test, build/platform variant, generated input/output, fixture, or package-specific build file. Direct consumers are the compile-time implementation assertion in `internal/mockstore/mocktikv/cluster.go` and the public test-support alias in `testutils/mockstore.go`; interface-typed integration fixtures use that alias in the raw, 2PC, async-commit, assertion, delete-range, pipelined-memory-buffer, range-task, and split suites. Concrete cluster state, algorithms, and bootstrap helpers belong to the separate `internal/mockstore/mocktikv` and `testutils` ledger rows and are not claimed here.
-
-Rust implementation and integration files are:
-
-- `src/mock/cluster.rs`: internal test-support `Cluster` trait with every source method: ID allocation; region/leader/bucket/down-peer lookup; store enumeration; scheduled transaction delay; encoded and raw splitting; evenly split key ranges; and store addition/removal.
-- `src/mock.rs`: includes the interface in the existing test-only mock subsystem, preserving client-rust's established ownership boundary.
-
-Go pointer results map to `Option` for region, leader, buckets, and raw-split region, while Go slices map to owned or borrowed Rust slices/vectors according to call ownership. The Go `int` split count remains `isize`, including negative values, rather than being narrowed to an unsigned Rust type. Variadic store labels map to an owned vector. The trait takes shared references because concrete simulators may use interior synchronization, matching the source implementation's concurrent test usage. It remains object-safe so fixtures can hold a dynamic cluster control surface like a Go interface.
-
-Validation on Rust 1.93.0:
-
-    cargo test cluster_interface_is_object_safe_and_complete
-    # 1 passed; 0 failed
-
-    cargo test --lib
-    # 98 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation applies to an interface-only test-support package. Its conformance test invokes all nine methods through `dyn Cluster`, proving the complete method surface and object safety. Observable simulator behavior will require mock-store tests before the `internal/mockstore/mocktikv` row can become complete.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in
+[`internal-mockstore-cluster-source-artifact-audit.md`](internal-mockstore-cluster-source-artifact-audit.md).
+That receipt owns the immutable one-artifact/65-line inventory, all nine
+interface methods, no-test/support boundary, both direct importers, concrete
+mocktikv implementation, ordinary-build alias, exact Go 1.25.12 compilation,
+and final pinned-nightly validation.
 
 ## Complete package receipt: `kv`
 
@@ -618,35 +592,12 @@ The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`
 
 ## Complete package receipt: `internal/mockstore/deadlock`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is production file `internal/mockstore/deadlock/deadlock.go` (151 lines), behavioral test `internal/mockstore/deadlock/deadlock_test.go` (81 lines), and leak-check harness `internal/mockstore/deadlock/main_test.go` (25 lines). There is no `doc.go`, build/platform variant, generated input/output, external fixture, or package-specific build file. Its only non-package consumer is `internal/mockstore/mocktikv/mvcc_leveldb.go`; wiring the detector into a concrete mock MVCC store remains on that package's ledger row.
-
-Rust implementation and integration files are `src/mock/deadlock.rs`, containing the mutex-protected wait-for graph and tests, and `src/mock.rs`, registering it in existing test support. A native `Result<(), DeadlockError>` represents Go's nullable error. Detection traverses existing outgoing edges while holding the same graph lock, returns the key hash from the existing edge that reaches the source transaction, and registers only accepted edges. Exact transaction/key-hash duplicates collapse while different hashes remain distinct; rejected cycle-closing edges are never inserted; cleanup removes outbound edges only; single-edge cleanup removes the first exact pair and deletes an empty list; and expiry removes map keys strictly below the threshold.
-
-The original complete scenario is transcreated, including the indirect cycle returning `deadlock(200)`, cycle break, same/different-hash behavior, both cleanup forms, and strict expiry boundaries. Added tests cover direct cycles, the pinned source's unusual acceptance of a first self-edge followed by rejection using its existing hash, absent cleanup, and synchronized concurrent duplicate registration. The concurrency test joins every spawned thread, providing the native equivalent of the source leak harness; production code starts no background work.
-
-Validation on Rust 1.93.0:
-
-    cargo test mock::deadlock
-    # 3 passed; 0 failed
-
-    cargo test --lib
-    # 112 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation applies to this deterministic mock-only graph. The host has no Go toolchain, so the original Go test could not run locally; all of its assertions execute in Rust. End-to-end deadlock response behavior remains on `internal/mockstore/mocktikv` and transaction-lock consumer rows.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in
+[`internal-mockstore-deadlock-source-artifact-audit.md`](internal-mockstore-deadlock-source-artifact-audit.md).
+That receipt owns the immutable three-artifact/257-line inventory, the complete
+`TestDeadlock` port, `TestMain`, the sole source importer, exact Go 1.25.12 and
+race execution, the shared UniStore detector, five live-engine differential
+regressions, and final pinned-nightly validation.
 
 ## Complete package receipt: `trace`
 
@@ -1117,7 +1068,11 @@ The ordinary-build public `tikv_client::testutils` module is a zero-state facade
 
 ## `unistore` native-crate completion receipt
 
-The independent workspace crate has exactly five artifacts/2,788 lines and one-way dependency ownership. Its complete inventory, hashes, 70 public declaration points, 24 internal/external tests, direct consumers, source boundary, and validation contract are recorded in [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md).
+The independent workspace crate now has exactly six artifacts/3,203 lines and
+one-way dependency ownership. Its complete inventory, hashes, 80 public
+declaration points, 32 unit tests, three external-consumer tests, direct
+consumers, source boundary, and validation contract are recorded in
+[`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md).
 
 The source-mapped `MockEngine` owns only protocol-independent state and formats from the completed client-go mocktikv package. A smaller native committed-version facade supports modules that do not need lock/prewrite semantics, and true external-crate tests prove both APIs are reusable without `tikv-client`. Protocol conversion stays in the client adapter, so no dependency cycle exists. TiDB's separate server-side UniStore package is explicitly `not-applicable`; no partial external-package claim is hidden behind this crate completion.
 
