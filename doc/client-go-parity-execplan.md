@@ -1120,3 +1120,24 @@ adapter tests, 1,001 no-default and 998 all-feature library tests plus one
 intentional ignore, strict workspace check/Clippy/private rustdoc, all 51
 doctests, rustfmt, source identity, and whitespace checks before one
 consolidated two-package commit.
+
+Plan revision note (2026-08-26): independently re-audited the top-level `util`
+package against its immutable 13-artifact/3,478-line boundary, 30 ordinary
+tests plus `TestMain`, and 58 direct importers. The prior receipt claimed all
+tests through grouped scenarios, but a mechanical declaration reconciliation
+could not trace any original name. Rust now has one independently named
+`source_test_*` port per declaration. Assertion-by-assertion comparison added
+the omitted nested RU executor clone check, every field of the second
+PoolTaskDetails merge, exact `+0800` GC formatting for every valid row, every
+range-helper table row in both argument orders, exact rate-limit panic text,
+and source operation order. Go's nullable pointer receivers and one-shot test
+channel have explicit native dispositions; all production exit channels are
+closed, matching persistent Rust cancellation. Exact Go 1.25.12 execution and
+72 focused Rust utility tests pass; the extracted Go toolchain lacks
+`runtime/race`, so the source race binary cannot link locally. Final pinned-
+nightly gates pass 174 source-derived tests in both feature configurations,
+1,008 no-default and 1,005 all-feature active library tests plus one intentional
+ignore in each, every external/crate target, strict workspace check/Clippy/
+private rustdoc, all 51 doctests, rustfmt, source identity, declaration and
+importer reconciliation, and whitespace checks before the consolidated package
+commit.
