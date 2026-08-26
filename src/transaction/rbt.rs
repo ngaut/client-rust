@@ -267,7 +267,7 @@ impl Rbt {
         assert!(!self.values_discarded, "vlog is reset");
         if key.len() > MAX_KEY_LEN {
             return Err(Box::new(KeyTooLargeError {
-                key_size: key.len(),
+                key_size: key.len() as isize,
             }));
         }
         if let Some(value) = value {
@@ -340,7 +340,9 @@ impl Rbt {
         }
         if value.is_some() {
             if self.size() as u64 > self.buffer_size_limit {
-                return Err(Box::new(TransactionTooLargeError { size: self.size() }));
+                return Err(Box::new(TransactionTooLargeError {
+                    size: self.size() as isize,
+                }));
             }
             self.notify_memory_change();
         }

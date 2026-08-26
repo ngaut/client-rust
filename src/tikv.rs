@@ -476,9 +476,9 @@ impl TxnSafePointCache {
         let (safe_point, updated) = *self.state.read().expect("safe-point cache lock poisoned");
         let elapsed = now.duration_since(updated).unwrap_or_default();
         if elapsed > GC_STATE_CACHE_INTERVAL - GC_CPU_TIME_INACCURACY_BOUND {
-            return Err(crate::error::PdServerTimeoutError {
-                message: "start timestamp may fall behind safe point".to_owned(),
-            }
+            return Err(crate::error::new_pd_server_timeout(
+                "start timestamp may fall behind safe point",
+            )
             .into());
         }
         if start_timestamp < safe_point {
@@ -1078,10 +1078,7 @@ fn retry_error(error: crate::retry::RetryError) -> Error {
         crate::retry::RetryError::Exhausted {
             terminal: Some(crate::retry::RetryTerminal::PdServerTimeout),
             ..
-        } => crate::error::PdServerTimeoutError {
-            message: String::new(),
-        }
-        .into(),
+        } => crate::error::new_pd_server_timeout(String::new()).into(),
         error => Error::StringError(error.to_string()),
     }
 }
@@ -1453,9 +1450,9 @@ impl KvStore {
             }
             let delay = retry.next_delay_duration().unwrap_or_default();
             if tokio::time::Instant::now() + delay >= deadline {
-                return Err(crate::error::PdServerTimeoutError {
-                    message: format!("wait scatter region {region_id} timeout"),
-                }
+                return Err(crate::error::new_pd_server_timeout(format!(
+                    "wait scatter region {region_id} timeout"
+                ))
                 .into());
             }
             tokio::time::sleep(delay).await;
