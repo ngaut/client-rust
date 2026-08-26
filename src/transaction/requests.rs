@@ -2837,8 +2837,19 @@ mod tests {
     }
 
     #[test]
-    fn api_v2_decoder_covers_pipelined_and_flashback_commands() {
+    fn source_test_decode_response_hot_path_commands() {
         let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
+
+        let (region_start, region_end) = codec.encode_region_range(b"range-start", b"range-end");
+        let region_error = errorpb::Error {
+            key_not_in_region: Some(errorpb::KeyNotInRegion {
+                key: codec.encode_key(b"region-key"),
+                start_key: region_start,
+                end_key: region_end,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
 
         let flush_request = super::new_flush_request(
             vec![kvrpcpb::Mutation {
@@ -2861,11 +2872,10 @@ mod tests {
         );
 
         let mut flush_response = kvrpcpb::FlushResponse {
+            region_error: Some(region_error.clone()),
             errors: vec![kvrpcpb::KeyError {
-                locked: Some(kvrpcpb::LockInfo {
-                    key: codec.encode_key(b"flush-locked"),
-                    primary_lock: codec.encode_key(b"flush-primary"),
-                    ..Default::default()
+                txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound {
+                    key: codec.encode_key(b"lock-key"),
                 }),
                 ..Default::default()
             }],
@@ -2874,9 +2884,22 @@ mod tests {
         flush_request
             .decode_response(&mut flush_response, Some(&codec))
             .unwrap();
-        let flush_lock = flush_response.errors[0].locked.as_ref().unwrap();
-        assert_eq!(flush_lock.key, b"flush-locked");
-        assert_eq!(flush_lock.primary_lock, b"flush-primary");
+        assert_eq!(
+            flush_response.errors[0]
+                .txn_lock_not_found
+                .as_ref()
+                .unwrap()
+                .key,
+            b"lock-key"
+        );
+        let decoded_region = flush_response
+            .region_error
+            .unwrap()
+            .key_not_in_region
+            .unwrap();
+        assert_eq!(decoded_region.key, b"region-key");
+        assert_eq!(decoded_region.start_key, b"range-start");
+        assert_eq!(decoded_region.end_key, b"range-end");
 
         let buffer_batch_get_request =
             super::new_buffer_batch_get_request(vec![codec.encode_key(b"buffer-key")], 15);
@@ -2885,9 +2908,22 @@ mod tests {
             vec![codec.encode_key(b"buffer-key")]
         );
         let mut buffer_batch_get_response = kvrpcpb::BufferBatchGetResponse {
+            region_error: Some(region_error),
+            error: Some(kvrpcpb::KeyError {
+                txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound {
+                    key: codec.encode_key(b"response-lock"),
+                }),
+                ..Default::default()
+            }),
             pairs: vec![kvrpcpb::KvPair {
-                key: codec.encode_key(b"buffer-key"),
+                key: codec.encode_key(b"pair-key"),
                 value: b"value".to_vec(),
+                error: Some(kvrpcpb::KeyError {
+                    txn_lock_not_found: Some(kvrpcpb::TxnLockNotFound {
+                        key: codec.encode_key(b"pair-lock"),
+                    }),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }],
             ..Default::default()
@@ -2895,7 +2931,27 @@ mod tests {
         buffer_batch_get_request
             .decode_response(&mut buffer_batch_get_response, Some(&codec))
             .unwrap();
-        assert_eq!(buffer_batch_get_response.pairs[0].key, b"buffer-key");
+        assert_eq!(buffer_batch_get_response.pairs[0].key, b"pair-key");
+        assert_eq!(
+            buffer_batch_get_response
+                .error
+                .unwrap()
+                .txn_lock_not_found
+                .unwrap()
+                .key,
+            b"response-lock"
+        );
+        assert_eq!(
+            buffer_batch_get_response.pairs[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .txn_lock_not_found
+                .as_ref()
+                .unwrap()
+                .key,
+            b"pair-lock"
+        );
 
         let (start_key, end_key) = codec.encode_region_range(b"start", b"end");
         let region_error = errorpb::Error {
@@ -3092,13 +3148,15 @@ mod tests {
     }
 
     #[test]
-    fn store_safe_ts_keeps_its_contextless_api_v2_key_range_shape() {
+    fn source_test_encode_unknown_request() {
         let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
         let key_range = codec.encode_key_range(&kvrpcpb::KeyRange {
             start_key: b"safe-start".to_vec(),
             end_key: b"safe-end".to_vec(),
         });
         let mut request = super::new_store_safe_ts_request(Some(key_range));
+        request.set_api_version(kvrpcpb::ApiVersion::V1);
+        assert_eq!(request.label(), "store_safe_ts");
         request.set_api_version(kvrpcpb::ApiVersion::V2);
 
         assert_eq!(request.label(), "store_safe_ts");
@@ -3109,6 +3167,147 @@ mod tests {
                 end_key: codec.encode_key(b"safe-end"),
             }
         );
+    }
+
+    #[test]
+    fn source_test_decode_response_second_wave_commands() {
+        let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
+        let make_region_error = || {
+            let (start_key, end_key) = codec.encode_region_range(b"range-start", b"range-end");
+            errorpb::Error {
+                key_not_in_region: Some(errorpb::KeyNotInRegion {
+                    key: codec.encode_key(b"region-key"),
+                    start_key,
+                    end_key,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        };
+        let assert_region_error = |error: errorpb::Error| {
+            let error = error.key_not_in_region.unwrap();
+            assert_eq!(error.key, b"region-key");
+            assert_eq!(error.start_key, b"range-start");
+            assert_eq!(error.end_key, b"range-end");
+        };
+
+        let observer_request = super::new_check_lock_observer_request(0);
+        let mut observer_response = kvrpcpb::CheckLockObserverResponse {
+            locks: vec![kvrpcpb::LockInfo {
+                key: codec.encode_key(b"observer-key"),
+                primary_lock: codec.encode_key(b"observer-primary"),
+                secondaries: vec![codec.encode_key(b"observer-secondary")],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        observer_request
+            .decode_response(&mut observer_response, Some(&codec))
+            .unwrap();
+        let observer = &observer_response.locks[0];
+        assert_eq!(observer.key, b"observer-key");
+        assert_eq!(observer.primary_lock, b"observer-primary");
+        assert_eq!(observer.secondaries, [b"observer-secondary"]);
+
+        let wait_request = super::new_get_lock_wait_info_request();
+        let mut wait_response = kvrpcpb::GetLockWaitInfoResponse {
+            region_error: Some(make_region_error()),
+            entries: vec![crate::proto::deadlock::WaitForEntry {
+                key: codec.encode_key(b"wait-key"),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        wait_request
+            .decode_response(&mut wait_response, Some(&codec))
+            .unwrap();
+        assert_region_error(wait_response.region_error.unwrap());
+        assert_eq!(wait_response.entries[0].key, b"wait-key");
+
+        let mvcc_start_request = super::new_mvcc_get_by_start_ts_request(0);
+        let mut mvcc_start_response = kvrpcpb::MvccGetByStartTsResponse {
+            region_error: Some(make_region_error()),
+            key: codec.encode_key(b"mvcc-key"),
+            info: Some(kvrpcpb::MvccInfo {
+                lock: Some(kvrpcpb::MvccLock {
+                    primary: codec.encode_key(b"mvcc-primary"),
+                    secondaries: vec![
+                        codec.encode_key(b"mvcc-secondary-1"),
+                        codec.encode_key(b"mvcc-secondary-2"),
+                    ],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        mvcc_start_request
+            .decode_response(&mut mvcc_start_response, Some(&codec))
+            .unwrap();
+        assert_region_error(mvcc_start_response.region_error.unwrap());
+        assert_eq!(mvcc_start_response.key, b"mvcc-key");
+        let mvcc_start_lock = mvcc_start_response.info.unwrap().lock.unwrap();
+        assert_eq!(mvcc_start_lock.primary, b"mvcc-primary");
+        assert_eq!(
+            mvcc_start_lock.secondaries,
+            [b"mvcc-secondary-1", b"mvcc-secondary-2"]
+        );
+
+        let mvcc_key_request = super::new_mvcc_get_by_key_request(codec.encode_key(b"request-key"));
+        let mut mvcc_key_response = kvrpcpb::MvccGetByKeyResponse {
+            region_error: Some(make_region_error()),
+            info: Some(kvrpcpb::MvccInfo {
+                lock: Some(kvrpcpb::MvccLock {
+                    primary: codec.encode_key(b"mvcc-by-key-primary"),
+                    secondaries: vec![
+                        codec.encode_key(b"mvcc-by-key-secondary-1"),
+                        codec.encode_key(b"mvcc-by-key-secondary-2"),
+                    ],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        mvcc_key_request
+            .decode_response(&mut mvcc_key_response, Some(&codec))
+            .unwrap();
+        assert_region_error(mvcc_key_response.region_error.unwrap());
+        let mvcc_key_lock = mvcc_key_response.info.unwrap().lock.unwrap();
+        assert_eq!(mvcc_key_lock.primary, b"mvcc-by-key-primary");
+        assert_eq!(
+            mvcc_key_lock.secondaries,
+            [b"mvcc-by-key-secondary-1", b"mvcc-by-key-secondary-2"]
+        );
+
+        let flashback_request = super::new_flashback_to_version_request(vec![], vec![], 0, 0, 0);
+        let mut flashback_response = kvrpcpb::FlashbackToVersionResponse {
+            region_error: Some(make_region_error()),
+            ..Default::default()
+        };
+        flashback_request
+            .decode_response(&mut flashback_response, Some(&codec))
+            .unwrap();
+        assert_region_error(flashback_response.region_error.unwrap());
+
+        let prepare_request = super::new_prepare_flashback_to_version_request(vec![], vec![], 0, 0);
+        let mut prepare_response = kvrpcpb::PrepareFlashbackToVersionResponse {
+            region_error: Some(make_region_error()),
+            ..Default::default()
+        };
+        prepare_request
+            .decode_response(&mut prepare_response, Some(&codec))
+            .unwrap();
+        assert_region_error(prepare_response.region_error.unwrap());
+
+        // Compact cursors are TiFlash RowKeyValue cursors and stay physical.
+        let response = kvrpcpb::CompactResponse {
+            compacted_start_key: b"compacted-start".to_vec(),
+            compacted_end_key: b"compacted-end".to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(response.compacted_start_key, b"compacted-start");
+        assert_eq!(response.compacted_end_key, b"compacted-end");
     }
 
     #[test]

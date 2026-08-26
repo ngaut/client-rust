@@ -1824,7 +1824,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_call_rpc_command_matrix_has_typed_request_implementations() {
+    fn source_test_encode_request() {
         let requests: Vec<Box<dyn Request>> = vec![
             Box::new(kvrpcpb::GetRequest::default()),
             Box::new(kvrpcpb::ScanRequest::default()),
@@ -1890,6 +1890,89 @@ mod tests {
 
         assert_eq!(requests.len(), 54);
         assert!(requests.iter().all(|request| !request.label().is_empty()));
+
+        // client-go mutates a dynamic request at the API-codec boundary. Rust
+        // encodes keys before constructing its typed request, so replay the
+        // source's eight rows at that native ownership boundary.
+        let codec = ApiV2Codec::new(crate::request::KeyMode::Raw, 4242).unwrap();
+
+        let raw_get = kvrpcpb::RawGetRequest {
+            key: codec.encode_key(b"key"),
+            ..Default::default()
+        };
+        assert_eq!(raw_get.key, codec.encode_key(b"key"));
+
+        let commit_without_primary = kvrpcpb::CommitRequest {
+            keys: vec![codec.encode_key(b"key1"), codec.encode_key(b"key2")],
+            ..Default::default()
+        };
+        assert_eq!(
+            commit_without_primary.keys,
+            [codec.encode_key(b"key1"), codec.encode_key(b"key2")]
+        );
+        assert!(commit_without_primary.primary_key.is_empty());
+
+        let mut commit_with_primary = commit_without_primary.clone();
+        commit_with_primary.primary_key = codec.encode_key(b"key1");
+        assert_eq!(commit_with_primary.primary_key, codec.encode_key(b"key1"));
+
+        let flush = kvrpcpb::FlushRequest {
+            mutations: vec![
+                kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::Put as i32,
+                    key: codec.encode_key(b"key1"),
+                    ..Default::default()
+                },
+                kvrpcpb::Mutation {
+                    op: kvrpcpb::Op::Del as i32,
+                    key: codec.encode_key(b"key2"),
+                    ..Default::default()
+                },
+            ],
+            primary_key: codec.encode_key(b"primary"),
+            ..Default::default()
+        };
+        assert_eq!(flush.mutations[0].key, codec.encode_key(b"key1"));
+        assert_eq!(flush.mutations[1].key, codec.encode_key(b"key2"));
+        assert_eq!(flush.primary_key, codec.encode_key(b"primary"));
+
+        let buffer_batch_get = kvrpcpb::BufferBatchGetRequest {
+            keys: vec![codec.encode_key(b"key1"), codec.encode_key(b"key2")],
+            ..Default::default()
+        };
+        assert_eq!(
+            buffer_batch_get.keys,
+            [codec.encode_key(b"key1"), codec.encode_key(b"key2")]
+        );
+
+        let flashback = kvrpcpb::FlashbackToVersionRequest {
+            start_key: codec.encode_key(b"start"),
+            end_key: codec.end_key().to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(flashback.start_key, codec.encode_key(b"start"));
+        assert_eq!(flashback.end_key, codec.end_key());
+
+        let prepare = kvrpcpb::PrepareFlashbackToVersionRequest {
+            start_key: codec.encode_key(b"prepare-start"),
+            end_key: codec.end_key().to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(prepare.start_key, codec.encode_key(b"prepare-start"));
+        assert_eq!(prepare.end_key, codec.end_key());
+
+        let mut compact = kvrpcpb::CompactRequest {
+            start_key: b"compact-start".to_vec(),
+            ..Default::default()
+        };
+        compact.set_api_version(kvrpcpb::ApiVersion::V2);
+        compact.set_keyspace_id(Some(4242));
+        assert_eq!(compact.start_key, b"compact-start");
+        assert_eq!(compact.api_version, kvrpcpb::ApiVersion::V2 as i32);
+        assert_eq!(
+            compact.keyspace,
+            Some(kvrpcpb::compact_request::Keyspace::KeyspaceId(4242))
+        );
     }
 
     fn assert_context_metadata(request: &mut dyn Request) {

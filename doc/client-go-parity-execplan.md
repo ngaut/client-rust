@@ -75,6 +75,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-26) Independently re-audited `internal/resourcecontrol` and ported all five Go tests under one-to-one Rust names. The complete two-artifact/511-line boundary, five direct importers, and both legacy/NextGen modes are assigned. A red/green consumer regression restored the missing txn-file `TxnFileErrorAccounting` metric without changing the committed result. Exact Go normal/race tests pass in both modes; final Rust gates pass 13 focused tests per mode, 752/749 source-derived tests, 1,021/1,018 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 - [x] (2026-08-26) Independently re-audited root `tikv` and ported every one of its 12 Go suite methods plus the lifecycle test under one-to-one Rust names. The complete 17-artifact/3,895-line boundary, suite/goleak harness dispositions, and all 35 direct importers are assigned. Four red/green regressions corrected region-cache-before-client close ordering, primitive safe-TS probe overwrites while retaining updater monotonicity, immediate scatter header-error propagation, and transaction-file split lock waits on the operation's shared TTL-capped retry owner. Exact Go normal/race tests pass; final Rust gates pass 29 focused tests in both configurations, 769/766 source-derived tests, 1,026 no-default and 1,023 all-feature active main-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 - [x] (2026-08-26) Independently re-audited `config/retry` and ported all nine Go unit tests under one-to-one Rust names. The complete four-artifact/1,020-line boundary, 17 retry classes, goleak disposition, every production branch, and all 43 direct importers are assigned. Production behavior was already parity-correct; the older grouped evidence had omitted three kill-handler branches, three cancelled region-error cases, the exact 32-error retention workload, and independent clone/fork/update execution. Exact Go normal/race suites pass; final Rust gates pass 21 focused tests in both configurations, 778/775 source-derived tests, 1,027 no-default and 1,024 all-feature active main-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
+- [x] (2026-08-26) Independently re-audited `internal/apicodec` and ported all 17 assertion-bearing Go tests under one-to-one Rust names. The exact seven-artifact/2,703-line boundary, eight directly required pinned protocol inputs, suite-runner/empty-test dispositions, every production transform, and all 14 direct importers are assigned. The exact constructor/range, six-region epoch, nested key-error, response-command, empty-MVCC, MPP, and three bucket-edge tables found no additional production divergence but replace the older grouped evidence. Exact Go normal/race suites pass; final Rust gates pass 794/791 source-derived tests, 1,041 no-default and 1,038 all-feature active main-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 
 ## Surprises & Discoveries
 
@@ -1237,3 +1238,19 @@ no-default and 1,024 all-feature active main-library tests plus one unrelated
 ignore, strict all-target check/Clippy/private rustdoc, all 51 doctests,
 rustfmt, exact inventory/declaration/importer reconciliation, and whitespace
 checks. This receipt is the package-sized integration boundary.
+
+Plan revision note (2026-08-26): independently reopened `internal/apicodec`
+against its exact seven-artifact/2,703-line boundary, eight directly required
+pinned protocol inputs, 19 Go test declarations, every production transform,
+and 14 direct importer files. Each of the 17 assertion-bearing Go tests now has
+one independently named Rust port; `TestCodecV2` is only the testify suite
+runner and `TestV1DecodeBucketKey` is empty at the pin. The stronger ports
+replay the exact constructor/range, six-region epoch, nested key-error,
+hot-path/second-wave response, empty-MVCC, MPP, and three bucket-edge tables.
+They pass without a production change, confirming the implementation was
+already parity-correct while correcting its older grouped evidence. Exact Go
+normal/race suites pass. Final pinned-nightly gates pass 794/791 source-derived
+tests, 1,041 no-default and 1,038 all-feature active main-library tests plus one
+unrelated ignore, strict all-target check/Clippy/private rustdoc, all 51
+doctests, rustfmt, exact inventory/declaration/importer reconciliation, and
+whitespace checks. This receipt is the package-sized integration boundary.
