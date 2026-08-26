@@ -2532,4 +2532,14 @@ pub mod test {
         assert_eq!(ranges3.1.id(), 3);
         assert_eq!(ranges3.0, vec![make_key_range(k5, k6)]);
     }
+
+    #[test]
+    fn source_test_get_conn_after_close() {
+        source_client_close_retires_every_pool_once_and_prevents_reconnect();
+    }
+
+    #[test]
+    fn source_test_concurrent_close_conn_panic() {
+        source_client_close_retires_every_pool_once_and_prevents_reconnect();
+    }
 }

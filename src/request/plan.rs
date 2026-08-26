@@ -5184,4 +5184,9 @@ mod test {
             "client-go returns the last completed failing snapshot shard"
         );
     }
+
+    #[test]
+    fn source_test_send_request_async_update_tikv_ruv2() {
+        successful_physical_dispatch_updates_source_ru_v2_rpc_counts();
+    }
 }

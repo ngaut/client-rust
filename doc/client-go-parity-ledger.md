@@ -12,7 +12,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `config/retry` | `src/retry.rs`, `src/async_util.rs`, `src/kv/variables.rs`, `src/request/plan.rs`, `src/stats.rs` | complete | Independently re-audited atomic receipt: [`config-retry-source-artifact-audit.md`](config-retry-source-artifact-audit.md). All four artifacts/1,020 lines, every production surface, all 17 retry classes, all nine ordinary Go tests as independently named Rust ports, `TestMain`, and all 43 direct importers are assigned. The re-audit found no production divergence but corrected grouped test evidence by restoring omitted kill-handler branches, all region-error cancellation cases, the exact 32-error retention workload, and independent clone/fork/update execution. Exact Go normal/race suites, 21 focused Rust tests per configuration, 778/775 source-derived tests, complete workspace/library matrices, strict check/Clippy/private rustdoc, and 51 doctests pass. |
 | `error` | `src/error.rs`, `src/common/errors.rs`, `src/stats.rs`, typed consumers | complete | Re-audited atomic receipt: [`error-source-artifact-audit.md`](error-source-artifact-audit.md). Both artifacts/497 lines, the sole original test, all 58 direct importers, every public symbol/branch, and native wrapper integration are assigned. Differential fixes restore signed Go-`int` sizes, the public PD-timeout constructor, exact descriptor-driven gogo text/fallback, failpoint type assertions, wrapper-aware predicates, and stack-bearing logs. |
 | `internal/apicodec` | `src/{common/errors,request/keyspace,request/mod,request/plan_builder,store/request,raw/client,raw/requests,transaction/{lock,requests,transaction}}.rs`, directly required proto/generated inputs | complete | Independently re-audited atomic receipt: [`internal-apicodec-source-artifact-audit.md`](internal-apicodec-source-artifact-audit.md). All seven artifacts/2,703 lines, eight required pinned protocol inputs, every production surface, all 17 assertion-bearing Go tests as independently named Rust ports, the suite-runner/empty-test dispositions, and all 14 direct importers are assigned. The stronger one-to-one ports found no additional production divergence and replace the older grouped test evidence. Exact Go normal/race suites, 794/791 source-derived Rust tests, complete 1,041/1,038 active main-library matrices plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests pass. Each high-level routing/raw/transaction consumer retains its own package status. |
-| `internal/client` | `src/store`, `src/pd`, transport | complete | Atomic re-audit receipt: [`internal-client-source-artifact-audit.md`](internal-client-source-artifact-audit.md). The immutable 19-artifact/6,924-line inventory, all 51 original test declarations, typed command/API-codec integration, native Tonic/Prost decisions, newly exposed lifecycle fixes, and full validation gates are accounted for. Proxy selection remains correctly owned by the separate complete `internal/locate` row. |
+| `internal/client` | `src/store`, `src/pd`, transport | complete | Independently re-audited atomic receipt: [`internal-client-source-artifact-audit.md`](internal-client-source-artifact-audit.md). The immutable 19-artifact/6,924-line inventory, all 50 ordinary Go tests as independently executable Rust ports, `TestMain` harness disposition, every production/native representation surface, and all 32 direct importers are assigned. Five grpc-go pool/GC tests now have ownership-specific executable ports rather than grouped dispositions. Stronger tests found no production divergence; exact Go normal/race suites, 844/841 source-derived Rust tests, complete 1,091/1,088 active main-library matrices plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests pass. Proxy selection remains owned by the separate complete `internal/locate` row. |
 | `internal/client/mockserver` | `src/store/mockserver.rs`, generated Tonic server bindings | complete | Re-audited atomic receipt: [`internal-client-mockserver-source-artifact-audit.md`](internal-client-mockserver-source-artifact-audit.md). The sole 196-line artifact, no-test/support boundary, all methods, and all five direct consumers are assigned. Differential fixes restore per-stream feedback numbering and source loopback address advertisement. |
 | `internal/kvrpc` | `src/request/shard.rs`, `src/raw/requests.rs`, root split consumer | complete | Re-audited atomic receipt: [`internal-kvrpc-source-artifact-audit.md`](internal-kvrpc-source-artifact-audit.md). The sole 82-line artifact, no-test/support boundary, all four production surfaces, and both direct importers are assigned. The differential corrects root split-region batching from 2,048/2 to source-exact 2,049/1. |
 | `internal/latch` | `src/transaction/latch.rs`, transaction client/commit | complete | Re-audited atomic receipt: [`internal-latch-source-artifact-audit.md`](internal-latch-source-artifact-audit.md). All five artifacts/758 lines, all four ordinary tests plus `TestMain`, and all four direct importers are assigned. The differential fixes shared-scheduler shutdown during client close; source ports retain the exact 10-worker/999-transaction stress shape. |
@@ -300,20 +300,36 @@ The pinned Go test was inspected but not re-executed because this host has no `g
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
-The complete inventory, production mapping, native-language decisions, and one-by-one original test/support receipt are recorded in [`internal-client-source-artifact-audit.md`](internal-client-source-artifact-audit.md). The transport owns address-keyed/versioned pool lifecycle, fixed dial and receive defaults, round robin, direct/forwarded unary and streaming RPCs, BatchCommands collection/publication/recovery/diagnostics, native-future cancellation, ResolveLock collapse, resource-control integration, RU-v2 accounting, execution-detail/OpenTracing hooks, health feedback, exact source metric labels/names, panic supervisors, and close/idle behavior. The source `CallRPC` matrix is compiled as 53 typed Rust request routes plus Debug; unary API coding is owned by the typed plan/keyspace boundary and stream-specific coding remains in this transport.
+The complete inventory, production mapping, native-language decisions, and one-by-one original test/support receipt are recorded in [`internal-client-source-artifact-audit.md`](internal-client-source-artifact-audit.md). The transport owns address-keyed/versioned pool lifecycle, fixed dial and receive defaults, round robin, direct/forwarded unary and streaming RPCs, BatchCommands collection/publication/recovery/diagnostics, native-future cancellation, ResolveLock collapse, resource-control integration, RU-v2 accounting, execution-detail/OpenTracing hooks, health feedback, exact source metric labels/names, panic supervisors, and close/idle behavior. The source `CallRPC` matrix is compiled as 53 typed Rust request routes plus Debug; unary API coding is owned by the typed plan/keyspace boundary and stream-specific coding remains in this transport. The 2026-08-26 independent re-audit adds one executable Rust port for each of all 50 ordinary Go tests, including ownership-native buffer-pool and backing-array GC cases; `TestMain` remains the sole harness disposition. The stronger tests required only unique metric labels for independently repeated cases and found no production divergence.
 
-Validation on `nightly-2026-08-22`:
+Validation with Go 1.25.12 and `nightly-2026-08-22`:
+
+    go test ./internal/client -count=1
+    go test -race ./internal/client -count=1
+    # passed
 
     cargo +nightly-2026-08-22 fmt --all -- --check
     git diff --check
 
-    cargo +nightly-2026-08-22 test --lib --quiet
-    # 474 passed; 0 failed
+    cargo +nightly-2026-08-22 test --quiet --lib --no-default-features source_
+    # 844 passed; 0 failed
 
-    cargo +nightly-2026-08-22 test --all-features --lib --quiet
-    # 474 passed; 0 failed
+    cargo +nightly-2026-08-22 test --quiet --lib --all-features source_
+    # 841 passed; 0 failed
 
-Strict all-feature Clippy was attempted but remains blocked by the repository's pre-existing generated-code and unrelated lint backlog; the new structured connection helper carries the same local `too_many_arguments` allowance as adjacent constructors. The original Go tests were not run because this host has no Go toolchain. Real loopback Tonic tests cover package-owned network behavior; a live TiKV/PD cluster is not required for this transport package. `internal/locate` proxy/replica selection and `internal/apicodec` each have their own later complete receipt and were not implied complete by this transport receipt.
+    cargo +nightly-2026-08-22 test --quiet --workspace --no-default-features
+    # main library: 1,091 passed; 0 failed; 1 ignored
+
+    cargo +nightly-2026-08-22 test --quiet --lib --all-features
+    # 1,088 passed; 0 failed; 1 ignored
+
+    cargo +nightly-2026-08-22 check --workspace --all-targets --all-features
+    cargo +nightly-2026-08-22 clippy --workspace --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS=-Dwarnings cargo +nightly-2026-08-22 doc --workspace --all-features --no-deps --document-private-items
+    cargo +nightly-2026-08-22 test --doc --all-features
+    # passed; 51 doctests
+
+Real loopback Tonic tests cover package-owned network behavior; a live TiKV/PD cluster is not required for this transport package. `internal/locate` proxy/replica selection and `internal/apicodec` each have their own complete receipts and are not implied complete by this transport receipt.
 
 ## Complete package receipt: `internal/client/mockserver`
 
