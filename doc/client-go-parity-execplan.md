@@ -1426,3 +1426,20 @@ five source skips with all features. Canonical workspace matrices pass 1,326
 no-default tests with two configured skips and 1,300 all-feature library tests
 with six configured skips. This correction supersedes the earlier claim that
 the first closeout scan itself had already proved zero forwarding mappings.
+
+Plan correction (2026-08-26): reopened `rawkv` and its owning
+`integration_tests/raw` matrix to replace evidence aliases with direct unit
+tests. All 27 assertion-bearing Go suite methods now have direct, independently
+selectable Rust bodies: the former 23-name forwarding macro, four store-helper
+aliases, and aggregate owner tests are gone. Stateful mock and live ports write
+through one client before applying source-ordered region splits; the live scan
+uses all 20 pinned split points after its 20,480 writes. The pinned live reverse
+scan's lexical bounds are preserved (and documented as vacuous), with a
+non-vacuous reverse-limit companion assertion over the same data. Mechanical
+reconciliation finds 27 unique definitions with zero missing, extra, duplicate,
+forwarding, or registered test-to-test calls. Exact Go 1.25.12 normal/race
+suites pass for `rawkv` in legacy and NextGen modes and for the separate raw
+integration module. The 27 direct Rust ports pass in both feature selections;
+canonical matrices pass 1,313 no-default tests with two configured skips and
+1,287 all-feature library tests with six configured skips. No production
+divergence was exposed; this correction strengthens the package test receipt.

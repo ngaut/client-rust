@@ -5281,9 +5281,39 @@ mod test {
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_rawkv_TestReplaceStore() {
-        source_store_resolve_state_transition_matrix()
-            .await
-            .unwrap();
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.push(metapb::Store {
+            id: 1,
+            address: "store1".to_owned(),
+            ..Default::default()
+        });
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(1).await.unwrap().address, "store1");
+
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store1".to_owned(),
+                state: metapb::StoreState::Tombstone.into(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 3,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+        ];
+        assert!(cache.mark_store_need_check(1));
+        assert_eq!(cache.refresh_store_by_id(1).await.unwrap(), None);
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Tombstone)
+        );
+        assert_eq!(cache.get_store_by_id(3).await.unwrap().address, "store1");
+        assert_eq!(
+            cache.store_resolve_state(3),
+            Some(StoreResolveState::Resolved)
+        );
     }
 
     #[tokio::test]
@@ -7339,18 +7369,118 @@ mod test {
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_rawkv_TestReplaceAddrWithNewStore() -> Result<()> {
-        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await
+        let client = Arc::new(MockRetryClient::default());
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "store2".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store1");
+
+        *client.stores.lock().await = vec![metapb::Store {
+            id: 2,
+            address: "store1".to_owned(),
+            ..Default::default()
+        }];
+        assert!(cache.mark_store_need_check(1));
+        assert_eq!(cache.refresh_store_by_id(1).await?, None);
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Tombstone)
+        );
+        assert_eq!(cache.get_store_by_id(2).await?.address, "store1");
+        Ok(())
     }
 
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_rawkv_TestUpdateStoreAddr() -> Result<()> {
-        source_store_reresolve_updates_metadata_without_resetting_runtime_state().await
+        let client = Arc::new(MockRetryClient::default());
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "store2".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store1");
+
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store2".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+        ];
+        assert!(cache.mark_store_need_check(1));
+        assert_eq!(
+            cache.refresh_store_by_id(1).await?.unwrap().address,
+            "store2"
+        );
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store2");
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Resolved)
+        );
+        Ok(())
     }
 
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_rawkv_TestReplaceNewAddrAndOldOfflineImmediately() -> Result<()> {
-        source_replica_candidates_skip_tombstone_and_removed_stores().await
+        let client = Arc::new(MockRetryClient::default());
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "store1".to_owned(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "store2".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let cache = RegionCache::new(client.clone());
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store1");
+        assert_eq!(cache.get_store_by_id(2).await?.address, "store2");
+
+        *client.stores.lock().await = vec![metapb::Store {
+            id: 2,
+            address: "store1".to_owned(),
+            ..Default::default()
+        }];
+        assert!(cache.mark_store_need_check(1));
+        assert_eq!(cache.refresh_store_by_id(1).await?, None);
+        assert!(cache.mark_store_need_check(2));
+        assert_eq!(
+            cache.refresh_store_by_id(2).await?.unwrap().address,
+            "store1"
+        );
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Tombstone)
+        );
+        assert_eq!(cache.get_store_by_id(2).await?.address, "store1");
+        Ok(())
     }
 }
