@@ -46,7 +46,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `txnkv/txnsnapshot` | `src/transaction/{snapshot,sync_snapshot,snapshot_stats,transaction,buffer,requests,client}.rs`, `src/request/{plan,plan_builder,shard}.rs`, request context and metrics | complete | Re-audited atomic receipt: [`txnkv-txnsnapshot-source-artifact-audit.md`](txnkv-txnsnapshot-source-artifact-audit.md). All five source artifacts/2,317 lines, every production/probe surface, ten direct importers, two indirect probe consumers, and all 40 external `Test*` declarations are assigned at case level, including explicit zero-case/skip dispositions. Executable ports include the exact 1/256/257/768-row scan matrix and 123/456 region splits, the 5×30 shared-snapshot workload, response/pair lock distinctions, callback enabled/disabled behavior, and existing/missing multi-region values. The re-audit fixed eager multi-region scan row loss (691/768 before the fix), wait-all snapshot fanout/error/fork ownership, one-shard no-fork behavior, post-lock physical route reselection, and the previously dormant async-BatchGet configuration. Root `tikv` retains the concrete GC visibility provider and live integration gates; no other row is promoted. |
 | `txnkv/txnutil` | Rust priority type plus transaction request contexts | complete | Receipt below; normal/low/high wire values, defaults, mutable async/sync transaction and snapshot APIs, read/write propagation, retry/shard preservation, and normal heartbeat behavior are covered. |
 | `util` | shared public `src/util`, plus native tracing/traffic/PD/transaction integrations | complete | Atomic receipt: [`util-source-artifact-audit.md`](util-source-artifact-audit.md). All 13 artifacts/3,478 lines, 30 original tests plus `TestMain`, exported/context/concurrency surfaces, and 58 direct importers are assigned. Custom DNS uses the configured server; execution/RU/pool/scan/write/time details, failpoints, recovery, request identity, rate limiting, timestamp sets, and intercepted PD waits preserve source behavior without promoting incomplete callers. |
-| `util/async` | `src/async_util.rs` | complete | Receipt below; callback and run-loop behavior plus every original test scenario are covered. |
+| `util/async` | public `src/async_util.rs`, `src/lib.rs`, downstream API gate | complete | Re-audited atomic receipt: [`util-async-source-artifact-audit.md`](util-async-source-artifact-audit.md). All four artifacts/495 lines, all 12 executable source cases, every production surface, and all 17 direct importers are assigned. Each named Go subtest is independently executable in Rust; deterministic synchronization replaces timing sleeps, and the module is now ordinarily documented/public like the Go package. |
 | `util/codec` | `src/kv/codec.rs`, root `codec` re-export | complete | Receipt below; all byte and number codec operations, ordering, append/leftover, boundary, and malformed-input behavior are covered. |
 | `util/collectors` | public `src/util/collectors.rs`, generated channelz client/server/messages | complete | Atomic receipt: [`util-collectors-source-artifact-audit.md`](util-collectors-source-artifact-audit.md). Both source artifacts (1,189 lines), all six original tests, all metric descriptors/options/graph branches/address and timestamp rules/error counters, and the exact grpc-go v1.82.1 channelz schema are covered. A dedicated async RPC worker keeps every Prometheus scrape synchronous, concurrent, live, and uncached; the prior runtime blocker is removed without weakening source behavior. |
 | `util/intest` | `src/intest.rs`, Cargo `internal-tests` feature | complete | Receipt below; both build variants and mutable runtime override behavior are implemented and validated. |
@@ -531,40 +531,12 @@ The redaction tests are serialized because the source contract is process-global
 
 ## Complete package receipt: `util/async`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is production files `util/async/core.go` (83 lines) and `util/async/runloop.go` (158 lines), plus original tests `util/async/core_test.go` (90 lines) and `util/async/runloop_test.go` (164 lines). There is no `doc.go`, build/platform variant, generated input/output, fixture, or package-specific build file. Consumers were inventoried in `internal/client`, `internal/locate`, `internal/mockstore/mocktikv`, `tikv` test support, `txnkv/transaction` test support, and `txnkv/txnsnapshot`. Those packages retain separate integration receipts because Rust's normal transport paths primarily use native futures rather than callbacks.
-
-Rust implementation and integration files are:
-
-- `src/async_util.rs`: `Pool` and `Executor` traits; owned tasks; cloneable exactly-once generic callbacks; reverse-order injected actions; immediate and scheduled fulfillment; run-loop state and queue; optional custom pool; cancellation token; and typed execution errors.
-- `src/lib.rs`: hidden public `async_util` module, using a Rust-safe name because `async` is a language keyword.
-
-The native API uses `Option<E>` for Go's nullable error and a `Cancellation` token for `context.Context` cancellation. `RunLoop::execute` returns both the task count and a result so cancellation and concurrent-execution errors preserve Go's `n, err` contract. Unexecuted tasks return to the front of the queue in source order, tasks appended during execution run in a later batch within the same call, an initially empty loop waits, and only one caller may execute a loop.
-
-All original scenarios are represented: reverse injection order; invoke/invoke, schedule/schedule, invoke/schedule, and schedule/invoke exactly-once combinations; default asynchronous spawning and custom pool dispatch; initial wait/wakeup; nested append; delayed work left for a second execution; cancellation while running and waiting; and concurrent execution rejection.
-
-Validation on Rust 1.93.0:
-
-    cargo test async_util
-    # 9 passed; 0 failed
-
-    cargo test --lib
-    # 94 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster test applies to this in-process scheduling package. Consumer packages must still account for whether their Rust-native future paths make callback adaptation unnecessary or integrate this bridge explicitly.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in
+[`util-async-source-artifact-audit.md`](util-async-source-artifact-audit.md).
+That receipt owns the immutable four-artifact/495-line inventory, all 12
+executable source cases, all 17 direct importers, exact Go and race execution,
+the public-module correction, ordinary downstream API gate, and final
+pinned-nightly validation.
 
 ## Complete package receipt: `internal/kvrpc`
 

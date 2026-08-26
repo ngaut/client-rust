@@ -125,7 +125,6 @@
 #![allow(clippy::field_reassign_with_default)]
 #![allow(clippy::result_large_err)]
 
-#[doc(hidden)]
 pub mod async_util;
 pub mod backoff;
 pub mod error;
