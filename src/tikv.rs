@@ -1363,7 +1363,7 @@ impl KvStore {
             }
             Ok(SplitResponseAction::ResolveLocks(locks)) => match self
                 .inner
-                .resolve_locks(
+                .resolve_locks_with_pessimistic_region(
                     locks,
                     Timestamp::from_version(u64::MAX),
                     Backoff::equal_jitter_backoff(100, 2_000, 60),

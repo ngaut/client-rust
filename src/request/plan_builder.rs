@@ -492,6 +492,25 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         }
     }
 
+    /// Resolve pessimistic conflicts with client-go's region-wide rollback
+    /// option. The option is scoped to this plan's context clone, so snapshot
+    /// and ordinary resolver callers that share the underlying state retain
+    /// their exact-key behavior.
+    pub(crate) fn resolve_lock_with_context_and_pessimistic_region(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+        keyspace: Keyspace,
+        mut resolve_locks_context: ResolveLocksContext,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    where
+        P: Shardable,
+        P::Result: HasLocks,
+    {
+        resolve_locks_context.pessimistic_region_resolve = true;
+        self.resolve_lock_with_context(timestamp, backoff, keyspace, resolve_locks_context)
+    }
+
     /// Resolve locks encountered by a snapshot read. Unlike a mutation,
     /// client-go reissues the read with TiKV's resolved/committed-lock hints
     /// instead of waiting for secondary-lock cleanup.
@@ -753,6 +772,13 @@ where
     /// Apply client-go's latest-version autocommit point-get lock rule.
     pub(crate) fn max_timestamp_point_get(mut self, enabled: bool) -> Self {
         self.plan.max_timestamp_point_get = enabled;
+        self
+    }
+
+    /// Point Get uses client-go's explicit `resolveLite=true` behavior even
+    /// when the lock advertises a transaction size above the global threshold.
+    pub(crate) fn force_lite_lock_resolution(mut self) -> Self {
+        self.plan.resolve_locks_context.force_lite = true;
         self
     }
 
@@ -1373,6 +1399,33 @@ mod tests {
             builder.plan.ru_details.as_ref().unwrap(),
             &details
         ));
+    }
+
+    #[test]
+    fn source_lock_resolution_options_are_scoped_to_the_plan_context_clone() {
+        let shared = ResolveLocksContext::default();
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .resolve_lock_with_context_and_pessimistic_region(
+            Timestamp::default(),
+            Backoff::no_jitter_backoff(0, 0, 1),
+            Keyspace::Disable,
+            shared.clone(),
+        )
+        .force_lite_lock_resolution();
+
+        assert!(
+            builder
+                .plan
+                .resolve_locks_context
+                .pessimistic_region_resolve
+        );
+        assert!(builder.plan.resolve_locks_context.force_lite);
+        assert!(!shared.pessimistic_region_resolve);
+        assert!(!shared.force_lite);
     }
 
     #[test]

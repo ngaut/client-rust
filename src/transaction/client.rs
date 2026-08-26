@@ -520,19 +520,44 @@ impl Client {
         &self,
         locks: Vec<ProtoLockInfo>,
         timestamp: Timestamp,
+        backoff: Backoff,
+    ) -> Result<Vec<ProtoLockInfo>> {
+        self.resolve_locks_inner(locks, timestamp, backoff, false)
+            .await
+    }
+
+    /// Source split-region and transaction-file callers request one
+    /// pessimistic rollback per affected region instead of one per key.
+    pub(crate) async fn resolve_locks_with_pessimistic_region(
+        &self,
+        locks: Vec<ProtoLockInfo>,
+        timestamp: Timestamp,
+        backoff: Backoff,
+    ) -> Result<Vec<ProtoLockInfo>> {
+        self.resolve_locks_inner(locks, timestamp, backoff, true)
+            .await
+    }
+
+    async fn resolve_locks_inner(
+        &self,
+        locks: Vec<ProtoLockInfo>,
+        timestamp: Timestamp,
         mut backoff: Backoff,
+        pessimistic_region_resolve: bool,
     ) -> Result<Vec<ProtoLockInfo>> {
         use crate::request::TruncateKeyspace;
 
         let mut live_locks = locks;
         loop {
+            let mut lock_resolver_context = self.lock_resolver_context.clone();
+            lock_resolver_context.pessimistic_region_resolve = pessimistic_region_resolve;
             let resolved_locks = resolve_locks_with_context(
                 live_locks.encode_keyspace(self.keyspace, KeyMode::Txn),
                 timestamp.clone(),
                 self.pd.clone(),
                 self.keyspace,
                 self.keyspace_name.as_deref(),
-                self.lock_resolver_context.clone(),
+                lock_resolver_context,
             )
             .await?;
             live_locks = resolved_locks.truncate_keyspace(self.keyspace);

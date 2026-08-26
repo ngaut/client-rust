@@ -71,8 +71,12 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-26) Completed the package-atomic `internal/unionstore/rbt` re-audit and Rust unit-test port. The exact five-artifact/1,661-line receipt maps all three original tests at their 10,000-key scale, every production surface, and the sole direct parent importer. Five red-then-green regressions corrected `UpdateFlags` dirty/size/discard guards, explicit-empty reverse bounds, reverse value-log `InspectStage` order, value-log storage release/invalidation, and flags-only history errors. Final gates pass exact Go and race suites, nine targeted Go parent tests, 11 focused Rust tests in both feature configurations, all 17 Rust parent tests, 598/595 source-derived tests, 899/896 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 - [x] (2026-08-26) Completed the package-atomic `internal/unionstore/art` re-audit and Rust unit-test port. The exact nine-artifact/3,474-line receipt maps all 35 ordinary tests plus the benchmark contract, every production/representation surface, and the sole direct parent importer. Five red-then-green regressions corrected value-log discard release/invalidation/hook delivery, reverse append-order stage inspection, flags-only total-buffer limits, idempotent completed snapshot iteration, and ignored parent flag-update errors. Final gates pass exact Go and race suites for both ART and its complete parent, 47 focused Rust tests and 18 parent tests in both feature configurations, 643/640 source-derived tests, 940/937 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 - [x] (2026-08-26) Re-audited five independent foundation packages in one batch: `txnkv/txnutil`, `util/codec`, `util/intest`, `util/israce`, and `util/redact`. The exact eight-artifact/755-line inventory proves all five have no original Go tests/support, while Rust adds focused and downstream tests for every contract. Repairs preserve arbitrary numeric command priorities end to end, restore codec group-byte error detail, make test/redaction globals sequentially consistent, map the complete source redaction mode matrix, and expose the safe zero-copy arbitrary-byte `String` equivalent. Exact Go ordinary/race/tag gates, 20 focused tests, both two-test downstream configurations, 1,003 active no-default workspace library tests, 1,000 active all-feature library tests, strict check/Clippy/private rustdoc, and 51 doctests pass.
+- [x] (2026-08-26) Independently re-audited `txnkv/txnlock` and ported all five ordinary Go tests as one-to-one Rust tests. Red/green gates corrected cached async-primary metadata loss, absent region-wide pessimistic rollback, rollback of live pessimistic locks, and missing explicit-Lite point cleanup; source-public cache/semaphore constants and every option-setting consumer are assigned. Exact Go normal/race tests, 37 focused tests in both Rust configurations, 749/746 source-derived tests, 1,018 no-default and 1,015 all-feature active library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests pass.
 
 ## Surprises & Discoveries
+
+- Observation: a cache that preserves only an async transaction's determined commit status is not behaviorally sufficient. Client-go caches the private primary `LockInfo` with that status because a later hit must still enumerate every secondary without rechecking them.
+  Evidence: pinned `TxnStatus.primaryLock` and `resolveAsyncCommitLock`; the red `source_test_lock_resolver_cache` cleanup-key trace and the corrected mutex-owned Rust cache sidecar.
 
 - Observation: the repositories have different architectural boundaries. Client-go has roughly sixty Go package directories and 274 Go files, while client-rust is primarily one crate whose request planning, PD, store, raw, and transaction modules cross several Go package boundaries.
   Evidence: client-go package inventory in `doc/client-go-parity-ledger.md`; client-rust modules under `src/`.
@@ -1160,3 +1164,22 @@ external/crate target, strict workspace check/Clippy/private rustdoc, and all
 51 doctests. Rustfmt, exact source/importer reconciliation, and whitespace
 checks also pass; only the signed package commit and remote receipt remain to
 be recorded.
+
+Plan revision note (2026-08-26): independently re-audited `txnkv/txnlock`
+against its complete six-artifact/2,144-line boundary and ported each of the
+five ordinary Go tests under an independently traceable Rust name. The audit
+found four behavioral gaps hidden by the earlier grouped receipt: determined
+async-commit cache entries lost their primary/secondary metadata; pessimistic
+cleanup lacked the source region-wide option; live pessimistic locks were
+rolled back despite nonzero status TTL; and point Get did not force Lite above
+the global threshold. Rust now retains async primary metadata through FIFO
+eviction, deduplicates complete async cleanup, sends one keyless pessimistic
+rollback per source-selected transaction/region, preserves live locks, and
+scopes explicit Lite plus region rollback at every matching consumer. Public
+cache/semaphore constants are restored. Exact Go normal and race suites pass;
+final pinned-nightly gates pass 37 focused tests in both configurations,
+749/746 source-derived tests, 1,018 no-default workspace and 1,015 all-feature
+active library tests plus one unrelated ignore, three ordinary downstream API
+tests, strict all-target check/Clippy/private rustdoc, all 51 doctests, rustfmt,
+source identity, and whitespace checks. The remaining action is one signed
+package-sized commit and verified push to `origin/master`.

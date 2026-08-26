@@ -1974,6 +1974,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     snapshot_runtime_stats.clone(),
                     snapshot_variables.clone(),
                 )
+                .force_lite_lock_resolution()
                 .max_timestamp_point_get(max_timestamp_point_get)
                 .retry_multi_region_with_snapshot_stats(
                     DEFAULT_REGION_BACKOFF,
@@ -2101,6 +2102,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         snapshot_runtime_stats.clone(),
                         snapshot_variables.clone(),
                     )
+                    .force_lite_lock_resolution()
                     .max_timestamp_point_get(max_timestamp_point_get)
                     .retry_multi_region_with_snapshot_stats(
                         DEFAULT_REGION_BACKOFF,
@@ -4359,6 +4361,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     snapshot_runtime_stats.clone(),
                     snapshot_variables.clone(),
                 )
+                .force_lite_lock_resolution()
                 .without_snapshot_lock_backoff_stats()
                 .max_timestamp_point_get(max_timestamp_point_get)
                 .retry_multi_region_with_snapshot_stats(
@@ -4649,6 +4652,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                                 snapshot_runtime_stats.clone(),
                                 snapshot_variables.clone(),
                             )
+                            .force_lite_lock_resolution()
                             .without_snapshot_lock_backoff_stats()
                             .max_timestamp_point_get(max_timestamp_point_get)
                             .retry_multi_region_with_snapshot_stats(
@@ -4841,7 +4845,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     Ok(())
                 })
                 .priority(self.options.priority)
-                .resolve_lock_with_context(
+                .resolve_lock_with_context_and_pessimistic_region(
                     self.timestamp.clone(),
                     self.options.retry_options.lock_backoff.clone(),
                     self.keyspace,
@@ -7221,13 +7225,15 @@ impl<PdC: PdClient> Committer<PdC> {
                                 .map_err(|_| Error::KeyError(Box::new(key_error)))?;
                         locks.extend(extracted);
                     }
+                    let mut lock_resolver_context = self.lock_resolver_context.clone();
+                    lock_resolver_context.pessimistic_region_resolve = true;
                     let resolution = crate::transaction::resolve_locks_with_context_result(
                         locks,
                         Timestamp::from_version(u64::MAX),
                         self.rpc.clone(),
                         self.keyspace,
                         self.keyspace_name.as_deref(),
-                        self.lock_resolver_context.clone(),
+                        lock_resolver_context,
                     )
                     .await?;
                     if resolution.ms_before_expired > 0 {
@@ -7600,13 +7606,15 @@ impl<PdC: PdClient> Committer<PdC> {
                 locks.append(&mut extracted);
             }
             let lock_count = locks.len();
+            let mut lock_resolver_context = self.lock_resolver_context.clone();
+            lock_resolver_context.pessimistic_region_resolve = true;
             let resolution = crate::transaction::resolve_locks_with_context_result(
                 locks,
                 self.start_version.clone(),
                 self.rpc.clone(),
                 self.keyspace,
                 self.keyspace_name.as_deref(),
-                self.lock_resolver_context.clone(),
+                lock_resolver_context,
             )
             .await?;
             if resolution.ms_before_expired > 0 {
@@ -8358,7 +8366,7 @@ impl<PdC: PdClient> Committer<PdC> {
             },
         )
         .priority(self.options.priority)
-        .resolve_lock_with_context(
+        .resolve_lock_with_context_and_pessimistic_region(
             self.start_version.clone(),
             self.options.retry_options.lock_backoff.clone(),
             self.keyspace,

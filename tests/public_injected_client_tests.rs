@@ -97,6 +97,11 @@ fn ordinary_downstream_build_can_name_transaction_test_controls() {
     );
     assert_eq!(tikv_client::transaction::DEFAULT_LOCK_TTL, 3_000);
     assert_eq!(tikv_client::transaction::TTL_FACTOR, 6_000.0);
+    assert_eq!(tikv_client::transaction::RESOLVED_CACHE_SIZE, 2_048);
+    assert_eq!(
+        tikv_client::transaction::ASYNC_RESOLVE_LOCK_SEMAPHORE_LIMIT,
+        10_000
+    );
     assert_eq!(
         tikv_client::transaction::PRE_SPLIT_DETECT_THRESHOLD.load(Ordering::Relaxed),
         100_000
