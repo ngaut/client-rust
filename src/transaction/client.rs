@@ -35,7 +35,9 @@ use crate::transaction::lowering::new_scan_lock_request;
 use crate::transaction::lowering::new_unsafe_destroy_range_request;
 use crate::transaction::range_task::{RangeTaskHandler, Runner, TaskStat};
 use crate::transaction::resolve_locks_with_context;
+use crate::transaction::resolve_locks_with_context_result;
 use crate::transaction::ResolveLocksContext;
+use crate::transaction::ResolveLocksResult;
 use crate::transaction::Snapshot;
 use crate::transaction::Transaction;
 use crate::transaction::TransactionOptions;
@@ -536,6 +538,31 @@ impl Client {
     ) -> Result<Vec<ProtoLockInfo>> {
         self.resolve_locks_inner(locks, timestamp, backoff, true)
             .await
+    }
+
+    /// Runs one source `ResolveLocksWithOpts` pass for root split-region
+    /// callers. The caller owns the cumulative retry budget and uses the
+    /// returned minimum TTL to cap its next lock backoff.
+    pub(crate) async fn resolve_locks_once_with_pessimistic_region(
+        &self,
+        locks: Vec<ProtoLockInfo>,
+        timestamp: Timestamp,
+    ) -> Result<ResolveLocksResult> {
+        use crate::request::TruncateKeyspace;
+
+        let mut lock_resolver_context = self.lock_resolver_context.clone();
+        lock_resolver_context.pessimistic_region_resolve = true;
+        let mut result = resolve_locks_with_context_result(
+            locks.encode_keyspace(self.keyspace, KeyMode::Txn),
+            timestamp,
+            self.pd.clone(),
+            self.keyspace,
+            self.keyspace_name.as_deref(),
+            lock_resolver_context,
+        )
+        .await?;
+        result.live_locks = result.live_locks.truncate_keyspace(self.keyspace);
+        Ok(result)
     }
 
     async fn resolve_locks_inner(

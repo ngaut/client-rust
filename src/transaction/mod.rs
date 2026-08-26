@@ -89,6 +89,7 @@ pub use lock::LockResolver;
 pub(crate) use lock::ReadLockContext;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;
+pub(crate) use lock::ResolveLocksResult;
 pub use lock::ResolvingLock;
 pub(crate) use lock::ResolvingLocksGuard;
 pub use lock::ASYNC_RESOLVE_LOCK_SEMAPHORE_LIMIT;

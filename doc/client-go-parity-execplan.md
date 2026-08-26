@@ -73,6 +73,7 @@ This is not a textual Go-to-Rust rewrite. A Go package is the minimum claim unit
 - [x] (2026-08-26) Re-audited five independent foundation packages in one batch: `txnkv/txnutil`, `util/codec`, `util/intest`, `util/israce`, and `util/redact`. The exact eight-artifact/755-line inventory proves all five have no original Go tests/support, while Rust adds focused and downstream tests for every contract. Repairs preserve arbitrary numeric command priorities end to end, restore codec group-byte error detail, make test/redaction globals sequentially consistent, map the complete source redaction mode matrix, and expose the safe zero-copy arbitrary-byte `String` equivalent. Exact Go ordinary/race/tag gates, 20 focused tests, both two-test downstream configurations, 1,003 active no-default workspace library tests, 1,000 active all-feature library tests, strict check/Clippy/private rustdoc, and 51 doctests pass.
 - [x] (2026-08-26) Independently re-audited `txnkv/txnlock` and ported all five ordinary Go tests as one-to-one Rust tests. Red/green gates corrected cached async-primary metadata loss, absent region-wide pessimistic rollback, rollback of live pessimistic locks, and missing explicit-Lite point cleanup; source-public cache/semaphore constants and every option-setting consumer are assigned. Exact Go normal/race tests, 37 focused tests in both Rust configurations, 749/746 source-derived tests, 1,018 no-default and 1,015 all-feature active library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests pass.
 - [x] (2026-08-26) Independently re-audited `internal/resourcecontrol` and ported all five Go tests under one-to-one Rust names. The complete two-artifact/511-line boundary, five direct importers, and both legacy/NextGen modes are assigned. A red/green consumer regression restored the missing txn-file `TxnFileErrorAccounting` metric without changing the committed result. Exact Go normal/race tests pass in both modes; final Rust gates pass 13 focused tests per mode, 752/749 source-derived tests, 1,021/1,018 active complete-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
+- [x] (2026-08-26) Independently re-audited root `tikv` and ported every one of its 12 Go suite methods plus the lifecycle test under one-to-one Rust names. The complete 17-artifact/3,895-line boundary, suite/goleak harness dispositions, and all 35 direct importers are assigned. Four red/green regressions corrected region-cache-before-client close ordering, primitive safe-TS probe overwrites while retaining updater monotonicity, immediate scatter header-error propagation, and transaction-file split lock waits on the operation's shared TTL-capped retry owner. Exact Go normal/race tests pass; final Rust gates pass 29 focused tests in both configurations, 769/766 source-derived tests, 1,026 no-default and 1,023 all-feature active main-library tests plus one unrelated ignore, strict check/Clippy/private rustdoc, and 51 doctests.
 
 ## Surprises & Discoveries
 
@@ -1203,3 +1204,19 @@ default workspace and 1,018 all-feature active library tests plus one unrelated
 ignore, strict all-target check/Clippy/private rustdoc, all 51 doctests,
 rustfmt, source identity, declaration/importer reconciliation, and whitespace
 checks. This receipt is the package-sized integration boundary.
+
+Plan revision note (2026-08-26): independently re-audited root `tikv` against
+its exact 17-artifact/3,895-line boundary, 12 assertion-bearing suite methods,
+suite runner, lifecycle test, goleak harness, and 35 direct importers. Every Go
+method and the lifecycle test now has an independently named Rust port. Four
+red/green regressions corrected region-cache-before-client close ordering,
+primitive safe-TS probe overwrite semantics while retaining updater
+monotonicity, immediate propagation of running-scatter response-header errors,
+and transaction-file split lock waits on the operation's shared cancellable
+retry owner capped by the resolver's minimum TTL. Exact Go normal/race suites
+pass. Final pinned-nightly gates pass 29 focused root tests in both feature
+configurations, the close-order port in both, 769/766 source-derived tests,
+1,026 no-default and 1,023 all-feature active main-library tests plus one
+unrelated ignore, strict all-target check/Clippy/private rustdoc, all 51
+doctests, rustfmt, exact inventory/declaration/importer reconciliation, and
+whitespace checks. This receipt is the package-sized integration boundary.
