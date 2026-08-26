@@ -1497,3 +1497,27 @@ skip and 29 plus five skips. Canonical matrices pass 1,275 no-default tests with
 two configured skips and 1,250 all-feature library tests with six configured
 skips. No production divergence was exposed; this correction makes the
 package's unit/integration-test receipt independently executable.
+
+Plan correction (2026-08-26): a whole-repository exact-body scan reopened two
+completed package receipts that still overstated direct unit-test ownership.
+`internal/mockstore/mocktikv::TestRegionContains` was the final one-call helper
+alias left after its 22-name macro correction; it now executes all ten source
+boundary rows directly. Five `txnkv/transaction` identities likewise only
+called aggregate helpers. The three txn-file admission identities now own
+their source configuration, mutation, action, and assertions. The two
+transaction-file resource-tag identities now run fresh prewrite, commit, and
+rollback instances directly. Strengthening those rows exposed a production
+ordering gap: dynamic taggers observed no resource-group name because Rust
+attached it later during plan construction. `Committer` now attaches the name
+before tagger invocation for ordinary and pipelined commits, split requests,
+and transaction-file prewrite/commit/rollback; the later plan attachment is
+idempotent. The new test failed with `None` before the fix and passes with
+`Some("txn-file-test")` afterward. Mechanical reconciliation reports 23/23
+and 33/33 identities with no missing, extra, duplicate, forwarding,
+registered test-to-test, or one-call-only helper result. Exact Go normal/race
+suites pass for both packages; both Rust feature configurations pass all 23
+and all 33 ports. Canonical matrices pass 1,274 no-default tests with two
+configured skips and 1,249 all-feature library tests with six configured
+skips. Strict generation/check/Clippy/private rustdoc, all 51 doctests,
+rustfmt, and whitespace checks pass before one consolidated two-package
+commit.

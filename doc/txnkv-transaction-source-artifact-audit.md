@@ -1,6 +1,6 @@
 # `txnkv/transaction` source-artifact audit
 
-This is the atomic completion receipt for client-go package `txnkv/transaction`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing previously reopened the claim because Rust's transaction did not use or expose the completed staged `MemDb` as its committing buffer. That gap is closed: the Rust implementation in `tikv-client` now uses one authoritative `MemDb`, exposes it through `Transaction::get_mem_buffer` and `SyncTransaction::get_mem_buffer`, and is validated with `nightly-2026-08-22`. The injected-client constructor is an ordinary-build public API so embedded and in-process stores do not depend on a test feature; an external no-feature crate gate implements both required client traits and constructs the generic transaction.
+This is the atomic completion receipt for client-go package `txnkv/transaction`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing previously reopened the claim because Rust's transaction did not use or expose the completed staged `MemDb` as its committing buffer. That gap is closed: the Rust implementation in `tikv-client` now uses one authoritative `MemDb`, exposes it through `Transaction::get_mem_buffer` and `SyncTransaction::get_mem_buffer`, and is validated with `nightly-2026-08-22`. A later whole-body test scan corrected five exact identities that still only invoked aggregate helpers. Strengthening the two transaction-file action identities exposed and fixed a production ordering gap: the resource-group name is now attached before a dynamic tagger runs, as in client-go, for ordinary commit, pipelined commit, split, and transaction-file prewrite/commit/rollback requests. The injected-client constructor is an ordinary-build public API so embedded and in-process stores do not depend on a test feature; an external no-feature crate gate implements both required client traits and constructs the generic transaction.
 
 ## Complete source inventory
 
@@ -51,7 +51,7 @@ The completed unionstore dependency remains reusable and includes a `unistore`-b
 
 ## Original unit-test mapping
 
-Mechanical source enumeration finds exactly 33 `func Test...` declarations. Every declaration now has one independently discoverable Rust test body named `source_go_txnkv_transaction_<GoName>`; there are no generated or handwritten forwarding wrappers. Shared helpers provide setup only, while each exact identity drives its source action and assertions. Every named subtest, table row, randomized round, and source assertion remains executable; the third column records the retained case boundary explicitly.
+Mechanical source enumeration finds exactly 33 `func Test...` declarations. Every declaration now has one independently discoverable Rust test body named `source_go_txnkv_transaction_<GoName>`; there are no generated or handwritten forwarding wrappers, registered test-to-test calls, or exact identities consisting only of a helper call. Shared helpers provide setup only, while each exact identity drives its source action and assertions. Every named subtest, table row, randomized round, and source assertion remains executable; the third column records the retained case boundary explicitly.
 
 | Source declaration | Rust evidence | Source cases retained |
 | --- | --- | --- |
@@ -71,8 +71,8 @@ Mechanical source enumeration finds exactly 33 `func Test...` declarations. Ever
 | `TestTxnFilePrewriteExpandsSharedLockHolders` | `source_go_txnkv_transaction_TestTxnFilePrewriteExpandsSharedLockHolders` | Both nested shared holders are surfaced to lock resolution with their original lock types. |
 | `TestTxnFilePrimaryBatchIndexFindsPrimaryRegion` | `source_go_txnkv_transaction_TestTxnFilePrimaryBatchIndexFindsPrimaryRegion` | Half-open region boundary selects the second batch for the primary. |
 | `TestTxnFilePrimaryRollbackPropagatesKeyError` | `source_go_txnkv_transaction_TestTxnFilePrimaryRollbackPropagatesKeyError` | Primary rollback abort remains a session-scoped txn-file cleanup error. |
-| `TestTxnFileActionsApplyResourceGroupTagger` | `source_go_txnkv_transaction_TestTxnFileActionsApplyResourceGroupTagger` | Prewrite, commit, and rollback rows; tagger sees source sample mutations/context, runs once per action, and temporary prewrite mutations are restored before dispatch. |
-| `TestTxnFileActionsPreserveStaticResourceGroupTag` | `source_go_txnkv_transaction_TestTxnFileActionsPreserveStaticResourceGroupTag` | All three actions retain the static tag and skip the dynamic tagger. |
+| `TestTxnFileActionsApplyResourceGroupTagger` | `source_go_txnkv_transaction_TestTxnFileActionsApplyResourceGroupTagger` | Fresh prewrite, commit, and rollback rows; tagger sees source sample mutations and the `txn-file-test` resource-group context, runs once per action, and temporary prewrite mutations are restored before dispatch. |
+| `TestTxnFileActionsPreserveStaticResourceGroupTag` | `source_go_txnkv_transaction_TestTxnFileActionsPreserveStaticResourceGroupTag` | Fresh instances for all three actions retain the static tag and skip the dynamic tagger. |
 | `TestTxnFilePrewriteTaggerUsesFirstKeyWithoutSampleDataKeys` | `source_go_txnkv_transaction_TestTxnFilePrewriteTaggerUsesFirstKeyWithoutSampleDataKeys` | The first key is temporarily supplied to the tagger and omitted from the sent file request. |
 | `TestTxnFilePrewriteTaggerAppliesWithoutFirstKey` | `source_go_txnkv_transaction_TestTxnFilePrewriteTaggerAppliesWithoutFirstKey` | The tagger still executes with an empty mutation list and its tag reaches dispatch. |
 | `TestTxnFileCommitPrimaryRPCErrorMarksResultUndetermined` | `source_go_txnkv_transaction_TestTxnFileCommitPrimaryRPCErrorMarksResultUndetermined` | Primary transport loss records ambiguity and normalizes to result-undetermined. |
@@ -107,14 +107,16 @@ The complete `internal/locate`, `internal/client`, `internal/apicodec`, `tikvrpc
 Final independent-test validation on `nightly-2026-08-22` used the exact batch code:
 
 - `make check`: clean protocol generation; workspace all-target/all-feature check; rustfmt; strict workspace Clippy with warnings denied.
-- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 1,390 tests passed and two were intentionally skipped. This matrix includes the external mocktikv, public-protocol, ordinary-build injected-client, shared-UniStore, and package unit-test targets.
-- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib`: 1,365 tests passed and six were intentionally skipped.
+- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 1,274 tests passed and two were intentionally skipped. This matrix includes the external mocktikv, public-protocol, ordinary-build injected-client, shared-UniStore, and package unit-test targets.
+- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib`: 1,249 tests passed and six were intentionally skipped.
 - `cargo test --no-default-features --lib source_go_txnkv_transaction_ -- --nocapture` and the `--all-features` variant: all 33 independently named transaction-package tests passed in each configuration.
 - `make doc`: strict private-item workspace rustdoc passed; all 51 doctests passed.
 - `git diff --check`: passed.
-- Mechanical declaration comparison: 33 pinned source tests and 33 direct Rust test bodies, with no missing, extra, duplicate, or forwarding identity.
-- `/private/tmp/go1.25.12-full/bin/go test ./txnkv/transaction`: passed in 0.024 seconds.
-- `/private/tmp/go1.25.12-full/bin/go test -race ./txnkv/transaction`: passed in 1.070 seconds; the linker emitted only its known malformed `LC_DYSYMTAB` warning.
+- Mechanical declaration comparison: 33 pinned source tests and 33 direct Rust test bodies, with no missing, extra, duplicate, forwarding, registered test-to-test, or one-call-only helper identity.
+- `/private/tmp/go1.25.12-full/bin/go test ./txnkv/transaction -count=1`: passed in 0.026 seconds.
+- `/private/tmp/go1.25.12-full/bin/go test -race ./txnkv/transaction -count=1`: passed in 1.077 seconds; the linker emitted only its known malformed `LC_DYSYMTAB` warning.
+
+The strengthened `TestTxnFileActionsApplyResourceGroupTagger` failed before the production fix because `Request::resource_group_name()` returned `None` inside the tagger. It now passes all three source action rows with `Some("txn-file-test")`, and dispatched protobuf contexts retain the same name. Static tags still suppress the dynamic tagger. This red/green result corrects the earlier receipt's claim that the action metadata port was already direct and complete.
 
 Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. The pinned Go normal and race baselines and both Rust feature configurations execute the declarations, subtests, table rows, randomized rounds, and assertions mapped above. Earlier repository-level receipts retain their separately recorded real-cluster evidence.
 

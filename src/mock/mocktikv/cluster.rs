@@ -908,7 +908,16 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn source_go_internal_mockstore_mocktikv_TestRegionContains() {
-        assert_source_test_region_contains();
+        assert!(region_contains(b"", b"", b""));
+        assert!(region_contains(b"", b"", &[1]));
+        assert!(!region_contains(&[1, 1, 1], b"", &[1, 1, 0]));
+        assert!(region_contains(&[1, 1, 1], b"", &[1, 1, 1]));
+        assert!(region_contains(b"", &[2, 2, 2], &[2, 2, 1]));
+        assert!(!region_contains(b"", &[2, 2, 2], &[2, 2, 2]));
+        assert!(!region_contains(&[1, 1, 1], &[2, 2, 2], &[1, 1, 0]));
+        assert!(region_contains(&[1, 1, 1], &[2, 2, 2], &[1, 1, 1]));
+        assert!(region_contains(&[1, 1, 1], &[2, 2, 2], &[2, 2, 1]));
+        assert!(!region_contains(&[1, 1, 1], &[2, 2, 2], &[2, 2, 2]));
     }
 
     #[test]
