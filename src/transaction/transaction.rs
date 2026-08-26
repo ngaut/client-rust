@@ -9351,7 +9351,8 @@ mod tests {
     static GLOBAL_RESOURCE_CONTROL_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn source_min_commit_ts_manager_access_and_concurrency() {
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestMinCommitTsManager() {
         let manager = MinCommitTsManager::default();
         assert_eq!(manager.get(), 0);
         assert_eq!(manager.required_write_access(), WriteAccessLevel::Ttl);
@@ -15602,7 +15603,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_lock_keys_modes_wait_timeout_and_force_lock_results() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestLockKeys() {
         let mut optimistic = Transaction::new(
             Timestamp::from_version(1),
             Arc::new(MockPdClient::default()),
@@ -16226,7 +16228,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_shared_lock_committer_incompatibilities() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestSharedLockCommitterIncompatibilities() {
         let options = TransactionOptions::new_optimistic()
             .use_async_commit()
             .try_one_pc();
@@ -17314,9 +17317,15 @@ mod tests {
         restore();
     }
 
-    #[test]
-    #[serial_test::serial]
-    fn source_txn_file_admission_exclusions() {
+    #[derive(Clone, Copy)]
+    enum SourceTxnFileAdmissionCase {
+        Pipelined,
+        SharedLock,
+        MutationAssertions,
+        NativeExclusions,
+    }
+
+    fn source_txn_file_admission_case(case: SourceTxnFileAdmissionCase) {
         let restore = crate::config::update_global(|config| {
             config.tikv_client.txn_chunk_writer_addr = "127.0.0.1:1".to_owned();
             config.tikv_client.txn_file_min_mutation_size = 1;
@@ -17331,62 +17340,192 @@ mod tests {
         );
         assert!(base.should_use_txn_file());
 
-        let mut filtered_size = base.clone();
-        filtered_size.write_size = 0;
-        filtered_size.buffer_size = 1;
-        assert!(
-            filtered_size.should_use_txn_file(),
-            "txn-file admission uses full MemDB size, not filtered prewrite size"
-        );
+        match case {
+            SourceTxnFileAdmissionCase::Pipelined => {
+                let mut pipelined = base.clone();
+                pipelined.settings.pipelined.enable = true;
+                assert!(!pipelined.should_use_txn_file());
+            }
+            SourceTxnFileAdmissionCase::SharedLock => {
+                let mut shared = base.clone();
+                shared.mutations = vec![source_test_mutation("k", kvrpcpb::Op::SharedLock)];
+                assert!(!shared.should_use_txn_file());
+            }
+            SourceTxnFileAdmissionCase::MutationAssertions => {
+                for (assertion_level, assertion, expected) in [
+                    (
+                        kvrpcpb::AssertionLevel::Strict,
+                        kvrpcpb::Assertion::Exist,
+                        false,
+                    ),
+                    (
+                        kvrpcpb::AssertionLevel::Strict,
+                        kvrpcpb::Assertion::NotExist,
+                        false,
+                    ),
+                    (
+                        kvrpcpb::AssertionLevel::Strict,
+                        kvrpcpb::Assertion::None,
+                        true,
+                    ),
+                    (
+                        kvrpcpb::AssertionLevel::Off,
+                        kvrpcpb::Assertion::Exist,
+                        true,
+                    ),
+                ] {
+                    let mut asserted = base.clone();
+                    asserted.settings.assertion_level = assertion_level;
+                    asserted.mutations[0].assertion = assertion as i32;
+                    assert_eq!(asserted.should_use_txn_file(), expected);
+                }
+            }
+            SourceTxnFileAdmissionCase::NativeExclusions => {
+                let mut filtered_size = base.clone();
+                filtered_size.write_size = 0;
+                filtered_size.buffer_size = 1;
+                assert!(
+                    filtered_size.should_use_txn_file(),
+                    "txn-file admission uses full MemDB size, not filtered prewrite size"
+                );
 
-        let mut pipelined = base.clone();
-        pipelined.settings.pipelined.enable = true;
-        assert!(!pipelined.should_use_txn_file());
+                let mut pessimistic = base.clone();
+                pessimistic.options = TransactionOptions::new_pessimistic();
+                assert!(!pessimistic.should_use_txn_file());
 
-        let mut shared = base.clone();
-        shared.mutations = vec![source_test_mutation("k", kvrpcpb::Op::SharedLock)];
-        assert!(!shared.should_use_txn_file());
-
-        for (assertion_level, assertion, expected) in [
-            (
-                kvrpcpb::AssertionLevel::Strict,
-                kvrpcpb::Assertion::Exist,
-                false,
-            ),
-            (
-                kvrpcpb::AssertionLevel::Strict,
-                kvrpcpb::Assertion::NotExist,
-                false,
-            ),
-            (
-                kvrpcpb::AssertionLevel::Strict,
-                kvrpcpb::Assertion::None,
-                true,
-            ),
-            (
-                kvrpcpb::AssertionLevel::Off,
-                kvrpcpb::Assertion::Exist,
-                true,
-            ),
-        ] {
-            let mut asserted = base.clone();
-            asserted.settings.assertion_level = assertion_level;
-            asserted.mutations[0].assertion = assertion as i32;
-            assert_eq!(asserted.should_use_txn_file(), expected);
+                let mut disabled = base.clone();
+                disabled.settings.txn_file_disabled = true;
+                assert!(!disabled.should_use_txn_file());
+            }
         }
-
-        let mut pessimistic = base.clone();
-        pessimistic.options = TransactionOptions::new_pessimistic();
-        assert!(!pessimistic.should_use_txn_file());
-
-        let mut disabled = base.clone();
-        disabled.settings.txn_file_disabled = true;
-        assert!(!disabled.should_use_txn_file());
         restore();
     }
 
     #[test]
-    fn source_txn_file_tagger_uses_first_key_and_static_tag_wins() {
+    #[serial_test::serial]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestUseTxnFileExcludesPipelinedTxn() {
+        source_txn_file_admission_case(SourceTxnFileAdmissionCase::Pipelined);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestUseTxnFileExcludesSharedLockTxn() {
+        source_txn_file_admission_case(SourceTxnFileAdmissionCase::SharedLock);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestUseTxnFileExcludesMutationAssertions() {
+        source_txn_file_admission_case(SourceTxnFileAdmissionCase::MutationAssertions);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn source_uncovered_txn_file_admission_native_exclusions() {
+        source_txn_file_admission_case(SourceTxnFileAdmissionCase::NativeExclusions);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFilePrewriteTaggerUsesFirstKeyWithoutSampleDataKeys(
+    ) {
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::PrewriteRequest>()
+                    .expect("txn-file prewrite dispatch");
+                assert!(request.mutations.is_empty());
+                assert!(request
+                    .context
+                    .as_ref()
+                    .unwrap()
+                    .resource_group_tag
+                    .is_empty());
+                captured_dispatches.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let tagger_calls = Arc::new(AtomicUsize::new(0));
+        let captured_tagger_calls = Arc::clone(&tagger_calls);
+        let mut settings = CommitSettings::default();
+        settings.resource_group_tagger = Some(Arc::new(move |request| {
+            let request = request
+                .as_any()
+                .downcast_ref::<kvrpcpb::PrewriteRequest>()
+                .expect("txn-file prewrite tagger receives Prewrite");
+            assert_eq!(request.mutations.len(), 1);
+            assert_eq!(request.mutations[0].key, b"k");
+            captured_tagger_calls.fetch_add(1, Ordering::SeqCst);
+        }));
+        let mut committer = source_test_committer(
+            rpc,
+            Some(Key::from(b"primary".to_vec())),
+            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+            TransactionOptions::new_optimistic(),
+            settings,
+        );
+        let mut batch = source_test_chunk_batch(true);
+        batch.sample_data_keys.clear();
+
+        assert!(!committer.prewrite_txn_file_batch(&batch).await.unwrap());
+        assert_eq!(tagger_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(dispatches.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFilePrewriteTaggerAppliesWithoutFirstKey() {
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::PrewriteRequest>()
+                    .expect("txn-file prewrite dispatch");
+                assert!(request.mutations.is_empty());
+                assert_eq!(
+                    request.context.as_ref().unwrap().resource_group_tag,
+                    b"metadata-tag"
+                );
+                captured_dispatches.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let tagger_calls = Arc::new(AtomicUsize::new(0));
+        let captured_tagger_calls = Arc::clone(&tagger_calls);
+        let mut settings = CommitSettings::default();
+        settings.resource_group_tagger = Some(Arc::new(move |request| {
+            let prewrite = request
+                .as_any()
+                .downcast_ref::<kvrpcpb::PrewriteRequest>()
+                .expect("txn-file prewrite tagger receives Prewrite");
+            assert!(prewrite.mutations.is_empty());
+            captured_tagger_calls.fetch_add(1, Ordering::SeqCst);
+            request.set_resource_group_tag(b"metadata-tag".to_vec());
+        }));
+        let mut committer = source_test_committer(
+            rpc,
+            Some(Key::from(b"primary".to_vec())),
+            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+            TransactionOptions::new_optimistic(),
+            settings,
+        );
+        let mut batch = source_test_chunk_batch(true);
+        batch.first_key.clear();
+        batch.sample_data_keys.clear();
+
+        assert!(!committer.prewrite_txn_file_batch(&batch).await.unwrap());
+        assert_eq!(tagger_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(dispatches.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn source_uncovered_txn_file_tagger_static_tag_wins() {
         let observed = Arc::new(Mutex::new(Vec::new()));
         let captured = observed.clone();
         let mut dynamic = CommitSettings::default();
@@ -17435,99 +17574,113 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
-    #[tokio::test]
-    async fn source_txn_file_actions_apply_dynamic_or_static_resource_group_tag() {
-        for (static_tag, expected_tag, expected_tagger_calls) in [
-            (None, b"dynamic".to_vec(), 3),
-            (Some(b"static".to_vec()), b"static".to_vec(), 0),
-        ] {
-            let observed = Arc::new(Mutex::new(Vec::new()));
-            let captured = observed.clone();
-            let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-                move |request: &dyn Any| {
-                    if let Some(request) = request.downcast_ref::<kvrpcpb::PrewriteRequest>() {
-                        assert!(request.mutations.is_empty());
-                        assert_eq!(request.txn_file_chunks, [7]);
-                        assert_eq!(request.primary_lock, b"primary");
-                        captured.lock().unwrap().push((
-                            "prewrite",
-                            request.context.as_ref().unwrap().resource_group_tag.clone(),
-                            request.context.as_ref().unwrap().max_execution_duration_ms,
-                        ));
-                        return Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>);
-                    }
-                    if let Some(request) = request.downcast_ref::<kvrpcpb::CommitRequest>() {
-                        assert_eq!(request.keys, [b"k".to_vec()]);
-                        captured.lock().unwrap().push((
-                            "commit",
-                            request.context.as_ref().unwrap().resource_group_tag.clone(),
-                            request.context.as_ref().unwrap().max_execution_duration_ms,
-                        ));
-                        return Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>);
-                    }
-                    let request = request
-                        .downcast_ref::<kvrpcpb::BatchRollbackRequest>()
-                        .expect("txn-file cleanup sends BatchRollback");
-                    assert_eq!(request.keys, [b"k".to_vec()]);
+    async fn source_assert_txn_file_action_resource_group_tags(
+        static_tag: Option<Vec<u8>>,
+        expected_tag: Vec<u8>,
+        expected_tagger_calls: usize,
+    ) {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let captured = observed.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    assert!(request.mutations.is_empty());
+                    assert_eq!(request.txn_file_chunks, [7]);
+                    assert_eq!(request.primary_lock, b"primary");
                     captured.lock().unwrap().push((
-                        "rollback",
+                        "prewrite",
                         request.context.as_ref().unwrap().resource_group_tag.clone(),
                         request.context.as_ref().unwrap().max_execution_duration_ms,
                     ));
-                    Ok(Box::<kvrpcpb::BatchRollbackResponse>::default() as Box<dyn Any>)
-                },
-            )));
-            let calls = Arc::new(AtomicUsize::new(0));
-            let captured_calls = calls.clone();
-            let mut settings = CommitSettings::default();
-            settings.resource_group_tag = static_tag;
-            settings.resource_group_tagger = Some(Arc::new(move |request| {
-                captured_calls.fetch_add(1, Ordering::SeqCst);
-                if let Some(request) = request
-                    .as_any_mut()
-                    .downcast_mut::<kvrpcpb::PrewriteRequest>()
-                {
-                    assert_eq!(request.mutations.len(), 1);
-                    assert_eq!(request.mutations[0].key, b"k");
-                    request.primary_lock[0] = b'x';
-                    request.txn_file_chunks[0] = 99;
-                } else if let Some(request) =
-                    request.as_any().downcast_ref::<kvrpcpb::CommitRequest>()
-                {
-                    assert_eq!(request.keys, [b"k".to_vec()]);
-                } else {
-                    let request = request
-                        .as_any()
-                        .downcast_ref::<kvrpcpb::BatchRollbackRequest>()
-                        .expect("tagger receives a txn-file action");
-                    assert_eq!(request.keys, [b"k".to_vec()]);
+                    return Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>);
                 }
-                request.set_resource_group_tag(b"dynamic".to_vec());
-            }));
-            let mut committer = source_test_committer(
-                rpc,
-                Some(Key::from(b"primary".to_vec())),
-                vec![source_test_mutation("k", kvrpcpb::Op::Put)],
-                TransactionOptions::new_optimistic(),
-                settings,
-            );
-            committer.resource_group_name = Some("txn-file-test".to_owned());
-            committer.txn_file_commit_timestamp = Some(Timestamp::from_version(2));
-            let batch = source_test_chunk_batch(true);
+                if let Some(request) = request.downcast_ref::<kvrpcpb::CommitRequest>() {
+                    assert_eq!(request.keys, [b"k".to_vec()]);
+                    captured.lock().unwrap().push((
+                        "commit",
+                        request.context.as_ref().unwrap().resource_group_tag.clone(),
+                        request.context.as_ref().unwrap().max_execution_duration_ms,
+                    ));
+                    return Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>);
+                }
+                let request = request
+                    .downcast_ref::<kvrpcpb::BatchRollbackRequest>()
+                    .expect("txn-file cleanup sends BatchRollback");
+                assert_eq!(request.keys, [b"k".to_vec()]);
+                captured.lock().unwrap().push((
+                    "rollback",
+                    request.context.as_ref().unwrap().resource_group_tag.clone(),
+                    request.context.as_ref().unwrap().max_execution_duration_ms,
+                ));
+                Ok(Box::<kvrpcpb::BatchRollbackResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_calls = calls.clone();
+        let mut settings = CommitSettings::default();
+        settings.resource_group_tag = static_tag;
+        settings.resource_group_tagger = Some(Arc::new(move |request| {
+            captured_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(request) = request
+                .as_any_mut()
+                .downcast_mut::<kvrpcpb::PrewriteRequest>()
+            {
+                assert_eq!(request.mutations.len(), 1);
+                assert_eq!(request.mutations[0].key, b"k");
+                request.primary_lock[0] = b'x';
+                request.txn_file_chunks[0] = 99;
+            } else if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::CommitRequest>()
+            {
+                assert_eq!(request.keys, [b"k".to_vec()]);
+            } else {
+                let request = request
+                    .as_any()
+                    .downcast_ref::<kvrpcpb::BatchRollbackRequest>()
+                    .expect("tagger receives a txn-file action");
+                assert_eq!(request.keys, [b"k".to_vec()]);
+            }
+            request.set_resource_group_tag(b"dynamic".to_vec());
+        }));
+        let mut committer = source_test_committer(
+            rpc,
+            Some(Key::from(b"primary".to_vec())),
+            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+            TransactionOptions::new_optimistic(),
+            settings,
+        );
+        committer.resource_group_name = Some("txn-file-test".to_owned());
+        committer.txn_file_commit_timestamp = Some(Timestamp::from_version(2));
+        let batch = source_test_chunk_batch(true);
 
-            assert!(!committer.prewrite_txn_file_batch(&batch).await.unwrap());
-            assert!(!committer.commit_txn_file_batch(&batch).await.unwrap());
-            assert!(!committer.rollback_txn_file_batch(&batch).await.unwrap());
-            assert_eq!(calls.load(Ordering::SeqCst), expected_tagger_calls);
-            assert_eq!(
-                *observed.lock().unwrap(),
-                vec![
-                    ("prewrite", expected_tag.clone(), 60_000),
-                    ("commit", expected_tag.clone(), 60_000),
-                    ("rollback", expected_tag, 30_000),
-                ]
-            );
-        }
+        assert!(!committer.prewrite_txn_file_batch(&batch).await.unwrap());
+        assert!(!committer.commit_txn_file_batch(&batch).await.unwrap());
+        assert!(!committer.rollback_txn_file_batch(&batch).await.unwrap());
+        assert_eq!(calls.load(Ordering::SeqCst), expected_tagger_calls);
+        assert_eq!(
+            *observed.lock().unwrap(),
+            vec![
+                ("prewrite", expected_tag.clone(), 60_000),
+                ("commit", expected_tag.clone(), 60_000),
+                ("rollback", expected_tag, 30_000),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileActionsApplyResourceGroupTagger() {
+        source_assert_txn_file_action_resource_group_tags(None, b"dynamic".to_vec(), 3).await;
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileActionsPreserveStaticResourceGroupTag() {
+        source_assert_txn_file_action_resource_group_tags(
+            Some(b"static".to_vec()),
+            b"static".to_vec(),
+            0,
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -17589,7 +17742,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_txn_file_cleanup_is_detached_and_retains_the_transaction_start_ts() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileCleanupContextUsesStoreContext() {
         let caller = crate::async_util::Cancellation::default();
         caller.cancel();
         assert!(caller.is_cancelled());
@@ -17626,59 +17780,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_txn_file_primary_prewrite_cleanup_and_batch_selection() {
-        let observed = Arc::new(Mutex::new(Vec::new()));
-        let captured = observed.clone();
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFilePrewriteUsesPrimaryKey() {
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let captured_dispatches = Arc::clone(&dispatches);
         let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |request: &dyn Any| {
-                if let Some(request) = request.downcast_ref::<kvrpcpb::PrewriteRequest>() {
-                    captured.lock().unwrap().push((
-                        "prewrite",
-                        request.primary_lock.clone(),
-                        request.context.as_ref().unwrap().region_id,
-                        request.context.as_ref().unwrap().resource_group_tag.clone(),
-                    ));
-                    return Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>);
-                }
                 let request = request
-                    .downcast_ref::<kvrpcpb::BatchRollbackRequest>()
-                    .expect("cleanup uses BatchRollback");
-                captured.lock().unwrap().push((
-                    "rollback",
-                    Vec::new(),
-                    request.context.as_ref().unwrap().region_id,
-                    request.context.as_ref().unwrap().resource_group_tag.clone(),
-                ));
-                Ok(Box::new(kvrpcpb::BatchRollbackResponse {
-                    error: Some(kvrpcpb::KeyError {
-                        abort: "primary rollback failed".to_owned(),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }) as Box<dyn Any>)
+                    .downcast_ref::<kvrpcpb::PrewriteRequest>()
+                    .expect("txn-file prewrite dispatch");
+                assert_eq!(request.primary_lock, b"primary");
+                captured_dispatches.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
             },
         )));
-        let mut settings = CommitSettings::default();
-        settings.resource_group_tag = Some(b"static".to_vec());
         let mut committer = source_test_committer(
             rpc,
             Some(Key::from(b"primary".to_vec())),
             vec![source_test_mutation("k", kvrpcpb::Op::Put)],
             TransactionOptions::new_optimistic(),
-            settings,
+            CommitSettings::default(),
         );
         let batch = source_test_chunk_batch(true);
         assert!(!committer.prewrite_txn_file_batch(&batch).await.unwrap());
-        let error = committer.rollback_txn_file_batch(&batch).await.unwrap_err();
-        assert!(error.to_string().contains("primary rollback failed"));
-        assert_eq!(
-            *observed.lock().unwrap(),
-            vec![
-                ("prewrite", b"primary".to_vec(), 2, b"static".to_vec()),
-                ("rollback", Vec::new(), 2, b"static".to_vec()),
-            ]
-        );
+        assert_eq!(dispatches.load(Ordering::SeqCst), 1);
+    }
 
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestTxnFilePrimaryBatchIndexFindsPrimaryRegion() {
         let primary = Key::from(vec![10]);
         let selector = source_test_committer(
             Arc::new(MockPdClient::default()),
@@ -17700,7 +17830,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_txn_file_prewrite_expands_shared_lock_holders() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFilePrimaryRollbackPropagatesKeyError() {
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                request
+                    .downcast_ref::<kvrpcpb::BatchRollbackRequest>()
+                    .expect("cleanup uses BatchRollback");
+                Ok(Box::new(kvrpcpb::BatchRollbackResponse {
+                    error: Some(kvrpcpb::KeyError {
+                        abort: "primary rollback failed".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut settings = CommitSettings::default();
+        settings.session_id = 7;
+        let mut committer = source_test_committer(
+            rpc,
+            Some(Key::from(b"primary".to_vec())),
+            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+            TransactionOptions::new_optimistic(),
+            settings,
+        );
+        let error = committer
+            .rollback_txn_file_batch(&source_test_chunk_batch(true))
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("session 7 txn file cleanup failed"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("primary rollback failed"));
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFilePrewriteExpandsSharedLockHolders() {
         let dispatches = Arc::new(AtomicUsize::new(0));
         let captured_dispatches = Arc::clone(&dispatches);
         let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -18304,17 +18474,15 @@ mod tests {
         assert!(!definitive.undetermined);
     }
 
-    #[tokio::test]
-    async fn source_txn_file_commit_ambiguity_and_expired_retry() {
-        fn retry_backoff(max_sleep_ms: u64) -> super::TxnFileRetryBackoff {
-            super::TxnFileRetryBackoff::Source(Arc::new(tokio::sync::Mutex::new(
-                super::RetryBackoffer::new(
-                    crate::async_util::Cancellation::default(),
-                    max_sleep_ms,
-                ),
-            )))
-        }
+    fn source_txn_file_retry_backoff(max_sleep_ms: u64) -> super::TxnFileRetryBackoff {
+        super::TxnFileRetryBackoff::Source(Arc::new(tokio::sync::Mutex::new(
+            super::RetryBackoffer::new(crate::async_util::Cancellation::default(), max_sleep_ms),
+        )))
+    }
 
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileCommitPrimaryRPCErrorMarksResultUndetermined() {
         let batch = source_test_chunk_batch(true);
         let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(|_| {
             Err(Error::GrpcAPI(tonic::Status::unavailable(
@@ -18330,7 +18498,11 @@ mod tests {
         );
         primary.txn_file_commit_timestamp = Some(Timestamp::from_version(2));
         let error = primary
-            .commit_txn_file_batch_with_backoff(&batch, &mut retry_backoff(1), false)
+            .commit_txn_file_batch_with_backoff(
+                &batch,
+                &mut source_txn_file_retry_backoff(1),
+                false,
+            )
             .await
             .unwrap_err();
         assert!(primary.undetermined);
@@ -18338,7 +18510,13 @@ mod tests {
             primary.normalize_txn_file_commit_result::<()>(Err(error)),
             Err(Error::UndeterminedError(_))
         ));
+    }
 
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileCommitSecondaryRPCErrorIsNotResultUndetermined()
+    {
+        let batch = source_test_chunk_batch(true);
         let secondary_rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(|_| {
             Err(Error::GrpcAPI(tonic::Status::unavailable(
                 "secondary unavailable",
@@ -18355,7 +18533,11 @@ mod tests {
         let mut secondary_batch = batch.clone();
         secondary_batch.is_primary = false;
         let error = secondary
-            .commit_txn_file_batch_with_backoff(&secondary_batch, &mut retry_backoff(1), false)
+            .commit_txn_file_batch_with_backoff(
+                &secondary_batch,
+                &mut source_txn_file_retry_backoff(1),
+                false,
+            )
             .await
             .unwrap_err();
         assert!(!secondary.undetermined);
@@ -18363,7 +18545,13 @@ mod tests {
             secondary.normalize_txn_file_commit_result::<()>(Err(error)),
             Err(Error::UndeterminedError(_))
         ));
+    }
 
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileCommitClearsUndeterminedErrOnDefinitivePrimaryResponse(
+    ) {
+        let batch = source_test_chunk_batch(true);
         let definitive_rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(|_| {
             Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>)
         })));
@@ -18379,15 +18567,49 @@ mod tests {
         assert!(!definitive.commit_txn_file_batch(&batch).await.unwrap());
         assert!(!definitive.undetermined);
 
-        let region_rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(|_| {
+        let key_error_rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(|_| {
             Ok(Box::new(kvrpcpb::CommitResponse {
-                region_error: Some(crate::proto::errorpb::Error {
-                    undetermined_result: Some(Default::default()),
+                error: Some(kvrpcpb::KeyError {
+                    abort: "aborted".to_owned(),
                     ..Default::default()
                 }),
                 ..Default::default()
             }) as Box<dyn Any>)
         })));
+        let mut definitive_key_error = source_test_committer(
+            key_error_rpc,
+            Some(Key::from(b"k".to_vec())),
+            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+            TransactionOptions::new_optimistic(),
+            CommitSettings::default(),
+        );
+        definitive_key_error.txn_file_commit_timestamp = Some(Timestamp::from_version(2));
+        definitive_key_error.undetermined = true;
+        definitive_key_error
+            .commit_txn_file_batch(&batch)
+            .await
+            .unwrap_err();
+        assert!(!definitive_key_error.undetermined);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileCommitPrimaryUndeterminedRegionError() {
+        let batch = source_test_chunk_batch(true);
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let captured_request_count = Arc::clone(&request_count);
+        let region_rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |_| {
+                captured_request_count.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(kvrpcpb::CommitResponse {
+                    region_error: Some(crate::proto::errorpb::Error {
+                        undetermined_result: Some(Default::default()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
         let mut region_undetermined = source_test_committer(
             region_rpc,
             Some(Key::from(b"k".to_vec())),
@@ -18405,7 +18627,13 @@ mod tests {
             region_undetermined.normalize_txn_file_commit_result::<()>(Err(error)),
             Err(Error::UndeterminedError(_))
         ));
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+    }
 
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileCommitTSExpiredRetryUsesPreparedTimestamp() {
+        let batch = source_test_chunk_batch(true);
         struct Version(i64);
         impl super::SchemaVersion for Version {
             fn schema_meta_version(&self) -> i64 {
@@ -18491,14 +18719,18 @@ mod tests {
         assert_eq!(*schema_checks.lock().unwrap(), vec![(9, 10)]);
         assert_eq!(upper_bound_calls.load(Ordering::SeqCst), 1);
         assert_eq!(tagger_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
         assert_eq!(
             retry.txn_file_commit_timestamp.as_ref().unwrap().version(),
             9
         );
 
         for (is_primary, expired_key) in [(false, b"k".to_vec()), (true, b"not-primary".to_vec())] {
+            let request_count = Arc::new(AtomicUsize::new(0));
+            let captured_request_count = Arc::clone(&request_count);
             let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
                 move |request: &dyn Any| {
+                    captured_request_count.fetch_add(1, Ordering::SeqCst);
                     let request = request
                         .downcast_ref::<kvrpcpb::CommitRequest>()
                         .expect("expired retry sends Commit");
@@ -18517,12 +18749,22 @@ mod tests {
                 },
             )));
             rpc.set_timestamp(Timestamp::from_version(11));
+            let schema_checks = Arc::new(Mutex::new(Vec::new()));
+            let upper_bound_calls = Arc::new(AtomicUsize::new(0));
+            let captured_upper_bound_calls = Arc::clone(&upper_bound_calls);
+            let mut settings = CommitSettings::default();
+            settings.schema_version = Some(Arc::new(Version(10)));
+            settings.schema_lease_checker = Some(Arc::new(Checker(Arc::clone(&schema_checks))));
+            settings.commit_timestamp_upper_bound = Some(Arc::new(move |_| {
+                captured_upper_bound_calls.fetch_add(1, Ordering::SeqCst);
+                true
+            }));
             let mut rejected = source_test_committer(
                 rpc,
                 Some(Key::from(b"k".to_vec())),
                 vec![source_test_mutation("k", kvrpcpb::Op::Put)],
                 TransactionOptions::new_optimistic(),
-                CommitSettings::default(),
+                settings,
             );
             rejected.txn_file_commit_timestamp = Some(Timestamp::from_version(2));
             let mut rejected_batch = batch.clone();
@@ -18540,36 +18782,16 @@ mod tests {
                     .version(),
                 2
             );
+            assert_eq!(request_count.load(Ordering::SeqCst), 1);
+            assert!(schema_checks.lock().unwrap().is_empty());
+            assert_eq!(upper_bound_calls.load(Ordering::SeqCst), 0);
         }
-
-        let key_error_rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(|_| {
-            Ok(Box::new(kvrpcpb::CommitResponse {
-                error: Some(kvrpcpb::KeyError {
-                    abort: "aborted".to_owned(),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }) as Box<dyn Any>)
-        })));
-        let mut definitive_key_error = source_test_committer(
-            key_error_rpc,
-            Some(Key::from(b"k".to_vec())),
-            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
-            TransactionOptions::new_optimistic(),
-            CommitSettings::default(),
-        );
-        definitive_key_error.txn_file_commit_timestamp = Some(Timestamp::from_version(2));
-        definitive_key_error.undetermined = true;
-        definitive_key_error
-            .commit_txn_file_batch(&batch)
-            .await
-            .unwrap_err();
-        assert!(!definitive_key_error.undetermined);
     }
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn source_txn_file_primary_rpc_error_is_normalized_without_rollback() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileCommitPrimaryRPCErrorIsNormalized() {
         crate::transaction::close_txn_file_idle_connections();
         let (address, uploaded_chunk) = source_test_txn_chunk_writer().await;
         let restore = crate::config::update_global(|config| {
@@ -18641,7 +18863,9 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn source_txn_file_commit_survives_resource_accounting_response_error() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestTxnFileCommitPreservesCommitOnResourceControlResponseError(
+    ) {
         struct FailingResponseController(Arc<AtomicUsize>);
         #[async_trait::async_trait]
         impl ResourceGroupController for FailingResponseController {
@@ -18872,7 +19096,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_prepare_txn_file_commit_timestamp_waits_and_checks_schema_first() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestPrepareTxnFileCommitTS() {
         struct Version;
         impl super::SchemaVersion for Version {
             fn schema_meta_version(&self) -> i64 {
@@ -19039,7 +19264,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_pre_split_txn_file_regions_uses_dedicated_split_path() {
+    #[allow(non_snake_case)]
+    async fn source_go_txnkv_transaction_TestPreSplitTxnFileRegionsUsesDedicatedSplitPath() {
         let split_requests = Arc::new(Mutex::new(Vec::new()));
         let captured = split_requests.clone();
         let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
@@ -19419,69 +19645,6 @@ mod tests {
     #[test]
     fn source_test_send_request_async_does_not_settle_and_keeps_ru_details_on_transport_failure() {
         transaction_resource_control_does_not_settle_transport_failures();
-    }
-
-    macro_rules! source_go_txnkv_transaction_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
-    }
-
-    source_go_txnkv_transaction_tests! {
-        source_go_txnkv_transaction_TestLockKeys
-            => source_lock_keys_modes_wait_timeout_and_force_lock_results,
-        source_go_txnkv_transaction_TestSharedLockCommitterIncompatibilities
-            => source_shared_lock_committer_incompatibilities,
-        source_go_txnkv_transaction_TestTxnFileCleanupContextUsesStoreContext
-            => source_txn_file_cleanup_is_detached_and_retains_the_transaction_start_ts,
-        source_go_txnkv_transaction_TestPrepareTxnFileCommitTS
-            => source_prepare_txn_file_commit_timestamp_waits_and_checks_schema_first,
-        source_go_txnkv_transaction_TestTxnFileCommitTSExpiredRetryUsesPreparedTimestamp
-            => source_txn_file_commit_ambiguity_and_expired_retry,
-        source_go_txnkv_transaction_TestTxnFilePrewriteUsesPrimaryKey
-            => source_txn_file_primary_prewrite_cleanup_and_batch_selection,
-        source_go_txnkv_transaction_TestTxnFilePrewriteExpandsSharedLockHolders
-            => source_txn_file_prewrite_expands_shared_lock_holders,
-        source_go_txnkv_transaction_TestTxnFilePrimaryBatchIndexFindsPrimaryRegion
-            => source_txn_file_primary_prewrite_cleanup_and_batch_selection,
-        source_go_txnkv_transaction_TestTxnFilePrimaryRollbackPropagatesKeyError
-            => source_txn_file_primary_prewrite_cleanup_and_batch_selection,
-        source_go_txnkv_transaction_TestTxnFileActionsApplyResourceGroupTagger
-            => source_txn_file_actions_apply_dynamic_or_static_resource_group_tag,
-        source_go_txnkv_transaction_TestTxnFileActionsPreserveStaticResourceGroupTag
-            => source_txn_file_actions_apply_dynamic_or_static_resource_group_tag,
-        source_go_txnkv_transaction_TestTxnFilePrewriteTaggerUsesFirstKeyWithoutSampleDataKeys
-            => source_txn_file_tagger_uses_first_key_and_static_tag_wins,
-        source_go_txnkv_transaction_TestTxnFilePrewriteTaggerAppliesWithoutFirstKey
-            => source_txn_file_tagger_uses_first_key_and_static_tag_wins,
-        source_go_txnkv_transaction_TestTxnFileCommitPrimaryRPCErrorMarksResultUndetermined
-            => source_txn_file_commit_ambiguity_and_expired_retry,
-        source_go_txnkv_transaction_TestTxnFileCommitSecondaryRPCErrorIsNotResultUndetermined
-            => source_txn_file_commit_ambiguity_and_expired_retry,
-        source_go_txnkv_transaction_TestTxnFileCommitClearsUndeterminedErrOnDefinitivePrimaryResponse
-            => source_txn_file_commit_ambiguity_and_expired_retry,
-        source_go_txnkv_transaction_TestTxnFileCommitPrimaryUndeterminedRegionError
-            => source_txn_file_commit_ambiguity_and_expired_retry,
-        source_go_txnkv_transaction_TestTxnFileCommitPrimaryRPCErrorIsNormalized
-            => source_txn_file_primary_rpc_error_is_normalized_without_rollback,
-        source_go_txnkv_transaction_TestTxnFileCommitPreservesCommitOnResourceControlResponseError
-            => source_txn_file_commit_survives_resource_accounting_response_error,
-        source_go_txnkv_transaction_TestUseTxnFileExcludesPipelinedTxn
-            => source_txn_file_admission_exclusions,
-        source_go_txnkv_transaction_TestUseTxnFileExcludesSharedLockTxn
-            => source_txn_file_admission_exclusions,
-        source_go_txnkv_transaction_TestUseTxnFileExcludesMutationAssertions
-            => source_txn_file_admission_exclusions,
-        source_go_txnkv_transaction_TestPreSplitTxnFileRegionsUsesDedicatedSplitPath
-            => source_pre_split_txn_file_regions_uses_dedicated_split_path,
-        source_go_txnkv_transaction_TestMinCommitTsManager
-            => source_min_commit_ts_manager_access_and_concurrency,
     }
 
     macro_rules! source_go_txnkv_txnsnapshot_tests {

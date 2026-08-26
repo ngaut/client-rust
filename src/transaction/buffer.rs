@@ -1558,7 +1558,8 @@ mod tests {
     }
 
     #[test]
-    fn source_buffer_batch_getter_local_precedence_delete_and_commit_ts() {
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestBufferBatchGetter() {
         let keys = ["a", "b", "c", "d", "e"]
             .map(|key| key.as_bytes().to_vec())
             .to_vec();
@@ -2022,12 +2023,6 @@ mod tests {
         assert!(buffer
             .pessimistic_lock_keys()
             .contains(b"shared".as_slice()));
-    }
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn source_go_txnkv_transaction_TestBufferBatchGetter() {
-        source_buffer_batch_getter_local_precedence_delete_and_commit_ts();
     }
 
     #[test]
