@@ -19197,10 +19197,15 @@ mod tests {
         let footprint = transaction.memory_footprint();
         assert!(footprint > 0);
         assert_eq!(transaction.commit().await.unwrap().unwrap().version(), 5);
+        let post_commit_footprint = transaction.memory_footprint();
+        assert!(post_commit_footprint < footprint);
 
         assert_eq!(*prewrite_keys.lock().unwrap(), vec![vec![b"keep".to_vec()]]);
         assert_eq!(*schema_checks.lock().unwrap(), vec![(5, 10)]);
-        assert_eq!(memory.lock().unwrap().last().copied(), Some(footprint));
+        assert_eq!(
+            memory.lock().unwrap().last().copied(),
+            Some(post_commit_footprint)
+        );
         let callbacks = callbacks.lock().unwrap();
         assert_eq!(callbacks.len(), 1);
         assert_eq!(callbacks[0].1, None);

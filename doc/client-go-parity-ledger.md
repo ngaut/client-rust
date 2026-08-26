@@ -24,7 +24,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `internal/resourcecontrol` | `src/resource_control.rs`, `src/request/{plan,plan_builder}.rs`, `src/store/{mod,request}.rs`, transaction request contexts / resource-manager proto | complete | Complete package receipt below and full artifact/symbol/consumer mapping in [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). Both production/test files, both legacy/NextGen variants, exact request/response accounting matrices, stream paths, bypass, routing inputs, controller ordering, RU updates, public native interfaces, and validation gates are covered. The external PD controller algorithm and downstream txn-file protocol retain separate ownership. |
 | `internal/unionstore` | `src/transaction/unionstore.rs` plus native ART/RBT/arena adapters | complete | Receipt below; all eight production files and six source test/support/benchmark artifacts are accounted for. Public transaction consumption remains on the separate `txnkv/transaction` row. |
 | `internal/unionstore/arena` | public `src/transaction/arena.rs` plus safe ART/RBT integration decision | complete | Re-audited atomic receipt: [`internal-unionstore-arena-source-artifact-audit.md`](internal-unionstore-arena-source-artifact-audit.md). Both artifacts/508 lines, all allocator/address/checkpoint/hook/value-log behavior, both original tests, and all 16 unionstore importers are assigned. The receipt explicitly distinguishes the complete reusable arena from Rust ART/RBT's safe `BTreeMap` representation. |
-| `internal/unionstore/art` | `src/transaction/art.rs` | complete | Receipt below; all nine source/test artifacts are covered by a safe ordered-map/value-log mapping, with the parent unionstore integration retained on its own row. |
+| `internal/unionstore/art` | `src/transaction/art.rs`, `src/transaction/art_source_tests.rs`, `src/transaction/unionstore.rs` adapter | complete | Re-audited atomic receipt: [`internal-unionstore-art-source-artifact-audit.md`](internal-unionstore-art-source-artifact-audit.md). All nine artifacts/3,474 lines, all 35 original tests plus the benchmark contract, every production surface, and the sole direct parent importer are assigned. Five red-then-green fixes restore discard release/invalidation, append-order stage inspection, flags-only buffer limits, idempotent snapshot completion, and ignored adapter flag-update errors. |
 | `internal/unionstore/rbt` | `src/transaction/rbt.rs`, `src/transaction/unionstore.rs` adapter | complete | Re-audited atomic receipt: [`internal-unionstore-rbt-source-artifact-audit.md`](internal-unionstore-rbt-source-artifact-audit.md). All five artifacts/1,661 lines, all three original unit tests, every production surface, and the sole direct parent importer are assigned. Five red-then-green fixes restore source `UpdateFlags` guards, empty reverse bounds, reverse value-log stage inspection, value-log storage release/invalidation, and flags-only history errors. |
 | `kvproto` (native crate) | independent `tikv-client-kvproto` workspace crate; `tikv_client::proto` re-export | complete | Atomic receipt: [`kvproto-crate-completion-audit.md`](kvproto-crate-completion-audit.md). All 45 crate artifacts, 56 generator inputs, 41 generated protocol modules, descriptor set, three direct integration edges, and downstream type-identity gate are assigned. The crate is the single generated-type owner shared by direct consumers and `tikv-client`. |
 | `unistore` (native crate) | independent `unistore` workspace crate | complete | Atomic receipt: [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md). All five crate artifacts/2,788 lines, 70 public type/function declaration points, 22 internal tests, two external-consumer tests, dependencies, and native consumers are assigned. Its source-mapped engine belongs to the complete client-go mocktikv receipt. |
@@ -815,42 +815,14 @@ parent `internal/unionstore` package remains an independent atomic claim.
 
 ## Complete package receipt: `internal/unionstore/art`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is `internal/unionstore/art/art.go`, `art_arena.go`, `art_node.go`, `art_iterator.go`, and `art_snapshot.go`, plus behavioral/support artifacts `art_test.go`, `art_node_test.go`, `art_iterator_test.go`, and `art_snapshot_test.go`. There is no `doc.go`, build-tag/platform variant, generated source/input, fixture, package-specific build artifact, or leak harness. The parent `internal/unionstore` package and all transaction-buffer selection/consumption remain separate atomic claims.
-
-Rust implementation is the crate-private `src/transaction/art.rs`, registered from `src/transaction/mod.rs`. A safe `BTreeMap` maps the observable ART contract: ordered byte keys, logical size, value-log history and equal-size in-place overwrites, nested staging/checkpoint/revert, persistent-vs-rollbackable flags, durable key handles, limits, dirty state, cache statistics, discard behavior, memory hooks, snapshots, and iterator bounds. Logical size is incrementally maintained, preserving the source's constant-time buffer-limit checks for the 100,000-key workload; the observable live length is derived from non-deleted entries, preventing stale count state after nested rollback.
-
-The ART node classes (4/16/48/256), prefix compression, bitmap child indexes, raw arena address reuse, and allocator free lists are a deliberate non-applicable representation mapping: Rust's ordered map supplies the same key ordering and prefix behavior without unsafe manual storage. Node/arena test artifacts are covered by capacity-boundary key sequences, all-byte key order, empty/prefix/long-common-prefix searches, handle lifetime, and 100,000 decimal-key retrieval rather than reproducing internal allocation topology. Source's snapshot allocator reference count maps to owned immutable snapshot data; cloned snapshot iterators therefore remain valid and shareable after writes, with no unsafe-node reuse to defer.
-
-Ordinary ART iterators retain the source's write-sequence invalidation contract: every successful buffer-changing write, release, cleanup, checkpoint revert, and reset invalidates pre-existing iterators. Snapshot iterators deliberately retain a stable immutable view. The native `update_flags(key, ops)` method maps source mutation through a live iterator: it requires an existing live key and preserves the source's non-rollbackable flag behavior without holding an invalid Rust mutable map borrow. Empty ART bounds are normalized as unbounded, matching the source's `len(bound) == 0` convention.
-
-Seven source-derived Rust tests cover all source behavioral/test categories: all 256 byte keys and 4/16/48/256 capacity boundaries with forward/reverse bounds and finished-iterator errors; short/long common prefixes; flags, flags-only keys, durable handles, discard panics, and flag mutation; persistent cleanup and non-persistent rollback clearing; checkpoints/history; iterator invalidation; stable concurrent snapshot iterators; limits, hooks, cache counters, stage inspection, reset; and the original 100,000-key decimal workload. No unistore fixture is needed because the package is deterministic in-process storage.
-
-Validation on `nightly-2026-08-22`:
-
-    cargo fmt --all --check
-    # passed
-
-    cargo test transaction::art::tests --all-features --quiet
-    # 7 passed; 0 failed
-
-    cargo test transaction::art::tests::hundred_thousand_decimal_keys_and_long_common_prefixes_are_retrievable --all-features --quiet
-    # 1 passed; 0 failed; finished in 0.77s
-
-    cargo test --lib --all-features --quiet
-    # 167 passed; 0 failed
-
-    cargo test --doc --all-features --quiet
-    # 49 passed; 0 failed
-
-    cargo clippy --lib --all-features -- -D warnings -A clippy::redundant_field_names -A clippy::chunks_exact_to_as_chunks
-    # passed; exclusions are pre-existing non-ART style findings
-
-    git diff --check
-    # passed
-
-The host has no Go toolchain, so original Go tests could not run locally. No real-cluster validation applies to this deterministic index implementation; union-store composition and real transaction behavior remain on their owning package rows.
+The earlier coarse receipt is superseded by the independent package-atomic
+audit in
+[`internal-unionstore-art-source-artifact-audit.md`](internal-unionstore-art-source-artifact-audit.md).
+The replacement records immutable identities for all nine artifacts, every
+production and representation decision, independent Rust ports of all 35 Go
+tests plus the benchmark contract, the sole direct importer, five
+red-then-green parity fixes, and exact pinned-Go/Rust validation. The parent
+`internal/unionstore` package remains an independent atomic claim.
 
 ## Complete package receipt: `internal/unionstore`
 

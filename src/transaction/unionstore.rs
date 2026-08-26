@@ -575,7 +575,7 @@ impl MemDb {
     }
 
     pub fn update_flags(&mut self, key: &[u8], operations: &[FlagsOp]) {
-        self.art.set(key, None, operations).unwrap();
+        let _ = self.art.set(key, None, operations);
         self.notify_managed_memory_change();
     }
 
@@ -598,6 +598,10 @@ impl MemDb {
         Box::new(ArtBufferIterator(self.art.iter_with_flags(lower, upper)))
     }
 
+    pub fn iter_reverse_with_flags(&self, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
+        Box::new(ArtBufferIterator(self.art.iter_reverse_with_flags(upper)))
+    }
+
     pub fn iter_reverse(&self, upper: Option<&[u8]>, lower: Option<&[u8]>) -> Box<dyn KvIterator> {
         if self.managed_pipelined.is_some() {
             return Box::new(ErrorIterator {
@@ -609,6 +613,10 @@ impl MemDb {
 
     pub fn staging(&mut self) -> usize {
         self.art.staging()
+    }
+
+    pub fn stages(&self) -> Vec<usize> {
+        self.art.stages()
     }
 
     pub fn cleanup(&mut self, handle: usize) {
@@ -752,6 +760,10 @@ impl MemDb {
                 buffer_limit
             },
         );
+    }
+
+    pub fn entry_size_limit(&self) -> (u64, u64) {
+        self.art.entry_size_limit()
     }
 
     pub fn checkpoint(&self) -> usize {
@@ -2618,6 +2630,8 @@ mod tests {
     #[test]
     fn memdb_facade_forwards_batch_snapshot_checkpoint_stage_and_metrics_contracts() {
         let mut db = MemDb::new();
+        assert_eq!(db.entry_size_limit(), (u64::MAX, u64::MAX));
+        assert!(db.stages().is_empty());
         assert!(!db.flush(false).unwrap());
         assert!(db.flush_wait().is_ok());
         assert_eq!(db.metrics().memdb_hit_count, 0);
@@ -2680,6 +2694,7 @@ mod tests {
 
         let stage = db.staging();
         let checkpoint = db.checkpoint();
+        assert_eq!(db.stages(), vec![checkpoint]);
         db.set_with_flags(b"staged", b"value", &[FlagsOp::SetPresumeKeyNotExists])
             .unwrap();
         let mut staged = Vec::new();
@@ -2692,6 +2707,7 @@ mod tests {
         db.revert_to_checkpoint(checkpoint);
         assert_eq!(db.get(b"staged"), Err(StaticError::NotExist));
         db.cleanup(stage);
+        assert!(db.stages().is_empty());
 
         db.set(b"history", b"one").unwrap();
         let history = db.staging();
@@ -2702,6 +2718,34 @@ mod tests {
             Some(b"one".to_vec())
         );
         db.cleanup(history);
+
+        db.update_flags(b"flags-only", &[FlagsOp::SetKeyLocked]);
+        let mut reverse_with_flags = db.iter_reverse_with_flags(None);
+        let mut saw_flags_only = false;
+        while reverse_with_flags.valid() {
+            if reverse_with_flags.key() == b"flags-only" {
+                assert!(!reverse_with_flags.has_value());
+                assert!(reverse_with_flags.flags().has_locked());
+                saw_flags_only = true;
+            }
+            reverse_with_flags.next().unwrap();
+        }
+        assert!(saw_flags_only);
+    }
+
+    #[test]
+    fn source_uncovered_art_update_flags_ignores_set_errors() {
+        let mut db = MemDb::new();
+        db.set_entry_size_limit(u64::MAX, 1);
+        db.update_flags(b"ab", &[FlagsOp::SetKeyLocked]);
+        assert!(db.get_flags(b"ab").unwrap().has_locked());
+
+        let mut oversized = MemDb::new();
+        oversized.update_flags(
+            &vec![0; super::super::rbt::MAX_KEY_LEN + 1],
+            &[FlagsOp::SetKeyLocked],
+        );
+        assert!(oversized.is_empty());
     }
 
     #[test]
