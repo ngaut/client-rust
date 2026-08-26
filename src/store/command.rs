@@ -1142,7 +1142,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_command_response_decoding_preserves_oneof_and_unknown_error() {
+    fn batch_command_response_decoding_preserves_known_oneofs() {
         let response = tikvpb::batch_commands_response::Response {
             cmd: Some(tikvpb::batch_commands_response::response::Cmd::RawGet(
                 kvrpcpb::RawGetResponse {
@@ -1164,10 +1164,6 @@ mod tests {
         assert!(matches!(
             BatchCommandResponse::from_proto(empty),
             Ok(BatchCommandResponse::Empty(response)) if response.test_id == 7
-        ));
-        assert!(matches!(
-            BatchCommandResponse::from_proto(tikvpb::batch_commands_response::Response { cmd: None }),
-            Err(Error::StringError(message)) if message == "Unknown command response"
         ));
     }
 
@@ -1350,6 +1346,10 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn source_go_tikvrpc_TestBatchResponse() {
-        batch_command_response_decoding_preserves_oneof_and_unknown_error();
+        let response = tikvpb::batch_commands_response::Response { cmd: None };
+        assert!(matches!(
+            BatchCommandResponse::from_proto(response),
+            Err(Error::StringError(message)) if message == "Unknown command response"
+        ));
     }
 }

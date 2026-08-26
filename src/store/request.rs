@@ -2161,7 +2161,8 @@ mod tests {
     }
 
     #[test]
-    fn source_default_request_origin_fills_only_unknown_contexts() {
+    #[allow(non_snake_case)]
+    fn source_go_tikvrpc_TestDefaultRequestOrigin() {
         static ORIGIN_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = ORIGIN_TEST.lock().unwrap();
         let previous = get_default_request_origin();
@@ -2213,7 +2214,8 @@ mod tests {
     }
 
     #[test]
-    fn source_attach_context_replaces_the_owned_request_snapshot() {
+    #[allow(non_snake_case)]
+    fn source_go_tikvrpc_TestAttachContextSetsRequestContext() {
         for mut request in [
             Box::new(kvrpcpb::GetRequest::default()) as Box<dyn Request>,
             Box::new(kvrpcpb::GetLockWaitInfoRequest::default()),
@@ -2254,7 +2256,8 @@ mod tests {
     }
 
     #[test]
-    fn source_tidb_51921_batch_snapshots_encode_after_relocation() {
+    #[allow(non_snake_case)]
+    fn source_go_tikvrpc_TestTiDB51921() {
         let mut handles = Vec::new();
         let requests = source_tidb_51921_requests();
         assert_eq!(requests.len(), 42, "source request inventory drifted");
@@ -2664,7 +2667,9 @@ mod tests {
         assert!(bypass_details.drain_ru_v2().is_none());
     }
 
-    fn assert_source_test_cop_stream_response_recv_bypass() {
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_tikvrpc_TestCopStreamResponseRecvBypass() {
         fn response() -> coprocessor::Response {
             coprocessor::Response {
                 exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
@@ -2734,28 +2739,5 @@ mod tests {
     #[test]
     fn source_test_completed_tikv_ruv2_rpc_count() {
         source_cop_stream_ru_v2_counts_only_the_first_received_rpc();
-    }
-
-    macro_rules! source_go_tikvrpc_tests {
-        ($($name:ident => $target:ident),+ $(,)?) => {
-            $(
-                #[test]
-                #[allow(non_snake_case)]
-                fn $name() {
-                    $target();
-                }
-            )+
-        };
-    }
-
-    source_go_tikvrpc_tests! {
-        source_go_tikvrpc_TestDefaultRequestOrigin =>
-            source_default_request_origin_fills_only_unknown_contexts,
-        source_go_tikvrpc_TestAttachContextSetsRequestContext =>
-            source_attach_context_replaces_the_owned_request_snapshot,
-        source_go_tikvrpc_TestTiDB51921 =>
-            source_tidb_51921_batch_snapshots_encode_after_relocation,
-        source_go_tikvrpc_TestCopStreamResponseRecvBypass =>
-            assert_source_test_cop_stream_response_recv_bypass,
     }
 }

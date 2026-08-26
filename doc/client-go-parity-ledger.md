@@ -36,7 +36,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `rawkv` | public `src/raw`, plus native keyspace/request/region/metrics owners | complete | Independently re-audited atomic receipt: [`rawkv-source-artifact-audit.md`](rawkv-source-artifact-audit.md). All eight package/external-test/config artifacts (2,743 lines), all 27 assertion-bearing suite methods as independently selectable Rust ports, three suite-runner dispositions, `TestMain`, every setup/probe/config hook, all production methods, and three direct external importers are assigned. Exact Go package normal/race suites pass in legacy and NextGen modes, and the separate integration/raw normal/race suites pass. The stronger ports found no production divergence. The ordinary-build injected constructor and batch-size probe remain public; deterministic ports execute every source assertion, including both 20,480-pair live cases. Root `tikv` and `internal/mockstore/mocktikv` retain independent receipts. |
 | `testutils` | ordinary-build public `src/testutils.rs` facade over `src/mock/{cluster,mocktikv}` | complete | Atomic receipt: [`testutils-source-artifact-audit.md`](testutils-source-artifact-audit.md). The sole 61-line production artifact, all 12 aliases/functions, no-test/no-support inventory, source-derived conformance test, and all 14 direct consumers are assigned. The facade reuses the complete concrete mocktikv implementation without `internal-tests`; no-feature downstream gates implement its coprocessor handler and commit/read a transaction over its factory topology. It does not promote its integration-suite consumers. |
 | `tikv` | public `src/tikv.rs` facade plus native `src/{pd,region_cache,request,store,transaction,stats}.rs` owners | complete | Independently re-audited atomic receipt: [`tikv-source-artifact-audit.md`](tikv-source-artifact-audit.md). All 17 root artifacts/3,895 lines, every production facade/worker/control path, all 12 suite methods as independently named Rust tests, the independently named lifecycle test, the suite/goleak harness dispositions, typed support probes, exact metric update sites, and all 35 direct importers are assigned. Red/green regressions corrected region-cache-before-client close ordering, primitive safe-TS probe overwrite semantics without weakening updater monotonicity, immediate running-scatter header errors, and transaction-file split lock waits on the operation's shared TTL-capped retry owner. Exact Go normal/race suites, 29 focused Rust tests in both configurations, 769/766 source-derived tests, complete workspace/library matrices, strict check/Clippy/private rustdoc, and 51 doctests pass. Production control-plane calls use mock/loopback validation here; root `txnkv`, external integration tests, and the already completed live-cluster differential gate retain independent receipts. |
-| `tikvrpc` | `src/store/{command,endpoint,errors,request}.rs`, `src/lib.rs` exports, request plans/routing, generated protocol bindings | complete | Independently re-audited atomic receipt: [`tikvrpc-source-artifact-audit.md`](tikvrpc-source-artifact-audit.md). All six artifacts/2,624 lines, seven byte-identical protocol inputs, five ordinary tests as independently selectable Rust ports, `TestMain`, every production surface, and all 74 consumers are assigned. The stronger tests restore exact context keyspace/API fields, the source's CopStream #51921 inventory entry, and complete charged/bypass RU assertions; they pass without production churn. Typed payloads and owned snapshots replace Go's unchecked dynamic wrapper and revision race without weakening behavior. |
+| `tikvrpc` | `src/store/{command,endpoint,errors,request}.rs`, `src/lib.rs` exports, request plans/routing, generated protocol bindings | complete | Independently re-audited atomic receipt: [`tikvrpc-source-artifact-audit.md`](tikvrpc-source-artifact-audit.md). All six artifacts/2,624 lines, seven byte-identical protocol inputs, five ordinary tests, `TestMain`, every production surface, and all 74 consumers are assigned. A repository-wide follow-up corrected the earlier independence claim: four macro wrappers and the handwritten `TestBatchResponse` forwarder are gone, so all five source identities now execute direct Rust actions and assertions. The stronger tests retain exact context keyspace/API fields, the source's CopStream #51921 inventory entry, and complete charged/bypass RU assertions without production churn. Typed payloads and owned snapshots replace Go's unchecked dynamic wrapper and revision race without weakening behavior. |
 | `tikvrpc/interceptor` | public `src/interceptor.rs`, transaction/snapshot dispatch plans, downstream API gate | complete | Re-audited atomic receipt: [`tikvrpc-interceptor-source-artifact-audit.md`](tikvrpc-interceptor-source-artifact-audit.md). All three artifacts/335 lines, `TestInterceptor`, `TestMain`, every production symbol, and all seven direct importers are assigned. Rust publishes the source mock manager; downstream implementors need only name/wrap and can skip, call once, or repeatedly call the shared continuation like client-go. Exact commit/read propagation and all chain branches are executable. |
 | `trace` | public `src/trace.rs` plus request, region-cache, 2PC, and lock-resolver consumers | complete | Re-audited atomic receipt: [`trace-source-artifact-audit.md`](trace-source-artifact-audit.md). All four artifacts/424 lines, all eight original tests, and all five direct importers are assigned. Trace scope now reaches wire IDs/control flags and the exact KV/cache/prewrite/commit/lock event boundaries. |
 | `txnkv` | public `src/txnkv.rs` facade, embedded `src/tikv.rs` store, and complete native `src/transaction` owners | complete | Atomic receipt: [`txnkv-source-artifact-audit.md`](txnkv-source-artifact-audit.md). All seven package-level artifacts (308 lines), five production/export files, compile-only external test, `OWNERS`, every option/constructor/timestamp/close branch, every alias/constant, and all 17 direct consumers are assigned. V1/V2 keyspace construction, compatible safe-point namespacing, global configuration, embedded store ownership, txn-file idle-pool cleanup, parsed locks, transaction statuses, snapshots, transactions, priorities, and isolation levels are covered. Live example/integration execution remains on the final differential gate. |
@@ -122,44 +122,21 @@ Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`; required proto
 
 The complete six-file/2,624-line inventory, source and protocol SHA-256 identities, generated-command decision, per-symbol mapping, every original test, and all 74 importing Go files are recorded in [`tikvrpc-source-artifact-audit.md`](tikvrpc-source-artifact-audit.md). There is no other package-local source, build/platform variant, fixture, benchmark, example, metadata, or build file; `tikvrpc/interceptor` remains a separately completed child package.
 
+A follow-up repository-wide wrapper scan supersedes the first re-audit's test-identity wording. The four `source_go_tikvrpc_tests!` products and the handwritten `TestBatchResponse` test-to-test call have been replaced by five direct source-shaped bodies. Mechanical comparison now finds exactly five unique Go/Rust identities with no missing, extra, duplicate, forwarding-macro, or registered test-call evidence.
+
 Rust now preserves every continued-`iota` command value, name, alias, and classification; all 54 ordinary/debug physical routes; exact 42-command generated context registry plus CopStream and MPP/Empty special cases; process-wide default origin; owned context replacement and relocation-safe batch snapshots; all batch request/response oneofs including Empty; narrow size/detail/error matrices; all 37 concrete region-error response types; 22 start-timestamp branches; typed response-address and request-tagger carriers; four endpoint types and engine labels; and unary, BatchCommands, Cop/BatchCop/MPP stream timeout/first-response/close behavior. Static payload types replace Go's unchecked `interface{}` assertions, and per-receive Tokio deadlines replace the grpc-go lease-scanner task. The CopStream bypass branch consumes its one-time RPC count while leaving server details and RU totals untouched.
 
 Validation on `nightly-2026-08-22`:
 
-    cargo +nightly-2026-08-22 test -p tikv-client store::request::tests --lib
-    # 14 passed; 0 failed
+- `/private/tmp/go1.25.12-full/bin/go test ./tikvrpc`: passed in 7.269 seconds.
+- `/private/tmp/go1.25.12-full/bin/go test -race ./tikvrpc`: passed in 8.306 seconds.
+- Both `source_go_tikvrpc_` feature configurations pass all five direct ports.
+- Both command/request/endpoint feature configurations pass all 35 focused tests.
+- `make unit-test` passes 1,323 no-default tests with two configured skips and 1,297 all-feature library tests with six configured skips.
+- `make check`, `make doc`, and `git diff --check` pass clean generation, all-target/all-feature checking, strict Clippy, rustfmt, private rustdoc, all 51 doctests, and whitespace validation.
+- The six source artifacts, seven byte-identical protocol inputs, five direct test identities, and 74 consumers reconcile exactly.
 
-    cargo +nightly-2026-08-22 test -p tikv-client store::command::tests --lib
-    # 8 passed; 0 failed
-
-    cargo +nightly-2026-08-22 test -p tikv-client store::endpoint::tests --lib
-    # 2 passed; 0 failed
-
-    cargo +nightly-2026-08-22 test -p tikv-client store::errors::test::source_gen_region_error_response_matrix_is_complete --lib
-    # 1 passed; 0 failed
-
-    cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet
-    # 541 passed; 0 failed
-
-    cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet
-    # 541 passed; 0 failed
-
-    cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features
-    # passed with the existing warning backlog
-
-    cargo +nightly-2026-08-22 doc -p tikv-client --all-features --no-deps
-    # passed with two pre-existing unrelated rustdoc warnings
-
-    cargo +nightly-2026-08-22 fmt --all -- --check
-    git diff --check
-    # passed
-
-    for proto in coprocessor debugpb errorpb kvrpcpb metapb mpp tikvpb; do
-        cmp "proto/$proto.proto" "/private/tmp/kvproto-client-go-pin/proto/$proto.proto"
-    done
-    # all seven direct inputs byte-identical
-
-The pinned Go tests were inspected but not re-executed because this host has no Go toolchain. No live cluster is needed for the deterministic command/context/codec behavior or for stream behavior already exercised by the completed loopback transport receipt. Locate behavior is now covered by its own complete receipt; raw, snapshot, transaction, and high-level `tikv` behavior remain on their own non-complete rows and the final differential cluster gate.
+No live cluster is needed for the deterministic command/context/codec behavior or for stream behavior already exercised by the completed loopback transport receipt. Locate behavior is covered by its own complete receipt; raw, snapshot, transaction, and high-level `tikv` retain their separate package receipts and final differential cluster evidence.
 
 ## Complete package receipt: `config/retry`
 
