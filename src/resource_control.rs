@@ -638,7 +638,7 @@ mod test {
     }
 
     #[test]
-    fn source_request_info_uses_typed_command_context_and_bypass_rules() {
+    fn source_test_bypass_ruv2_follows_request_info_bypass() {
         let request = kvrpcpb::PrewriteRequest {
             mutations: vec![kvrpcpb::Mutation {
                 key: b"key".to_vec(),
@@ -827,7 +827,7 @@ mod test {
     }
 
     #[test]
-    fn source_resource_control_selection_uses_routed_replica_and_zone() {
+    fn source_test_get_resource_control_info_honors_selection_policy() {
         let request = kvrpcpb::GetRequest {
             context: Some(kvrpcpb::Context {
                 resource_control_context: Some(kvrpcpb::ResourceControlContext {
@@ -979,15 +979,5 @@ mod test {
         assert_eq!(response.kv_cpu(), Duration::ZERO);
         assert!(response.succeed());
         assert_eq!(response.response_size(), 0);
-    }
-
-    #[test]
-    fn source_test_get_resource_control_info_honors_selection_policy() {
-        source_resource_control_selection_uses_routed_replica_and_zone();
-    }
-
-    #[test]
-    fn source_test_bypass_ruv2_follows_request_info_bypass() {
-        source_request_info_uses_typed_command_context_and_bypass_rules();
     }
 }

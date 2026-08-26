@@ -2281,7 +2281,7 @@ pub mod test {
     }
 
     #[tokio::test]
-    async fn source_client_close_retires_every_pool_once_and_prevents_reconnect() {
+    async fn source_test_concurrent_close_conn_panic() {
         #[derive(Clone)]
         struct ClosingClient {
             closes: Arc<AtomicUsize>,
@@ -2353,6 +2353,74 @@ pub mod test {
             client.kv_client("store-a").await,
             Err(crate::Error::StringError(message)) if message == "rpc client is closed"
         ));
+    }
+
+    #[tokio::test]
+    async fn source_test_get_conn_after_close() {
+        #[derive(Clone)]
+        struct ClosingClient {
+            closed: Arc<AtomicBool>,
+        }
+
+        #[async_trait]
+        impl KvClient for ClosingClient {
+            async fn dispatch(&self, _request: &dyn Request) -> Result<Box<dyn std::any::Any>> {
+                unreachable!("this lifecycle test never dispatches")
+            }
+
+            fn close(&self) {
+                self.closed.store(true, Ordering::SeqCst);
+            }
+        }
+
+        #[derive(Clone)]
+        struct ClosingConnect {
+            closed: Arc<AtomicBool>,
+        }
+
+        #[async_trait]
+        impl KvConnect for ClosingConnect {
+            type KvClient = ClosingClient;
+
+            async fn connect(&self, _address: &str) -> Result<Self::KvClient> {
+                Ok(ClosingClient {
+                    closed: self.closed.clone(),
+                })
+            }
+        }
+
+        let closed = Arc::new(AtomicBool::new(false));
+        let closed_by_connect = closed.clone();
+        let client = PdRpcClient::new(
+            Config::default(),
+            move |_| ClosingConnect {
+                closed: closed_by_connect.clone(),
+            },
+            |sm| async move {
+                Ok(RetryClient::new_with_cluster(
+                    sm,
+                    Config::default().timeout,
+                    MockCluster,
+                ))
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        client.kv_client("127.0.0.1:6379").await.unwrap();
+        let version = client.kv_client_cache.read().await["127.0.0.1:6379"].version;
+        client
+            .close_cached_kv_client_addr_ver("127.0.0.1:6379", version)
+            .await;
+
+        assert!(closed.load(Ordering::SeqCst));
+        assert!(!client
+            .kv_client_cache
+            .read()
+            .await
+            .contains_key("127.0.0.1:6379"));
+        client.close().await;
     }
 
     #[tokio::test]
@@ -2537,15 +2605,5 @@ pub mod test {
         assert_eq!(ranges2.0, vec![make_key_range(k3, k4)]);
         assert_eq!(ranges3.1.id(), 3);
         assert_eq!(ranges3.0, vec![make_key_range(k5, k6)]);
-    }
-
-    #[test]
-    fn source_test_get_conn_after_close() {
-        source_client_close_retires_every_pool_once_and_prevents_reconnect();
-    }
-
-    #[test]
-    fn source_test_concurrent_close_conn_panic() {
-        source_client_close_retires_every_pool_once_and_prevents_reconnect();
     }
 }

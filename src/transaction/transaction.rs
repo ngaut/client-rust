@@ -15126,7 +15126,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transaction_resource_control_charges_and_settles_each_physical_rpc() {
+    async fn source_test_send_request_settles_on_success() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let controller = Arc::new(RecordingResourceController {
             events: Arc::clone(&events),
@@ -15174,7 +15174,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transaction_resource_control_does_not_settle_transport_failures() {
+    async fn source_test_send_request_does_not_settle_and_keeps_ru_details_on_transport_failure() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let controller = Arc::new(RecordingResourceController {
+            events: Arc::clone(&events),
+        });
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(|_| {
+            Err(Error::StringError("simulated transport failure".to_owned()))
+        })));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        );
+        txn.set_resource_group("test-rg");
+        txn.set_resource_control(controller);
+
+        assert!(txn.get("key".to_owned()).await.is_err());
+        assert_eq!(*events.lock().unwrap(), ["request"]);
+        txn.set_status(TransactionStatus::Rolledback);
+    }
+
+    #[tokio::test]
+    async fn source_test_send_request_async_does_not_settle_and_keeps_ru_details_on_transport_failure(
+    ) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let controller = Arc::new(RecordingResourceController {
             events: Arc::clone(&events),
@@ -19962,21 +19986,6 @@ mod tests {
                 vec!["prewrite:primary".to_owned(), expected_final.to_owned()]
             );
         }
-    }
-
-    #[test]
-    fn source_test_send_request_does_not_settle_and_keeps_ru_details_on_transport_failure() {
-        transaction_resource_control_does_not_settle_transport_failures();
-    }
-
-    #[test]
-    fn source_test_send_request_settles_on_success() {
-        transaction_resource_control_charges_and_settles_each_physical_rpc();
-    }
-
-    #[test]
-    fn source_test_send_request_async_does_not_settle_and_keeps_ru_details_on_transport_failure() {
-        transaction_resource_control_does_not_settle_transport_failures();
     }
 
     #[test]

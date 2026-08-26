@@ -3728,7 +3728,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn successful_physical_dispatch_updates_source_ru_v2_rpc_counts() {
+    async fn source_test_send_request_async_update_tikv_ruv2() {
         let client = MockKvClient::with_dispatch_hook(|request| {
             assert!(request.is::<kvrpcpb::GetRequest>());
             Ok(Box::new(kvrpcpb::GetResponse {
@@ -5451,11 +5451,6 @@ mod test {
             "sibling retry completed",
             "client-go returns the last completed failing snapshot shard"
         );
-    }
-
-    #[test]
-    fn source_test_send_request_async_update_tikv_ruv2() {
-        successful_physical_dispatch_updates_source_ru_v2_rpc_counts();
     }
 
     #[tokio::test]
