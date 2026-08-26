@@ -470,6 +470,106 @@ async fn resolve_locks_with_context_inner(
     context: ResolveLocksContext,
     read_lock_context: Option<&ReadLockContext>,
 ) -> Result<ResolveLocksResult> {
+    if locks.is_empty() {
+        return resolve_locks_with_context_body(
+            locks,
+            timestamp,
+            pd_client,
+            keyspace,
+            keyspace_name,
+            context,
+            read_lock_context,
+        )
+        .await;
+    }
+
+    let trace_context = context.trace_context.clone();
+    let caller_start_ts = timestamp.version();
+    let lock_count = locks.len();
+    let for_read = read_lock_context.is_some();
+    let lite = locks
+        .iter()
+        .all(|lock| lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold);
+    let before_read_locks = read_lock_context.map(ReadLockContext::snapshot);
+    if crate::trace::is_category_enabled(crate::trace::Category::TransactionLockResolve) {
+        crate::trace::trace_event(
+            &trace_context,
+            crate::trace::Category::TransactionLockResolve,
+            "resolve_locks.start",
+            &[
+                crate::trace::TraceField::new("callerStartTS", caller_start_ts),
+                crate::trace::TraceField::new("lockCount", lock_count),
+                crate::trace::TraceField::new("forRead", for_read),
+                crate::trace::TraceField::new("lite", lite),
+            ],
+        );
+    }
+
+    let result = crate::trace::with_trace_context(
+        trace_context.clone(),
+        resolve_locks_with_context_body(
+            locks,
+            timestamp,
+            pd_client,
+            keyspace,
+            keyspace_name,
+            context,
+            read_lock_context,
+        ),
+    )
+    .await;
+    if crate::trace::is_category_enabled(crate::trace::Category::TransactionLockResolve) {
+        let (ignored_locks, accessible_locks) = match (before_read_locks, read_lock_context) {
+            (Some((before_resolved, before_committed)), Some(read_lock_context)) => {
+                let (after_resolved, after_committed) = read_lock_context.snapshot();
+                let before_resolved = before_resolved.into_iter().collect::<HashSet<_>>();
+                let before_committed = before_committed.into_iter().collect::<HashSet<_>>();
+                (
+                    after_resolved
+                        .into_iter()
+                        .filter(|txn| !before_resolved.contains(txn))
+                        .count(),
+                    after_committed
+                        .into_iter()
+                        .filter(|txn| !before_committed.contains(txn))
+                        .count(),
+                )
+            }
+            _ => (0, 0),
+        };
+        let mut fields = vec![
+            crate::trace::TraceField::new("callerStartTS", caller_start_ts),
+            crate::trace::TraceField::new("lockCount", lock_count),
+            crate::trace::TraceField::new(
+                "ttl",
+                result.as_ref().map_or(0, |result| result.ms_before_expired),
+            ),
+            crate::trace::TraceField::new("ignoredLocks", ignored_locks),
+            crate::trace::TraceField::new("accessibleLocks", accessible_locks),
+        ];
+        if let Err(error) = &result {
+            fields.push(crate::trace::TraceField::new("error", error.to_string()));
+        }
+        crate::trace::trace_event(
+            &trace_context,
+            crate::trace::Category::TransactionLockResolve,
+            "resolve_locks.finish",
+            &fields,
+        );
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_locks_with_context_body(
+    locks: Vec<kvrpcpb::LockInfo>,
+    timestamp: Timestamp,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<&str>,
+    context: ResolveLocksContext,
+    read_lock_context: Option<&ReadLockContext>,
+) -> Result<ResolveLocksResult> {
     debug!("resolving locks");
     stats::increment_lock_resolver_action("resolve");
     reject_shared_locks(&locks)?;
@@ -1486,6 +1586,7 @@ pub struct ResolveLocksContext {
     pub(crate) resource_group_name: Option<String>,
     pub(crate) resource_control: Option<ResourceGroupControllerHandle>,
     pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
+    pub(crate) trace_context: crate::trace::TraceContext,
     async_resolve_pool: AsyncResolveTaskPool,
 }
 
@@ -1499,6 +1600,7 @@ impl Default for ResolveLocksContext {
             resource_group_name: None,
             resource_control: None,
             ru_details: None,
+            trace_context: crate::trace::current_trace_context(),
             async_resolve_pool: AsyncResolveTaskPool::new(ASYNC_READ_RESOLVE_LOCKS.clone()),
         }
     }
@@ -2331,6 +2433,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
     use fail::FailScenario;
@@ -2342,6 +2445,15 @@ mod tests {
     use crate::proto::errorpb;
     use crate::{RequestWaitResult, ResourceControlRequestInfo, ResourceGroupController};
     use crate::{ResponseWaitResult, Result};
+
+    struct ResetTraceHandlers;
+
+    impl Drop for ResetTraceHandlers {
+        fn drop(&mut self) {
+            crate::trace::set_trace_event_handler(None);
+            crate::trace::set_category_enabled_handler(None);
+        }
+    }
 
     struct ResolverResourceController(Arc<AtomicUsize>);
 
@@ -2419,6 +2531,61 @@ mod tests {
         };
         assert!(reject_shared_locks(&[by_op.clone()]).is_ok());
         assert!(is_pessimistic_lock(&by_op));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn source_trace_lock_resolution_emits_start_and_error_finish_events() {
+        crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
+            category == crate::trace::Category::TransactionLockResolve
+        })));
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        crate::trace::set_trace_event_handler(Some(Arc::new(
+            move |context, category, name, fields| {
+                if context.trace_id() != Some(b"lock-trace") {
+                    return;
+                }
+                captured.lock().unwrap().push((
+                    category,
+                    name.to_owned(),
+                    fields.iter().any(|field| field.name == "error"),
+                ));
+            },
+        )));
+        let _reset = ResetTraceHandlers;
+
+        let mut context = ResolveLocksContext::default();
+        context.trace_context =
+            crate::trace::TraceContext::new().with_trace_id(b"lock-trace".to_vec());
+        let result = resolve_locks_with_context_result(
+            vec![kvrpcpb::LockInfo {
+                lock_type: kvrpcpb::Op::SharedLock as i32,
+                ..Default::default()
+            }],
+            Timestamp::from_version(42),
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            None,
+            context,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            events.lock().unwrap().as_slice(),
+            &[
+                (
+                    crate::trace::Category::TransactionLockResolve,
+                    "resolve_locks.start".to_owned(),
+                    false,
+                ),
+                (
+                    crate::trace::Category::TransactionLockResolve,
+                    "resolve_locks.finish".to_owned(),
+                    true,
+                ),
+            ]
+        );
     }
 
     #[test]

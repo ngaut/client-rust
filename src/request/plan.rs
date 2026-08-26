@@ -208,6 +208,9 @@ pub struct Dispatch<Req: KvRequest> {
     /// Task-scoped execution-detail trace sink captured before this dispatch
     /// may move into a fan-out task.
     pub(crate) execution_details_trace_handler: Option<crate::trace::ExecutionDetailsTraceHandler>,
+    /// Source request context captured before this dispatch may move into a
+    /// fan-out task. It supplies client events and TiKV trace metadata.
+    pub(crate) trace_context: crate::trace::TraceContext,
     pub(crate) network_traffic_details: Option<Arc<crate::traffic::NetworkTrafficDetails>>,
     /// Original request invariant retained when a stale read falls back to a
     /// normal leader read after meeting a lock.
@@ -295,6 +298,14 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         if let Some(prepare) = &self.request_preparer {
             prepare(&mut request)?;
         }
+        let mut tikv_context = request.tikv_context().cloned().unwrap_or_default();
+        if let Some(trace_id) = self.trace_context.trace_id() {
+            if !trace_id.is_empty() {
+                tikv_context.trace_id = trace_id.to_vec();
+            }
+        }
+        tikv_context.trace_control_flags = crate::trace::trace_control_flags(&self.trace_context).0;
+        request.attach_context(tikv_context);
         let resource_control = self
             .resource_control
             .clone()
@@ -342,11 +353,68 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 }
             }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         });
+        if crate::trace::is_category_enabled(crate::trace::Category::KvRequest) {
+            crate::trace::trace_event(
+                &self.trace_context,
+                crate::trace::Category::KvRequest,
+                "kv.request.send",
+                &request_trace_fields(self, &request),
+            );
+        }
         let started_at = Instant::now();
         let result = match &self.interceptor {
             Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
             None => next().await,
         };
+        if crate::trace::is_category_enabled(crate::trace::Category::KvRequest) {
+            let mut fields = vec![
+                crate::trace::TraceField::new("cmd", request_command_name(request.label())),
+                crate::trace::TraceField::new("latency", started_at.elapsed()),
+                crate::trace::TraceField::new("success", result.is_ok()),
+            ];
+            if let Err(error) = &result {
+                fields.push(crate::trace::TraceField::new("error", error.to_string()));
+            }
+            if let Ok(response) = &result {
+                if let Some(region_error) = crate::store::region_error_ref(response.as_ref()) {
+                    fields.push(crate::trace::TraceField::new(
+                        "region_error",
+                        format!("{region_error:?}"),
+                    ));
+                }
+            }
+            crate::trace::trace_event(
+                &self.trace_context,
+                crate::trace::Category::KvRequest,
+                "kv.request.result",
+                &fields,
+            );
+        }
+        if crate::trace::is_category_enabled(crate::trace::Category::KvRequest) {
+            if let Ok(response) = &result {
+                if let Some(response) = response
+                    .as_ref()
+                    .downcast_ref::<crate::proto::coprocessor::Response>()
+                {
+                    if !response.other_error.is_empty() {
+                        let mut fields = request_route_trace_fields(self);
+                        fields.insert(
+                            0,
+                            crate::trace::TraceField::new(
+                                "other_error",
+                                response.other_error.clone(),
+                            ),
+                        );
+                        crate::trace::trace_event(
+                            &self.trace_context,
+                            crate::trace::Category::KvRequest,
+                            "cop.other_error",
+                            &fields,
+                        );
+                    }
+                }
+            }
+        }
         if let Some(runtime_stats) = &self.region_request_runtime_stats {
             if let Some(command) = CommandType::from_request_label(self.request.label()) {
                 runtime_stats.record_rpc(command, started_at.elapsed());
@@ -456,6 +524,58 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         self.request.set_resolved_locks(resolved_locks);
         self.request.set_committed_locks(committed_locks);
     }
+}
+
+fn request_command_name(label: &str) -> String {
+    CommandType::from_request_label(label)
+        .map(CommandType::name)
+        .unwrap_or("Unknown")
+        .to_owned()
+}
+
+fn request_route_trace_fields<Req: KvRequest>(
+    dispatch: &Dispatch<Req>,
+) -> Vec<crate::trace::TraceField> {
+    let region = dispatch.region_with_leader.as_ref();
+    let region_id = region.map(RegionWithLeader::ver_id).unwrap_or_default();
+    vec![
+        crate::trace::TraceField::new("region_id", region_id.id),
+        crate::trace::TraceField::new("region_ver", region_id.ver),
+        crate::trace::TraceField::new("region_confVer", region_id.conf_ver),
+        crate::trace::TraceField::new(
+            "store_id",
+            dispatch
+                .logical_store_id
+                .unwrap_or(dispatch.store_token_store_id),
+        ),
+        crate::trace::TraceField::new("store_addr", dispatch.target.clone()),
+    ]
+}
+
+fn request_trace_fields<Req: KvRequest>(
+    dispatch: &Dispatch<Req>,
+    request: &Req,
+) -> Vec<crate::trace::TraceField> {
+    let mut fields = vec![crate::trace::TraceField::new(
+        "cmd",
+        request_command_name(request.label()),
+    )];
+    fields.extend(request_route_trace_fields(dispatch));
+    fields.push(crate::trace::TraceField::new(
+        "timeout",
+        dispatch.request_timeout.unwrap_or_default(),
+    ));
+    if let Some(region) = dispatch.region_with_leader.as_ref() {
+        fields.push(crate::trace::TraceField::new(
+            "region_start_key",
+            crate::redact::key(&region.region.start_key),
+        ));
+        fields.push(crate::trace::TraceField::new(
+            "region_end_key",
+            crate::redact::key(&region.region.end_key),
+        ));
+    }
+    fields
 }
 
 impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
@@ -949,7 +1069,7 @@ where
             }
             // Get, one-region BatchGet, and scanner refills use their owning
             // backoffer directly in client-go. Forking is fanout-only.
-            return Self::single_shard_handler(
+            return Self::traced_single_shard_handler(
                 pd_client,
                 plan,
                 region,
@@ -996,7 +1116,7 @@ where
             join_set.spawn(async move {
                 (
                     idx,
-                    Self::single_shard_handler(
+                    Self::traced_single_shard_handler(
                         pd_client,
                         clone,
                         region,
@@ -1082,6 +1202,40 @@ where
                 backoff,
             )
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn traced_single_shard_handler(
+        pd_client: Arc<PdC>,
+        plan: P,
+        region: RegionWithLeader,
+        backoff: R,
+        permits: Arc<Semaphore>,
+        preserve_region_results: bool,
+        one_region: Option<bool>,
+    ) -> (Result<<Self as Plan>::Result>, R) {
+        let trace = plan.transaction_batch_trace(region.id());
+        if let Some(trace) = &trace {
+            trace.emit_start();
+        }
+        let result = Self::single_shard_handler(
+            pd_client,
+            plan,
+            region,
+            backoff,
+            permits,
+            preserve_region_results,
+            one_region,
+        )
+        .await;
+        if let Some(trace) = &trace {
+            let success = result
+                .0
+                .as_ref()
+                .is_ok_and(|responses| responses.iter().all(Result::is_ok));
+            trace.emit_result(success);
+        }
+        result
     }
 
     #[async_recursion]
@@ -2989,8 +3143,10 @@ impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Sha
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
     use futures::stream::BoxStream;
@@ -3158,6 +3314,191 @@ mod test {
 
     fn region_store() -> RegionStore {
         RegionStore::new(MockPdClient::region1(), Arc::new(MockKvClient::default()))
+    }
+
+    struct ResetTraceHandlers;
+
+    impl Drop for ResetTraceHandlers {
+        fn drop(&mut self) {
+            crate::trace::set_trace_event_handler(None);
+            crate::trace::set_category_enabled_handler(None);
+            crate::trace::set_trace_control_extractor(None);
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn source_physical_dispatch_propagates_trace_context_and_emits_kv_events() {
+        crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
+            category == crate::trace::Category::KvRequest
+        })));
+        crate::trace::set_trace_control_extractor(Some(Arc::new(|_| {
+            crate::trace::TraceControlFlags::IMMEDIATE_LOG
+                | crate::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST
+        })));
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let captured_events = Arc::clone(&events);
+        crate::trace::set_trace_event_handler(Some(Arc::new(
+            move |context, category, name, fields| {
+                if context.trace_id() != Some(b"trace-id") {
+                    return;
+                }
+                let values = fields
+                    .iter()
+                    .map(|field| {
+                        let value = field
+                            .value::<String>()
+                            .cloned()
+                            .or_else(|| field.value::<bool>().map(ToString::to_string));
+                        (field.name.clone(), value)
+                    })
+                    .collect::<HashMap<_, _>>();
+                captured_events
+                    .lock()
+                    .unwrap()
+                    .push((category, name.to_owned(), values));
+            },
+        )));
+        let _reset = ResetTraceHandlers;
+
+        let client = MockKvClient::with_dispatch_hook(|request| {
+            let request = request.downcast_ref::<kvrpcpb::GetRequest>().unwrap();
+            let context = request.context.as_ref().unwrap();
+            assert_eq!(context.trace_id, b"trace-id");
+            assert_eq!(context.trace_control_flags, 0b11);
+            Ok(Box::new(kvrpcpb::GetResponse::default()))
+        });
+        crate::trace::with_trace_context(
+            crate::trace::TraceContext::new().with_trace_id(b"trace-id".to_vec()),
+            async {
+                PlanBuilder::new(
+                    Arc::new(MockPdClient::default()),
+                    Keyspace::Disable,
+                    kvrpcpb::GetRequest::default(),
+                )
+                .single_region_with_store(RegionStore::new(
+                    MockPdClient::region1(),
+                    Arc::new(client),
+                ))
+                .await
+                .unwrap()
+                .plan()
+                .execute()
+                .await
+                .unwrap();
+            },
+        )
+        .await;
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, crate::trace::Category::KvRequest);
+        assert_eq!(events[0].1, "kv.request.send");
+        assert_eq!(events[0].2["cmd"].as_deref(), Some("Get"));
+        assert_eq!(events[1].1, "kv.request.result");
+        assert_eq!(events[1].2["success"].as_deref(), Some("true"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn source_trace_multi_region_prewrite_and_commit_emit_batch_lifecycles() {
+        crate::trace::set_category_enabled_handler(Some(Arc::new(|category| {
+            category == crate::trace::Category::TransactionTwoPhaseCommit
+        })));
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let captured_events = Arc::clone(&events);
+        crate::trace::set_trace_event_handler(Some(Arc::new(
+            move |context, category, name, fields| {
+                if context.trace_id() != Some(b"txn-trace") {
+                    return;
+                }
+                let values = fields
+                    .iter()
+                    .filter_map(|field| {
+                        field
+                            .value::<u64>()
+                            .copied()
+                            .map(|value| (field.name.clone(), value))
+                    })
+                    .collect::<HashMap<_, _>>();
+                captured_events
+                    .lock()
+                    .unwrap()
+                    .push((category, name.to_owned(), values));
+            },
+        )));
+        let _reset = ResetTraceHandlers;
+
+        let client = MockKvClient::with_dispatch_hook(|request| {
+            if request.is::<kvrpcpb::PrewriteRequest>() {
+                return Ok(Box::new(kvrpcpb::PrewriteResponse::default()));
+            }
+            assert!(request.is::<kvrpcpb::CommitRequest>());
+            Ok(Box::new(kvrpcpb::CommitResponse::default()))
+        });
+        let pd_client = Arc::new(MockPdClient::with_client_and_regions(
+            client,
+            vec![MockPdClient::region1()],
+        ));
+        crate::trace::with_trace_context(
+            crate::trace::TraceContext::new().with_trace_id(b"txn-trace".to_vec()),
+            async {
+                PlanBuilder::new(
+                    Arc::clone(&pd_client),
+                    Keyspace::Disable,
+                    kvrpcpb::PrewriteRequest {
+                        mutations: vec![kvrpcpb::Mutation {
+                            key: vec![1],
+                            ..Default::default()
+                        }],
+                        primary_lock: vec![1],
+                        start_version: 42,
+                        ..Default::default()
+                    },
+                )
+                .retry_multi_region(Backoff::no_backoff())
+                .plan()
+                .execute()
+                .await
+                .unwrap();
+
+                PlanBuilder::new(
+                    pd_client,
+                    Keyspace::Disable,
+                    kvrpcpb::CommitRequest {
+                        keys: vec![vec![1]],
+                        primary_key: vec![1],
+                        start_version: 42,
+                        commit_version: 43,
+                        ..Default::default()
+                    },
+                )
+                .retry_multi_region(Backoff::no_backoff())
+                .plan()
+                .execute()
+                .await
+                .unwrap();
+            },
+        )
+        .await;
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 4);
+        assert_eq!(
+            events[0].0,
+            crate::trace::Category::TransactionTwoPhaseCommit
+        );
+        assert_eq!(events[0].1, "prewrite.batch.start");
+        assert_eq!(events[0].2["startTS"], 42);
+        assert_eq!(events[0].2["regionID"], 1);
+        assert_eq!(events[1].1, "prewrite.batch.result");
+        assert_eq!(events[1].2["regionID"], 1);
+        assert_eq!(events[2].1, "commit.batch.start");
+        assert_eq!(events[2].2["startTS"], 42);
+        assert_eq!(events[2].2["commitTS"], 43);
+        assert_eq!(events[2].2["regionID"], 1);
+        assert_eq!(events[3].1, "commit.batch.result");
+        assert_eq!(events[3].2["regionID"], 1);
     }
 
     #[tokio::test]

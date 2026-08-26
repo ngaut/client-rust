@@ -38,7 +38,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `tikv` | public `src/tikv.rs` facade plus native `src/{pd,region_cache,request,store,transaction,stats}.rs` owners | complete | Atomic receipt: [`tikv-source-artifact-audit.md`](tikv-source-artifact-audit.md). All 17 root artifacts (3,895 lines), every production facade/worker/control path, all 12 suite methods plus lifecycle/goleak contracts, typed support probes, exact metric update sites, and 35 direct importers are assigned. Visibility and compatible etcd loading, safe-TS aggregation, null-keyspace transaction-safe-point GC plus legacy GC-safe-point update, all-TiKV unsafe destruction, source-shaped split/scatter retry, close ordering, transaction options, and reusable union-store exports are covered. The public facade also makes every required injected-client signature nameable, including `Store`; an ordinary downstream crate implements `KvClient`/`PdClient` without `internal-tests`. Production control-plane calls use only mock/loopback validation; root `txnkv`, external integration tests, and final live-cluster differential gates retain independent statuses. |
 | `tikvrpc` | `src/store/{command,endpoint,errors,request}.rs`, `src/lib.rs` exports, request plans/routing, generated protocol bindings | complete | Complete package receipt below and full six-artifact/protocol/symbol/test/consumer mapping in [`tikvrpc-source-artifact-audit.md`](tikvrpc-source-artifact-audit.md). Every command, route, context, batch, unary/debug/stream, size/detail/error, endpoint, origin, start-TS, tagger, timeout/close, original-test, generated-list, and 74-consumer boundary is accounted for. Typed payloads and owned snapshots replace Go's unchecked dynamic wrapper and revision race without weakening behavior; unfinished high-level consumers retain their own rows. |
 | `tikvrpc/interceptor` | `src/interceptor.rs`, transaction/snapshot dispatch plans | complete | Receipt below; native async wrappers preserve ordered onion execution, duplicate-name replacement, chain flattening, transaction/snapshot set/add APIs, and physical-RPC dispatch integration. |
-| `trace` | `src/trace.rs` | complete | Receipt below; flags, categories, independently replaceable global hooks, typed contexts/fields, trace IDs, defaults, resets, and all original tests are covered. |
+| `trace` | public `src/trace.rs` plus request, region-cache, 2PC, and lock-resolver consumers | complete | Re-audited atomic receipt: [`trace-source-artifact-audit.md`](trace-source-artifact-audit.md). All four artifacts/424 lines, all eight original tests, and all five direct importers are assigned. Trace scope now reaches wire IDs/control flags and the exact KV/cache/prewrite/commit/lock event boundaries. |
 | `txnkv` | public `src/txnkv.rs` facade, embedded `src/tikv.rs` store, and complete native `src/transaction` owners | complete | Atomic receipt: [`txnkv-source-artifact-audit.md`](txnkv-source-artifact-audit.md). All seven package-level artifacts (308 lines), five production/export files, compile-only external test, `OWNERS`, every option/constructor/timestamp/close branch, every alias/constant, and all 17 direct consumers are assigned. V1/V2 keyspace construction, compatible safe-point namespacing, global configuration, embedded store ownership, txn-file idle-pool cleanup, parsed locks, transaction statuses, snapshots, transactions, priorities, and isolation levels are covered. Live example/integration execution remains on the final differential gate. |
 | `txnkv/rangetask` | `src/transaction/range_task.rs`, `src/transaction/client.rs`, `src/transaction/requests.rs`, `src/stats.rs` | complete | Complete package receipt below and full artifact/symbol/consumer mapping in [`txnkv-rangetask-source-artifact-audit.md`](txnkv-rangetask-source-artifact-audit.md). Both production files and the complete external integration-test matrix are accounted for; the reusable public runner, stateful DeleteRange task, idiomatic client entrypoints, retries, metrics, logging, cancellation, and validation gates are covered. Downstream GC, split/scatter, and pipelined transaction algorithms retain their own package rows. |
 | `txnkv/transaction` | `src/transaction/{transaction,txn_file,client,requests,lowering,buffer,unionstore}.rs`, request/error/PD integration | complete | Atomic 16-artifact/11,766-line receipt: [`txnkv-transaction-source-artifact-audit.md`](txnkv-transaction-source-artifact-audit.md). All 33 original Go test declarations are ported at case level, including every named subtest, table row, randomized round, and assertion. `Transaction` exposes and commits one authoritative staged `MemDb`; pipelined mode rotates that same store through bounded generations, direct remote reads, typed flush/status/TTL lifecycles, commit, and rollback. API-v2 retains logical keys and lowers them exactly once. Large 2PC groups use source-exact split, per-region scatter, operator wait, and post-wait cache invalidation with public process-wide thresholds. External mocktikv and ordinary-build gates prove direct staged commits, missing-value semantics, injected construction, public protocol identity, and nameable transaction controls. |
@@ -685,37 +685,7 @@ No real-cluster validation applies to this deterministic mock-only graph. The ho
 
 ## Complete package receipt: `trace`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is production files `trace/flags.go` (48 lines) and `trace/trace.go` (150 lines), plus original tests `trace/flags_test.go` (82 lines) and `trace/trace_test.go` (144 lines). There is no `doc.go`, build/platform variant, generated input/output, external fixture, package-specific build file, or leak harness. Consumers were inventoried in region request/cache handling, transaction prewrite/commit, and lock resolution. Those packages remain responsible for attaching trace IDs/control flags to generated request contexts and emitting their complete event sets.
-
-Rust implementation is the public `src/trace.rs` module registered by `src/lib.rs`. It provides exact control bits 0 through 3; idempotent `has`/`with` and bitwise combination; the four source category discriminants; type-preserving structured fields; immutable type-keyed context derivation; nested trace-ID override; and three independently replaceable process-wide handlers for events, category enablement, and control extraction. Handler locks are released before callbacks run, allowing callbacks to reconfigure tracing without deadlock while preserving the source's atomic replacement semantics.
-
-Rust `TraceContext` is the native counterpart of Go `context.Context`: marker types key arbitrary `Send + Sync` values, derivation leaves parents unchanged, and trace IDs are safely owned. `TraceField` stores an arbitrary typed payload behind `Any` rather than narrowing zap fields to strings. `None` handler registration maps to Go's nil registration. Defaults exactly follow implementation and tests: event is no-op, all client categories are disabled, and TiKV request-category control is enabled. This also preserves the pinned source's implementation despite a stale comment claiming the nil extractor returns zero.
-
-All original scenarios are covered: exact non-overlapping bit values; empty, fluent, combined, and idempotent flag operations; default/custom/context-sensitive/reset extractors; immediate-logging convenience behavior; event invocation and nil reset; independent category checks and reset; absent, attached, and nested trace IDs. Global-state tests are serialized.
-
-Validation on Rust 1.93.0:
-
-    cargo test 'trace::tests'
-    # 4 passed; 0 failed
-
-    cargo test --lib
-    # 116 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation applies to this callback/context package. Its generated-request and event-emission effects require consumer integration and remain on `internal/locate`, `txnkv/transaction`, and `txnkv/txnlock`. The host has no Go toolchain, so original Go tests could not run locally; their complete assertions execute in Rust.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`trace-source-artifact-audit.md`](trace-source-artifact-audit.md). That receipt owns the immutable four-artifact/424-line inventory, all eight original tests, all five direct importers, exact Go 1.25.12 execution, complete wire/event integration, and final pinned-nightly validation.
 
 ## Complete package receipt: `oracle`
 

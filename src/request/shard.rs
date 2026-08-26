@@ -144,6 +144,13 @@ macro_rules! impl_inner_shardable {
         fn lock_retry_region(&self) -> Option<RegionWithLeader> {
             self.inner.lock_retry_region()
         }
+
+        fn transaction_batch_trace(
+            &self,
+            region_id: u64,
+        ) -> Option<$crate::trace::TransactionBatchTrace> {
+            self.inner.transaction_batch_trace(region_id)
+        }
     };
 }
 
@@ -254,6 +261,14 @@ pub trait Shardable {
     /// Region metadata used to rebuild a direct leader route after a stale
     /// read encounters a lock.
     fn lock_retry_region(&self) -> Option<RegionWithLeader> {
+        None
+    }
+
+    #[doc(hidden)]
+    fn transaction_batch_trace(
+        &self,
+        _region_id: u64,
+    ) -> Option<crate::trace::TransactionBatchTrace> {
         None
     }
 
@@ -435,6 +450,7 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             request_replica_read: self.request_replica_read,
             interceptor: self.interceptor.clone(),
             execution_details_trace_handler: self.execution_details_trace_handler.clone(),
+            trace_context: self.trace_context.clone(),
             network_traffic_details: self.network_traffic_details.clone(),
             network_stale_read: self.network_stale_read,
             resource_control: self.resource_control.clone(),
@@ -474,6 +490,43 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             self.request
                 .set_buckets_version(store.region_with_leader.buckets_version())
         })
+    }
+
+    fn transaction_batch_trace(
+        &self,
+        region_id: u64,
+    ) -> Option<crate::trace::TransactionBatchTrace> {
+        if let Some(request) = self
+            .request
+            .as_any()
+            .downcast_ref::<crate::proto::kvrpcpb::PrewriteRequest>()
+        {
+            let is_primary = request
+                .mutations
+                .iter()
+                .any(|mutation| mutation.key == request.primary_lock);
+            return Some(crate::trace::TransactionBatchTrace {
+                context: self.trace_context.clone(),
+                kind: crate::trace::TransactionBatchKind::Prewrite,
+                start_ts: request.start_version,
+                commit_ts: 0,
+                region_id,
+                is_primary,
+                key_count: request.mutations.len(),
+            });
+        }
+        self.request
+            .as_any()
+            .downcast_ref::<crate::proto::kvrpcpb::CommitRequest>()
+            .map(|request| crate::trace::TransactionBatchTrace {
+                context: self.trace_context.clone(),
+                kind: crate::trace::TransactionBatchKind::Commit,
+                start_ts: request.start_version,
+                commit_ts: request.commit_version,
+                region_id,
+                is_primary: request.keys.iter().any(|key| key == &request.primary_key),
+                key_count: request.keys.len(),
+            })
     }
 
     fn replica_read_config(&self) -> ReplicaReadConfig {
@@ -1006,6 +1059,7 @@ mod test {
             request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
+            trace_context: crate::trace::TraceContext::new(),
             network_traffic_details: None,
             network_stale_read: false,
             resource_control: None,
@@ -1077,6 +1131,7 @@ mod test {
             request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
+            trace_context: crate::trace::TraceContext::new(),
             network_traffic_details: None,
             network_stale_read: false,
             resource_control: None,
@@ -1145,6 +1200,7 @@ mod test {
             request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
+            trace_context: crate::trace::TraceContext::new(),
             network_traffic_details: None,
             network_stale_read: false,
             resource_control: None,

@@ -586,6 +586,63 @@ pub(crate) fn exec_details_v2(response: &dyn Any) -> Option<&kvrpcpb::ExecDetail
     None
 }
 
+/// Return the region error without consuming it, for client-side trace events.
+pub(crate) fn region_error_ref(response: &dyn Any) -> Option<&crate::proto::errorpb::Error> {
+    macro_rules! region_error_response {
+        ($($response:ty),+ $(,)?) => {
+            $(
+                if let Some(response) = response.downcast_ref::<$response>() {
+                    return response.region_error.as_ref();
+                }
+            )+
+        };
+    }
+    region_error_response!(
+        kvrpcpb::GetResponse,
+        kvrpcpb::ScanResponse,
+        kvrpcpb::PrewriteResponse,
+        kvrpcpb::CommitResponse,
+        kvrpcpb::PessimisticLockResponse,
+        kvrpcpb::ImportResponse,
+        kvrpcpb::CleanupResponse,
+        kvrpcpb::BatchRollbackResponse,
+        kvrpcpb::PessimisticRollbackResponse,
+        kvrpcpb::BatchGetResponse,
+        kvrpcpb::ScanLockResponse,
+        kvrpcpb::ResolveLockResponse,
+        kvrpcpb::TxnHeartBeatResponse,
+        kvrpcpb::CheckTxnStatusResponse,
+        kvrpcpb::CheckSecondaryLocksResponse,
+        kvrpcpb::DeleteRangeResponse,
+        kvrpcpb::GcResponse,
+        kvrpcpb::PrepareFlashbackToVersionResponse,
+        kvrpcpb::FlashbackToVersionResponse,
+        kvrpcpb::FlushResponse,
+        kvrpcpb::BufferBatchGetResponse,
+        kvrpcpb::UnsafeDestroyRangeResponse,
+        kvrpcpb::MvccGetByKeyResponse,
+        kvrpcpb::MvccGetByStartTsResponse,
+        kvrpcpb::GetLockWaitInfoResponse,
+        kvrpcpb::SplitRegionResponse,
+        kvrpcpb::RawGetResponse,
+        kvrpcpb::RawBatchGetResponse,
+        kvrpcpb::RawGetKeyTtlResponse,
+        kvrpcpb::RawPutResponse,
+        kvrpcpb::RawBatchPutResponse,
+        kvrpcpb::RawDeleteResponse,
+        kvrpcpb::RawBatchDeleteResponse,
+        kvrpcpb::RawDeleteRangeResponse,
+        kvrpcpb::RawScanResponse,
+        kvrpcpb::RawBatchScanResponse,
+        kvrpcpb::RawCasResponse,
+        kvrpcpb::RawCoprocessorResponse,
+        kvrpcpb::RawChecksumResponse,
+        kvrpcpb::GetHealthFeedbackResponse,
+        coprocessor::Response,
+    );
+    None
+}
+
 /// Source `tikvrpc.Response.GetSize` matrix. Keep this deliberately narrower
 /// than all generated response types: unlisted commands report zero.
 pub(crate) fn network_response_size(response: &dyn Any) -> u64 {

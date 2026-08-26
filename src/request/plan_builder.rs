@@ -109,6 +109,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 interceptor: None,
                 execution_details_trace_handler:
                     crate::trace::current_execution_details_trace_handler(),
+                trace_context: crate::trace::current_trace_context(),
                 network_traffic_details: crate::traffic::current_network_traffic_details(),
                 network_stale_read: false,
                 resource_control: None,
@@ -471,6 +472,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                     resolve_locks_context.resource_group_name = self.resource_group_name.clone();
                     resolve_locks_context.resource_control = self.resource_control.clone();
                     resolve_locks_context.ru_details = self.ru_details.clone();
+                    resolve_locks_context.trace_context = crate::trace::current_trace_context();
                     resolve_locks_context
                 },
                 read_lock_context: None,
@@ -508,6 +510,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
+        resolve_locks_context.trace_context = crate::trace::current_trace_context();
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
@@ -563,6 +566,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
+        resolve_locks_context.trace_context = crate::trace::current_trace_context();
         resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
         resolve_locks_context.resource_group_name = self.resource_group_name.clone();
         resolve_locks_context.resource_control = self.resource_control.clone();
@@ -610,6 +614,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P::Result: HasLocks + HasNextBatch + HasRegionError + HasKeyErrors,
     {
         let mut ctx = ctx;
+        ctx.trace_context = crate::trace::current_trace_context();
         if ctx.ru_details.is_none() {
             ctx.ru_details = self.ru_details.clone();
         }
