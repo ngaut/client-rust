@@ -175,12 +175,19 @@ impl Client {
         Self::new_with_config(pd_endpoints, Config::default()).await
     }
 
+    /// Returns whether client-side transaction latches were enabled when this
+    /// client was constructed.
+    pub fn is_latch_enabled(&self) -> bool {
+        self.latches.is_some()
+    }
+
     /// Close the client-owned lock resolver and transport workers.
     ///
     /// The resolver is shared by cloned clients and transactions. Closing any
     /// owner therefore cancels and joins its detached lock-cleanup tasks before
     /// retiring the shared TiKV/PD transport, matching client-go `KVStore.Close`.
     pub async fn close(self) -> Result<()> {
+        close_transaction_latches(&self.latches);
         self.lock_resolver_context.close().await;
         self.pd.close().await;
         Ok(())
@@ -799,6 +806,12 @@ fn transaction_latches(config: &Config) -> Result<Option<Arc<LatchesScheduler>>>
     Ok(Some(LatchesScheduler::new(latches.capacity)))
 }
 
+fn close_transaction_latches(latches: &Option<Arc<LatchesScheduler>>) {
+    if let Some(latches) = latches {
+        latches.close();
+    }
+}
+
 #[cfg(test)]
 mod latch_config_tests {
     use super::*;
@@ -816,6 +829,14 @@ mod latch_config_tests {
 
         let valid = Config::default().with_txn_local_latches(7);
         assert!(transaction_latches(&valid).unwrap().is_some());
+    }
+
+    #[test]
+    fn source_store_close_closes_shared_transaction_latches() {
+        let latches = transaction_latches(&Config::default().with_txn_local_latches(7)).unwrap();
+        let retained = latches.as_ref().unwrap().clone();
+        close_transaction_latches(&latches);
+        assert!(retained.is_closed());
     }
 
     #[test]
