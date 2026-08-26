@@ -40,7 +40,7 @@ Rust's additional batch-scan and raw-coprocessor APIs remain compatible extensio
 
 ## Original test and support matrix
 
-The inventory has 31 executable declarations: three top-level test entrypoints, 27 suite methods, and `TestMain`. The tables below map every suite method by source name; aggregate Rust tests deliberately retain complete source tables in one fixture instead of splitting assertions merely to mirror Go's suite syntax.
+The inventory has 31 test declarations: three testify suite runners, 27 assertion-bearing suite methods, and `TestMain`. Every suite method now has an independently selectable Rust identity named `source_go_<source-artifact>_<Go-name>`. Those identities reuse the complete native assertion bodies below so fixture construction and source tables retain one authority. `rawkv.TestRawKV`, `integration_tests/raw.TestRawKV`, and `integration_tests/raw.TestAPI` remain runner dispositions; `integration_tests/raw.TestMain` remains the goleak/lifecycle disposition.
 
 ### Package suite: `rawkv/rawkv_test.go`
 
@@ -98,11 +98,12 @@ Exact import matching finds three direct external files: `examples/rawkv/rawkv.g
 
 ## Validation contract
 
-Completion requires exact pinned identity/hashes/line counts; declaration-level reconciliation of all 31 source test declarations and every support hook; the 48-test focused RawKV gate; the external ordinary-build injection test; all `source_` tests in both complete feature configurations; both complete library configurations; generated-code checking, all-target compilation, Clippy, rustdoc/doctests, rustfmt/diff checks, and `nightly-2026-08-22-aarch64-apple-darwin`. The optional live feature remains useful infrastructure smoke coverage but is not stronger evidence for these source assertions than the always-run stateful matrix and is not a default package gate. The host has no Go executable, so pinned Go tests are not rerun locally.
+Completion requires exact pinned identity/hashes/line counts; declaration-level reconciliation of all 31 source test declarations and every support hook; a 27-to-27 executable source/Rust identity bijection; the focused RawKV gate; the external ordinary-build injection test; all `source_` tests in both complete feature configurations; both complete library configurations; generated-code checking, all-target compilation, Clippy, rustdoc/doctests, rustfmt/diff checks, and `nightly-2026-08-22-aarch64-apple-darwin`. The optional live feature remains useful infrastructure smoke coverage but is not stronger evidence for these source assertions than the always-run stateful matrix and is not a default package gate.
 
-Final local evidence on 2026-08-26:
+Independent re-audit evidence on 2026-08-26:
 
-- exact source identity is `52c1e76cec993571493c81de442bcbef90cdc106`; all eight hashes and 2,743 lines match this receipt, and a mechanical check finds 31 executable declarations/27 suite methods with no name missing from the receipt;
-- the focused `raw::` gate passes 48 tests, including 19 deterministic source-matrix tests; the ordinary no-feature external injection gate passes three tests;
-- all `source_` tests pass in both configurations (499 each); the complete no-default workspace run has 831 active library tests, one intentional ignore, and every external/workspace crate test passing; the all-feature library run has the same 831 active tests and one intentional ignore;
-- `make check` completes clean protocol regeneration, workspace all-target/all-feature checking, rustfmt, and strict all-target Clippy; `make doc` completes private-item rustdoc and all 51 doctests; `git diff --check` passes.
+- exact source identity is `52c1e76cec993571493c81de442bcbef90cdc106`; all eight hashes and 2,743 lines match this receipt, and mechanical reconciliation finds 31 declarations, 27 executable suite methods, 27 Rust identities, and no missing, extra, or duplicate identity;
+- Go 1.25.12 package suites pass normal/race in legacy mode (8.728s/9.811s) and NextGen mode (8.743s/9.767s); the separate `integration_tests/raw` module passes normal/race (0.054s/1.286s), with its explicitly optional live suite skipped by source configuration;
+- all 27 independently named Rust ports pass without default features; complete main-library matrices pass 1,260/1,257 active no-default/all-feature tests plus one unrelated ignore;
+- complete source-derived lists contain 1,013/1,010 active no-default/all-feature tests; canonical workspace matrices pass 1,312/1,291 tests with one unrelated skip in each configuration;
+- `make check` completes clean protocol regeneration, workspace all-target/all-feature checking, rustfmt, and strict Clippy; `make doc` completes private-item rustdoc and all 51 doctests. Final rustfmt, source identity, inventory/declaration/importer, and whitespace gates pass on `nightly-2026-08-22-aarch64-apple-darwin`.

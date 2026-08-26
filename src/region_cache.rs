@@ -7196,5 +7196,12 @@ mod test {
             source_by_id_pd_load_requests_bucket_metadata,
         source_go_region_request_TestGetRegionByIDFromCache =>
             source_cache_only_location_and_exact_version_lookup_do_not_contact_pd,
+        source_go_rawkv_TestReplaceAddrWithNewStore =>
+            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
+        source_go_rawkv_TestUpdateStoreAddr =>
+            source_store_reresolve_updates_metadata_without_resetting_runtime_state,
+        source_go_rawkv_TestReplaceNewAddrAndOldOfflineImmediately =>
+            source_replica_candidates_skip_tombstone_and_removed_stores,
+        source_go_rawkv_TestReplaceStore => source_store_resolve_state_transition_matrix,
     }
 }

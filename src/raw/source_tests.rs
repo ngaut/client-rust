@@ -1354,3 +1354,60 @@ async fn source_command_metric_label_and_delete_range_error_matrix() -> Result<(
 fn crc64_test_backend_matches_the_ecma_check_value() {
     assert_eq!(crc64_ecma(b"123456789"), 0x6c40_df5f_0b49_7347);
 }
+
+macro_rules! source_go_rawkv_tests {
+    ($($name:ident => $target:ident),+ $(,)?) => {
+        $(
+            #[test]
+            #[allow(non_snake_case)]
+            fn $name() {
+                $target().expect(concat!(stringify!($name), " must pass"));
+            }
+        )+
+    };
+}
+
+source_go_rawkv_tests! {
+    source_go_rawkv_TestColumnFamilyForClient =>
+        source_package_column_family_client_and_option_cases,
+    source_go_rawkv_TestColumnFamilyForOptions =>
+        source_package_column_family_client_and_option_cases,
+    source_go_rawkv_TestBatch => source_package_batch_and_compare_and_swap_cases,
+    source_go_rawkv_TestScan => source_package_scan_and_reverse_tables_hold_across_region_splits,
+    source_go_rawkv_TestDeleteRange =>
+        source_package_delete_range_table_and_unbounded_multiregion_case,
+    source_go_rawkv_TestDeleteRangeEmptyKeysMultiRegion =>
+        source_package_delete_range_table_and_unbounded_multiregion_case,
+    source_go_rawkv_TestCompareAndSwap => source_package_batch_and_compare_and_swap_cases,
+    source_go_rawkv_TestRawChecksum => source_package_checksum_exact_pair_crc_count_and_bytes,
+
+    source_go_integration_raw_api_mock_TestSimple =>
+        source_simple_batch_column_family_cas_and_empty_value_matrix,
+    source_go_integration_raw_api_mock_TestRawBatch =>
+        source_mock_api_raw_batch_exceeds_four_payload_windows,
+    source_go_integration_raw_api_mock_TestSplit =>
+        source_package_scan_and_reverse_tables_hold_across_region_splits,
+    source_go_integration_raw_api_mock_TestScan =>
+        source_package_scan_and_reverse_tables_hold_across_region_splits,
+    source_go_integration_raw_api_mock_TestReverseScan =>
+        source_package_scan_and_reverse_tables_hold_across_region_splits,
+    source_go_integration_raw_api_mock_TestDeleteRange =>
+        source_package_delete_range_table_and_unbounded_multiregion_case,
+
+    source_go_integration_raw_api_TestSimple =>
+        source_simple_batch_column_family_cas_and_empty_value_matrix,
+    source_go_integration_raw_api_TestScan => source_live_api_scan_and_delete_range_scale_cases,
+    source_go_integration_raw_api_TestReverseScan =>
+        source_package_scan_and_reverse_tables_hold_across_region_splits,
+    source_go_integration_raw_api_TestBatchOp =>
+        source_simple_batch_column_family_cas_and_empty_value_matrix,
+    source_go_integration_raw_api_TestCAS =>
+        source_simple_batch_column_family_cas_and_empty_value_matrix,
+    source_go_integration_raw_api_TestTTL => source_live_api_ttl_uses_remaining_seconds_and_expires,
+    source_go_integration_raw_api_TestDeleteRange =>
+        source_live_api_scan_and_delete_range_scale_cases,
+    source_go_integration_raw_api_TestRawChecksum =>
+        source_live_api_checksum_scale_counts_v1_and_v2_key_bytes,
+    source_go_integration_raw_api_TestEmptyValue =>
+        source_live_api_empty_value_matrix_distinguishes_missing_everywhere,
+}

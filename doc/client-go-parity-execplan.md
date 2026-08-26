@@ -1291,3 +1291,19 @@ workspace tests plus one unrelated ignore/skip. Strict all-target
 check/Clippy/private rustdoc, all 51 doctests, formatting, exact
 inventory/declaration/importer reconciliation, source identity, and whitespace
 checks pass. This receipt is the package-sized integration boundary.
+
+Plan revision note (2026-08-26): independently reopened `rawkv` against its
+exact eight-artifact/2,743-line package and external-integration boundary, 31
+test declarations, every support/probe/config hook, all production surfaces,
+and three direct external importers. The three testify suite runners and
+`TestMain` have explicit dispositions; each of the 27 assertion-bearing suite
+methods now has an independently selectable, source-file-qualified Rust port.
+The 27-to-27 identity reconciliation and stronger tests pass without a
+production change, replacing the former aggregate-fixture completion claim.
+Go 1.25.12 package normal/race suites pass in legacy and NextGen modes, and
+the separate integration/raw normal/race suites pass. The source-derived
+lists contain 1,013/1,010 active no-default/all-feature tests; canonical
+workspace matrices pass 1,312/1,291 tests plus one unrelated skip in each
+configuration. Clean generation, all-target checking, strict Clippy, private
+rustdoc, all 51 doctests, formatting, inventory/declaration/importer,
+source-identity, and whitespace gates pass on the pinned nightly.
