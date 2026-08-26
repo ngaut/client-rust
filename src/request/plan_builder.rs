@@ -127,7 +127,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
 
     /// Set the TiKV command priority carried by every shard and retry of this request.
     pub fn priority(mut self, priority: Priority) -> Self {
-        self.plan.request.set_priority(priority.into());
+        self.plan.request.set_priority_value(priority.to_pb());
         self
     }
 
@@ -1195,6 +1195,21 @@ mod tests {
             cloned.context.as_ref().unwrap().priority,
             kvrpcpb::CommandPri::High as i32
         );
+    }
+
+    #[test]
+    fn source_priority_preserves_an_unknown_protobuf_value() {
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .priority(Priority::from_i32(99));
+
+        let request = builder.plan.request;
+        let cloned = request.clone();
+        assert_eq!(request.context.as_ref().unwrap().priority, 99);
+        assert_eq!(cloned.context.as_ref().unwrap().priority, 99);
     }
 
     #[test]

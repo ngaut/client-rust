@@ -283,6 +283,17 @@ pub trait Request: Any + Sync + Send + 'static {
     /// Set the API V2 keyspace name carried alongside the numeric identifier.
     fn set_keyspace_name(&mut self, _keyspace_name: Option<&str>) {}
     fn set_priority(&mut self, _priority: kvrpcpb::CommandPri) {}
+    /// Sets the raw protobuf command-priority value.
+    ///
+    /// This preserves enum values introduced by a newer server, matching
+    /// client-go's integer-backed `txnutil.Priority`. Existing custom request
+    /// implementations continue to receive known values through
+    /// [`Request::set_priority`].
+    fn set_priority_value(&mut self, priority: i32) {
+        if let Ok(priority) = kvrpcpb::CommandPri::try_from(priority) {
+            self.set_priority(priority);
+        }
+    }
     /// Controls whether TiKV should bypass its data cache for this request.
     fn set_not_fill_cache(&mut self, _not_fill_cache: bool) {}
     /// Sets the isolation level carried in this request's TiKV context.
@@ -789,6 +800,11 @@ macro_rules! impl_request {
             fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
                 ctx.priority = priority.into();
+            }
+
+            fn set_priority_value(&mut self, priority: i32) {
+                let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
+                ctx.priority = priority;
             }
 
             fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
@@ -1391,6 +1407,12 @@ impl Request for coprocessor::Request {
             .priority = priority.into();
     }
 
+    fn set_priority_value(&mut self, priority: i32) {
+        self.context
+            .get_or_insert(kvrpcpb::Context::default())
+            .priority = priority;
+    }
+
     fn set_max_execution_duration_ms(&mut self, duration_ms: u64) {
         self.context
             .get_or_insert(kvrpcpb::Context::default())
@@ -1504,6 +1526,10 @@ impl Request for CoprocessorStreamRequest {
 
     fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
         self.request.set_priority(priority);
+    }
+
+    fn set_priority_value(&mut self, priority: i32) {
+        self.request.set_priority_value(priority);
     }
 
     fn set_max_execution_duration_ms(&mut self, duration_ms: u64) {
@@ -1630,6 +1656,13 @@ impl Request for BatchCoprocessorStreamRequest {
             .context
             .get_or_insert(kvrpcpb::Context::default())
             .priority = priority.into();
+    }
+
+    fn set_priority_value(&mut self, priority: i32) {
+        self.request
+            .context
+            .get_or_insert(kvrpcpb::Context::default())
+            .priority = priority;
     }
 
     fn tikv_context(&self) -> Option<&kvrpcpb::Context> {

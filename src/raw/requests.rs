@@ -845,6 +845,10 @@ impl Request for RawCoprocessorRequest {
     fn set_priority(&mut self, priority: kvrpcpb::CommandPri) {
         self.inner.set_priority(priority);
     }
+
+    fn set_priority_value(&mut self, priority: i32) {
+        self.inner.set_priority_value(priority);
+    }
 }
 
 impl KvRequest for RawCoprocessorRequest {

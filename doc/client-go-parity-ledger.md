@@ -44,14 +44,14 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `txnkv/transaction` | `src/transaction/{transaction,txn_file,client,requests,lowering,buffer,unionstore}.rs`, request/error/PD integration | complete | Atomic 16-artifact/11,766-line receipt: [`txnkv-transaction-source-artifact-audit.md`](txnkv-transaction-source-artifact-audit.md). All 33 original Go test declarations are ported at case level, including every named subtest, table row, randomized round, and assertion. `Transaction` exposes and commits one authoritative staged `MemDb`; pipelined mode rotates that same store through bounded generations, direct remote reads, typed flush/status/TTL lifecycles, commit, and rollback. API-v2 retains logical keys and lowers them exactly once. Large 2PC groups use source-exact split, per-region scatter, operator wait, and post-wait cache invalidation with public process-wide thresholds. External mocktikv and ordinary-build gates prove direct staged commits, missing-value semantics, injected construction, public protocol identity, and nameable transaction controls. |
 | `txnkv/txnlock` | `src/transaction/lock.rs`, `src/transaction/{client,requests,transaction}.rs`, `src/request/plan.rs`, `src/stats.rs` | complete | Atomic receipt: [`txnkv-txnlock-source-artifact-audit.md`](txnkv-txnlock-source-artifact-audit.md). All two production and four test/support artifacts (2,144 lines), five ordinary tests plus `TestMain`, production symbols, direct consumers, lifecycle owners, and validation gates are assigned. The shared client resolver now owns a cancel-and-join bounded pool for read cleanup, secondary checks, and exact per-region async-commit recovery; physical-shard metrics, pipelined observer lifetime, determined FIFO cache, read hints, lite/pessimistic/GC paths, NextGen async requests, resource context, and owner shutdown match the pin. Snapshot retry-class consumption remains explicitly owned by the separate `txnkv/txnsnapshot` receipt. |
 | `txnkv/txnsnapshot` | `src/transaction/{snapshot,sync_snapshot,snapshot_stats,transaction,buffer,requests,client}.rs`, `src/request/{plan,plan_builder,shard}.rs`, request context and metrics | complete | Re-audited atomic receipt: [`txnkv-txnsnapshot-source-artifact-audit.md`](txnkv-txnsnapshot-source-artifact-audit.md). All five source artifacts/2,317 lines, every production/probe surface, ten direct importers, two indirect probe consumers, and all 40 external `Test*` declarations are assigned at case level, including explicit zero-case/skip dispositions. Executable ports include the exact 1/256/257/768-row scan matrix and 123/456 region splits, the 5×30 shared-snapshot workload, response/pair lock distinctions, callback enabled/disabled behavior, and existing/missing multi-region values. The re-audit fixed eager multi-region scan row loss (691/768 before the fix), wait-all snapshot fanout/error/fork ownership, one-shard no-fork behavior, post-lock physical route reselection, and the previously dormant async-BatchGet configuration. Root `tikv` retains the concrete GC visibility provider and live integration gates; no other row is promoted. |
-| `txnkv/txnutil` | Rust priority type plus transaction request contexts | complete | Receipt below; normal/low/high wire values, defaults, mutable async/sync transaction and snapshot APIs, read/write propagation, retry/shard preservation, and normal heartbeat behavior are covered. |
+| `txnkv/txnutil` | Rust integer-backed priority type plus transaction request contexts | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#txnkvtxnutil). Its sole 34-line artifact and all three direct importers are assigned. Known and future protobuf numeric values survive public construction, request cloning/sharding/retry, and transaction read/write dispatch; heartbeat remains source-normal. The package has no Go tests/support. |
 | `util` | shared public `src/util`, plus native tracing/traffic/PD/transaction integrations | complete | Atomic receipt: [`util-source-artifact-audit.md`](util-source-artifact-audit.md). All 13 artifacts/3,478 lines, 30 original tests plus `TestMain`, exported/context/concurrency surfaces, and 58 direct importers are assigned. Custom DNS uses the configured server; execution/RU/pool/scan/write/time details, failpoints, recovery, request identity, rate limiting, timestamp sets, and intercepted PD waits preserve source behavior without promoting incomplete callers. |
 | `util/async` | public `src/async_util.rs`, `src/lib.rs`, downstream API gate | complete | Re-audited atomic receipt: [`util-async-source-artifact-audit.md`](util-async-source-artifact-audit.md). All four artifacts/495 lines, all 12 executable source cases, every production surface, and all 17 direct importers are assigned. Each named Go subtest is independently executable in Rust; deterministic synchronization replaces timing sleeps, and the module is now ordinarily documented/public like the Go package. |
-| `util/codec` | `src/kv/codec.rs`, root `codec` re-export | complete | Receipt below; all byte and number codec operations, ordering, append/leftover, boundary, and malformed-input behavior are covered. |
+| `util/codec` | `src/kv/codec.rs`, root `codec` re-export | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilcodec). Both production artifacts/500 lines and five direct importers are assigned. Every byte/fixed/varint/comparable operation, boundary, ordering, append/leftover, malformed branch, and source group-byte error detail is covered. The package has no Go tests/support. |
 | `util/collectors` | public `src/util/collectors.rs`, generated channelz client/server/messages | complete | Atomic receipt: [`util-collectors-source-artifact-audit.md`](util-collectors-source-artifact-audit.md). Both source artifacts (1,189 lines), all six original tests, all metric descriptors/options/graph branches/address and timestamp rules/error counters, and the exact grpc-go v1.82.1 channelz schema are covered. A dedicated async RPC worker keeps every Prometheus scrape synchronous, concurrent, live, and uncached; the prior runtime blocker is removed without weakening source behavior. |
-| `util/intest` | `src/intest.rs`, Cargo `internal-tests` feature | complete | Receipt below; both build variants and mutable runtime override behavior are implemented and validated. |
-| `util/israce` | `src/israce.rs`, Cargo `race-tests` feature | complete | Receipt below; both race-enabled and non-race build variants are implemented and validated. |
-| `util/redact` | `src/redact.rs` | complete | Receipt below; helper behavior is complete. Consumer call-site integration remains required by each owning package. |
+| `util/intest` | `src/intest.rs`, Cargo `internal-tests` feature | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilintest). Both 20-line build variants, all seven direct source files, sequentially consistent mutable state, ordinary/all-feature initialization, and external visibility are assigned. There are no Go tests/support; consumer instrumentation decisions stay tested by their owning packages. |
+| `util/israce` | `src/israce.rs`, Cargo `race-tests` feature | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilisrace). Both 20-line race variants and the sole test-only importer are assigned; ordinary/all-feature downstream gates cover both values. There are no Go tests/support. |
+| `util/redact` | `src/redact.rs` | complete | Re-audited atomic receipt: [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilredact). Its sole 141-line artifact and all 20 direct files are assigned. Mode semantics, uppercase key forms, zero-copy arbitrary bytes, every protobuf key-error field, disabled no-op, and external API use are covered. There are no Go tests/support. |
 
 ## Complete repository/non-package artifact receipt
 
@@ -343,6 +343,11 @@ final pinned-nightly validation.
 
 ## Complete package receipt: `txnkv/txnutil`
 
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#txnkvtxnutil).
+> That receipt corrects this historical record's closed-enum assumption and
+> owns the current inventory, tests, integration decisions, and gates.
+
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
 The complete production inventory is `txnkv/txnutil/priority.go` (34 lines). The package has no colocated Go test, platform variant, generated source/input, fixture, or package-specific build file. Integration evidence was audited at `txnkv/util_export.go`, `txnkv/transaction/txn.go`, `txnkv/txnsnapshot/snapshot.go`, and the read/write request-context construction sites under `txnkv/transaction` and `txnkv/txnsnapshot`. Client-go transaction heartbeats were separately audited in `txnkv/transaction/2pc.go` and intentionally remain normal priority.
@@ -376,6 +381,9 @@ Validation on Rust 1.93.0:
 No real-cluster test was required for this package: the user-visible contract is the `kvrpcpb.Context.priority` value sent by planned requests, and the tests capture that exact generated protobuf request after normal planning. The test also proves the client-go nuance that a transaction heartbeat remains `Normal` after the transaction changes to `High`.
 
 ## Complete package receipt: `util/codec`
+
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilcodec).
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
@@ -413,6 +421,9 @@ No real-cluster test is applicable because this package is a deterministic byte 
 
 ## Complete package receipt: `util/israce`
 
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilisrace).
+
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
 The complete production/build inventory is `util/israce/israce.go`, selected by Go's `race` build tag and defining `RaceEnabled = true`, and `util/israce/norace.go`, selected by `!race` and defining `RaceEnabled = false` (20 lines each). There is no `doc.go`, colocated test, generated input/output, fixture, or package-specific build file. The only source-of-truth consumer is `internal/locate/replica_selector_test.go`, which skips a race-sensitive test when the constant is true; the similarly named checks in client-go integration tests import TiDB's separate israce package and are not part of this package's consumer inventory.
@@ -449,6 +460,9 @@ No real-cluster validation applies; the full package contract is a compile-time 
 
 ## Complete package receipt: `util/intest`
 
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilintest).
+
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
 The complete production/build inventory is `util/intest/in_unittest.go`, selected by the `intest` build tag and initializing mutable `InTest = true`, and `util/intest/not_in_unittest.go`, selected by `!intest` and initializing it to false (20 lines each). There is no `doc.go`, colocated test, generated input/output, fixture, or package-specific build file. Consumers were inventoried in `tikv/kv.go`, `txnkv/transaction/txn.go`, `txnkv/txnlock/lock_resolver.go`, `txnkv/txnsnapshot/snapshot.go`, `internal/apicodec/codec_v2.go`, and their integration/test support. Those packages retain separate ledger statuses and will account for each gated behavior in their own receipts.
@@ -482,6 +496,9 @@ Validation on Rust 1.93.0:
 No real-cluster validation applies; the complete package contract is build-time initialization plus a mutable test-state flag. Consumer-specific assertions remain attached to their owning package receipts rather than being claimed here.
 
 ## Complete package receipt: `util/redact`
+
+> Superseded by the 2026-08-26 package-atomic re-audit in
+> [`txnutil-util-foundations-source-artifact-audit.md`](txnutil-util-foundations-source-artifact-audit.md#utilredact).
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 

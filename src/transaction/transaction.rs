@@ -14354,7 +14354,7 @@ mod tests {
             Keyspace::Disable,
         );
         txn.get("read".to_owned()).await.unwrap();
-        txn.set_priority(Priority::High);
+        txn.set_priority(Priority::from_i32(99));
         txn.put("write".to_owned(), "value").await.unwrap();
         // client-go selects the commit primary while initializing its
         // committer, not while staging a MemDB write. This test invokes the
@@ -14368,8 +14368,8 @@ mod tests {
             vec![
                 ("get", kvrpcpb::CommandPri::Low as i32),
                 ("heartbeat", kvrpcpb::CommandPri::Normal as i32),
-                ("prewrite", kvrpcpb::CommandPri::High as i32),
-                ("commit", kvrpcpb::CommandPri::High as i32),
+                ("prewrite", 99),
+                ("commit", 99),
             ]
         );
     }
