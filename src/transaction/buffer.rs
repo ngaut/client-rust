@@ -460,6 +460,15 @@ impl Buffer {
         }
     }
 
+    /// Source `PipelinedMemDB.BatchGet` bypasses the point-read cache and
+    /// refreshes every key that is absent from the mutable/flushing buffers.
+    pub(crate) fn pipelined_batch_value(&self, key: &Key) -> Option<Option<Value>> {
+        match self.memdb_value(key) {
+            MutationValue::Determined(value) => Some(value),
+            MutationValue::Undetermined => None,
+        }
+    }
+
     pub(crate) fn cache_pipelined_batch_get(
         &mut self,
         keys: impl IntoIterator<Item = Key>,

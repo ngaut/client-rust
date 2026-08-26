@@ -2248,7 +2248,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             let mut remote_physical_keys = Vec::new();
             for key in keys {
                 let physical_key = key.clone().encode_keyspace(self.keyspace, KeyMode::Txn);
-                match self.buffer.pipelined_value(&physical_key) {
+                match self.buffer.pipelined_batch_value(&physical_key) {
                     Some(Some(value)) => buffered.push(KvPair(key, value)),
                     Some(None) => {}
                     None => {
@@ -16700,7 +16700,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![KvPair(Key::from("a".to_owned()), b"one".to_vec())]
         );
-        assert_eq!(buffer_reads.load(Ordering::SeqCst), 2);
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 3);
         assert_eq!(
             transaction
                 .get_with_options("a".to_owned(), &[GetOption::ReturnCommitTs])
@@ -16710,6 +16710,7 @@ mod tests {
                 .commit_ts,
             0
         );
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 3);
         assert_eq!(
             transaction
                 .batch_get_with_options(
@@ -16723,18 +16724,18 @@ mod tests {
                 .commit_ts,
             0
         );
-        assert_eq!(buffer_reads.load(Ordering::SeqCst), 2);
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 4);
         assert_eq!(
             transaction.get("a".to_owned()).await.unwrap(),
             Some(b"one".to_vec())
         );
-        assert_eq!(buffer_reads.load(Ordering::SeqCst), 2);
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 4);
         assert!(!transaction.get_mem_buffer().flush(false).unwrap());
         assert_eq!(
             transaction.get("a".to_owned()).await.unwrap(),
             Some(b"one".to_vec())
         );
-        assert_eq!(buffer_reads.load(Ordering::SeqCst), 3);
+        assert_eq!(buffer_reads.load(Ordering::SeqCst), 5);
         assert_eq!(transaction.commit().await.unwrap().unwrap().version(), 2);
         let committed = committed.lock().unwrap();
         assert_eq!(committed.len(), 1);
