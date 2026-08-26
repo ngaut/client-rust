@@ -331,6 +331,10 @@ pub use crate::transaction::Transaction;
 #[doc(inline)]
 pub use crate::transaction::TransactionOptions;
 pub use crate::transaction::TransactionResourceGroupTagger;
+pub use crate::transaction::COMMIT_MAX_BACKOFF;
+pub use crate::transaction::MANAGED_LOCK_TTL;
+pub use crate::transaction::MAX_PIPELINED_TXN_TTL;
+pub use crate::transaction::PREWRITE_MAX_BACKOFF;
 pub use crate::transaction::{
     build_txn_file_max_backoff_ms, close_txn_file_idle_connections, is_request_source_use_txn_file,
     set_build_txn_file_max_backoff_ms,

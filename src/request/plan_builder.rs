@@ -76,6 +76,10 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
             pd_client,
             plan: Dispatch {
                 request,
+                request_shard_decorator: None,
+                request_shard_identity: None,
+                decorated_shard_identity: None,
+                request_preparer: None,
                 kv_client: None,
                 request_timeout: None,
                 retry_request_timeout: None,
@@ -119,6 +123,29 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     /// Set the TiKV command priority carried by every shard and retry of this request.
     pub fn priority(mut self, priority: Priority) -> Self {
         self.plan.request.set_priority(priority.into());
+        self
+    }
+
+    /// Recompute request fields whose source semantics are tied to the exact
+    /// physical send rather than logical request construction.
+    pub(crate) fn prepare_request<F>(mut self, prepare: F) -> Self
+    where
+        F: Fn(&mut Req) -> Result<()> + Send + Sync + 'static,
+    {
+        self.plan.request_preparer = Some(Arc::new(prepare));
+        self
+    }
+
+    /// Decorate each physical region/batch request exactly once, after its
+    /// shard has been selected. This matches source request construction for
+    /// fields such as a resource-group tag derived from that batch's keys.
+    pub(crate) fn decorate_shard_request<I, F>(mut self, identity: I, decorate: F) -> Self
+    where
+        I: Fn(&Req) -> Vec<Vec<u8>> + Send + Sync + 'static,
+        F: Fn(&mut Req) + Send + Sync + 'static,
+    {
+        self.plan.request_shard_decorator = Some(Arc::new(decorate));
+        self.plan.request_shard_identity = Some(Arc::new(identity));
         self
     }
 
@@ -668,6 +695,17 @@ where
     P::Result: HasLocks,
     Ph: PlanBuilderPhase,
 {
+    /// Bind mutation lock waits to the same cumulative client-go Backoffer
+    /// owner used by the enclosing region retries.
+    pub(crate) fn source_retry_owner(
+        mut self,
+        owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+    ) -> Self {
+        self.plan.snapshot_lock_backoff =
+            Some(crate::request::plan::SnapshotLockBackoff::with_owner(owner));
+        self
+    }
+
     /// Apply client-go's latest-version autocommit point-get lock rule.
     pub(crate) fn max_timestamp_point_get(mut self, enabled: bool) -> Self {
         self.plan.max_timestamp_point_get = enabled;
@@ -748,6 +786,74 @@ where
         backoff: RetryBackoffer,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, RetryBackoffer>, Targetted> {
         self.make_retry_multi_region(backoff, false)
+    }
+
+    /// Share one client-go cumulative Backoffer across mutation region retries
+    /// and the nested lock-resolution plan.
+    pub(crate) fn retry_multi_region_with_source_retry_owner(
+        mut self,
+        legacy_backoff: Backoff,
+        owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        if owner
+            .try_lock()
+            .expect("source retry owner must be idle while building a request plan")
+            .total_sleep_ms()
+            > 0
+        {
+            self.plan.mark_retry_request();
+        }
+        self.plan.set_snapshot_retry_owner(Arc::clone(&owner));
+        self.make_retry_multi_region(
+            SnapshotRegionBackoff::with_owner(legacy_backoff, owner),
+            false,
+        )
+    }
+
+    /// Preserve per-shard pessimistic-lock results while sharing the source
+    /// cumulative retry owner across region retries and lock waits.
+    pub(crate) fn retry_multi_region_preserve_results_with_source_retry_owner(
+        mut self,
+        legacy_backoff: Backoff,
+        owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        if owner
+            .try_lock()
+            .expect("source retry owner must be idle while building a request plan")
+            .total_sleep_ms()
+            > 0
+        {
+            self.plan.mark_retry_request();
+        }
+        self.plan.set_snapshot_retry_owner(Arc::clone(&owner));
+        self.make_retry_multi_region(
+            SnapshotRegionBackoff::with_owner(legacy_backoff, owner),
+            true,
+        )
+    }
+
+    /// Share one client-go cumulative Backoffer across mutation region and
+    /// lock retries while retaining the caller's source concurrency limit.
+    pub(crate) fn retry_multi_region_with_source_retry_owner_and_concurrency(
+        mut self,
+        legacy_backoff: Backoff,
+        owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+        concurrency: usize,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        if owner
+            .try_lock()
+            .expect("source retry owner must be idle while building a request plan")
+            .total_sleep_ms()
+            > 0
+        {
+            self.plan.mark_retry_request();
+        }
+        self.plan.set_snapshot_retry_owner(Arc::clone(&owner));
+        self.make_retry_multi_region_with_concurrency(
+            SnapshotRegionBackoff::with_owner(legacy_backoff, owner),
+            false,
+            concurrency,
+        )
     }
 
     fn make_retry_multi_region<R: RegionRetryState>(

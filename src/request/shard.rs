@@ -364,14 +364,38 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
 
     fn apply_shard(&mut self, shard: Self::Shard) {
         self.request.apply_shard(shard);
+        let identity = self
+            .request_shard_identity
+            .as_ref()
+            .map(|identity| identity(&self.request));
+        if identity != self.decorated_shard_identity {
+            if let Some(decorate) = &self.request_shard_decorator {
+                decorate(&mut self.request);
+            }
+        }
+        self.decorated_shard_identity = identity;
     }
 
     fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
     where
         Self: Sized + Clone,
     {
+        let mut request = self.request.clone_then_apply_shard(shard);
+        let decorated_shard_identity = self
+            .request_shard_identity
+            .as_ref()
+            .map(|identity| identity(&request));
+        if decorated_shard_identity != self.decorated_shard_identity {
+            if let Some(decorate) = &self.request_shard_decorator {
+                decorate(&mut request);
+            }
+        }
         Dispatch {
-            request: self.request.clone_then_apply_shard(shard),
+            request,
+            request_shard_decorator: self.request_shard_decorator.clone(),
+            request_shard_identity: self.request_shard_identity.clone(),
+            decorated_shard_identity,
+            request_preparer: self.request_preparer.clone(),
             kv_client: self.kv_client.clone(),
             request_timeout: self.request_timeout,
             retry_request_timeout: self.retry_request_timeout,
@@ -886,6 +910,7 @@ mod test {
     use crate::region::RegionWithLeader;
     use crate::request::plan::Dispatch;
     use crate::store::RegionStore;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     #[test]
@@ -911,6 +936,10 @@ mod test {
     fn source_lock_on_stale_read_retries_a_threshold_free_leader() {
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
+            request_shard_decorator: None,
+            request_shard_identity: None,
+            decorated_shard_identity: None,
+            request_preparer: None,
             kv_client: None,
             request_timeout: None,
             retry_request_timeout: None,
@@ -980,6 +1009,10 @@ mod test {
             .with_restored_suspect_leader();
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
+            request_shard_decorator: None,
+            request_shard_identity: None,
+            decorated_shard_identity: None,
+            request_preparer: None,
             kv_client: None,
             request_timeout: None,
             retry_request_timeout: None,
@@ -1027,6 +1060,97 @@ mod test {
             &store.store_token_count
         ));
         assert!(dispatch.replica_selector_state.is_leader_selectable(2));
+    }
+
+    #[test]
+    fn source_shard_decorator_runs_once_per_physical_identity() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_calls = Arc::clone(&calls);
+        let mut dispatch = Dispatch {
+            request: kvrpcpb::GetRequest::default(),
+            request_shard_decorator: Some(Arc::new(move |request| {
+                let call = captured_calls.fetch_add(1, Ordering::SeqCst) + 1;
+                request
+                    .context
+                    .get_or_insert_with(kvrpcpb::Context::default)
+                    .resource_group_tag = vec![call as u8];
+            })),
+            request_shard_identity: Some(Arc::new(|request| vec![request.key.clone()])),
+            decorated_shard_identity: None,
+            request_preparer: None,
+            kv_client: None,
+            request_timeout: None,
+            retry_request_timeout: None,
+            read_timestamp_validation: None,
+            target: String::new(),
+            forwarded_host: String::new(),
+            replica_read_config: ReplicaReadConfig::default(),
+            replica_selector_state: ReplicaSelectorState::default(),
+            store_health: None,
+            record_client_side_slow_score: false,
+            physical_endpoint_type: crate::store::EndpointType::TiKv,
+            resource_control_replica_number: 1,
+            resource_control_access_location: AccessLocationType::Unknown,
+            predicted_read_bytes: 0,
+            ru_details: None,
+            store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+            store_token_store_id: 0,
+            region_request_runtime_stats: None,
+            logical_peer_id: None,
+            logical_store_id: None,
+            request_stale_read: false,
+            request_replica_read: false,
+            interceptor: None,
+            execution_details_trace_handler: None,
+            network_traffic_details: None,
+            network_stale_read: false,
+            resource_control: None,
+            response_codec: None,
+            v1_response_codec: None,
+        };
+
+        dispatch.apply_shard(vec![vec![1]]);
+        assert_eq!(
+            dispatch
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .resource_group_tag,
+            [1]
+        );
+        dispatch.apply_shard(vec![vec![1]]);
+        assert_eq!(
+            dispatch
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .resource_group_tag,
+            [1]
+        );
+
+        let same_batch_retry = dispatch.clone_then_apply_shard(vec![vec![1]]);
+        assert_eq!(
+            same_batch_retry
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .resource_group_tag,
+            [1]
+        );
+        let split_batch = dispatch.clone_then_apply_shard(vec![vec![20]]);
+        assert_eq!(
+            split_batch
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .resource_group_tag,
+            [2]
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]

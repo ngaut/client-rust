@@ -77,6 +77,11 @@ pub enum Error {
     /// the operation.
     #[error(transparent)]
     QueryInterruptedWithSignal(#[from] crate::error::QueryInterruptedWithSignalError),
+    /// ForceLock asked the client to retry the same pessimistic-lock mutation.
+    /// This is consumed internally by the transaction request loop.
+    #[doc(hidden)]
+    #[error("retry force pessimistic lock")]
+    PessimisticLockRetry,
     /// `LockOnlyIfExists` requires return-value information from TiKV.
     #[error(transparent)]
     LockOnlyIfExistsNoReturnValue(#[from] crate::error::LockOnlyIfExistsNoReturnValueError),

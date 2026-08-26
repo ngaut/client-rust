@@ -818,6 +818,15 @@ impl MemDb {
         self.notify_managed_memory_change();
     }
 
+    /// Release the value log while retaining keys and flags.
+    ///
+    /// The transaction commit path calls this after prewrite and timestamp
+    /// validation, immediately before ordinary or transaction-file commit RPCs.
+    pub fn discard_values(&mut self) {
+        self.art.discard_values();
+        self.notify_managed_memory_change();
+    }
+
     pub fn select_value_history(
         &mut self,
         key: &[u8],

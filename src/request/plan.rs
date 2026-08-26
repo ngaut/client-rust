@@ -108,6 +108,20 @@ impl<P: Plan> Plan for RpcCancellable<P> {
 #[derive(Clone)]
 pub struct Dispatch<Req: KvRequest> {
     pub request: Req,
+    /// Optional hook run once when a logical request is materialized as a
+    /// physical region/batch request. Unlike `request_preparer`, this is not
+    /// repeated for transport retries of the same physical request.
+    pub(crate) request_shard_decorator: Option<Arc<dyn Fn(&mut Req) + Send + Sync + 'static>>,
+    /// Identity of the request fields selected by sharding. A retry that
+    /// relocates the same batch retains its decoration, while a split that
+    /// changes the physical batch runs the decorator again.
+    pub(crate) request_shard_identity:
+        Option<Arc<dyn Fn(&Req) -> Vec<Vec<u8>> + Send + Sync + 'static>>,
+    pub(crate) decorated_shard_identity: Option<Vec<Vec<u8>>>,
+    /// Optional logical-request hook run immediately before every physical
+    /// dispatch, including region and lock-resolution retries.
+    pub(crate) request_preparer:
+        Option<Arc<dyn Fn(&mut Req) -> Result<()> + Send + Sync + 'static>>,
     pub kv_client: Option<Arc<dyn KvClient + Send + Sync>>,
     /// Optional caller-specific physical RPC deadline. `None` retains the
     /// client-wide transport timeout.
@@ -203,6 +217,9 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             })
             .transpose()?;
         let mut request = self.request.clone();
+        if let Some(prepare) = &self.request_preparer {
+            prepare(&mut request)?;
+        }
         let resource_control = self
             .resource_control
             .clone()
@@ -546,6 +563,14 @@ impl SnapshotRegionBackoff {
         }
     }
 
+    pub(crate) fn with_owner(legacy_backoff: Backoff, owner: Arc<Mutex<RetryBackoffer>>) -> Self {
+        Self {
+            backoff: owner,
+            stats: None,
+            disabled: legacy_backoff.is_none(),
+        }
+    }
+
     pub(crate) fn owner(&self) -> Arc<Mutex<RetryBackoffer>> {
         Arc::clone(&self.backoff)
     }
@@ -653,6 +678,13 @@ impl SnapshotLockBackoff {
         Self {
             backoff: new_snapshot_retry_owner(variables),
             stats,
+        }
+    }
+
+    pub(crate) fn with_owner(owner: Arc<Mutex<RetryBackoffer>>) -> Self {
+        Self {
+            backoff: owner,
+            stats: None,
         }
     }
 

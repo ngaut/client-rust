@@ -269,6 +269,7 @@ pub trait Request: Any + Sync + Send + 'static {
     ) -> Result<Box<dyn Any>>;
     fn label(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()>;
     fn set_api_version(&mut self, api_version: kvrpcpb::ApiVersion);
     /// Marks a resend of the same logical request. Context-bearing TiKV
@@ -688,6 +689,10 @@ macro_rules! impl_request {
                 self
             }
 
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+
             fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
                 let leader_peer = leader.leader.as_ref().ok_or(Error::LeaderNotFound {
@@ -915,6 +920,10 @@ macro_rules! impl_store_request {
                 self
             }
 
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+
             fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
                 Ok(())
             }
@@ -1074,6 +1083,10 @@ impl Request for debugpb::GetRegionPropertiesRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
         Ok(())
     }
@@ -1096,6 +1109,10 @@ impl Request for tikvpb::BatchCommandsEmptyRequest {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
@@ -1148,6 +1165,10 @@ impl Request for kvrpcpb::CompactRequest {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
@@ -1207,6 +1228,10 @@ impl Request for kvrpcpb::StoreSafeTsRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
         Ok(())
     }
@@ -1256,6 +1281,10 @@ impl Request for coprocessor::Request {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
@@ -1392,6 +1421,10 @@ impl Request for CoprocessorStreamRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
         self.request.set_leader(leader)
     }
@@ -1497,6 +1530,10 @@ impl Request for BatchCoprocessorStreamRequest {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
@@ -1607,6 +1644,10 @@ impl Request for MppStreamRequest {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn set_leader(&mut self, _leader: &RegionWithLeader) -> Result<()> {
         Ok(())
     }
@@ -1660,6 +1701,10 @@ impl Request for mpp::DispatchTaskRequest {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 

@@ -315,7 +315,7 @@ impl<PdC: PdClient> Snapshot<PdC> {
         resource_group_tagger: Option<crate::SnapshotResourceGroupTagger>,
     ) {
         self.transaction
-            .set_resource_group_tagger(resource_group_tagger);
+            .set_snapshot_resource_group_tagger(resource_group_tagger);
     }
 
     /// Set the transaction and replica-read scope used by subsequent Get and

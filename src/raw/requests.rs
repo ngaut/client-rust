@@ -814,6 +814,10 @@ impl Request for RawCoprocessorRequest {
         self.inner.as_any()
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self.inner.as_any_mut()
+    }
+
     fn set_leader(&mut self, leader: &RegionWithLeader) -> Result<()> {
         self.inner.set_leader(leader)
     }

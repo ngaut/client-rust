@@ -234,6 +234,10 @@ mod tests {
             self
         }
 
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+
         fn set_leader(&mut self, _: &crate::region::RegionWithLeader) -> Result<()> {
             Ok(())
         }

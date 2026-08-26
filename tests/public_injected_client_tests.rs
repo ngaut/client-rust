@@ -3,6 +3,7 @@
 //! Ordinary downstream-crate gate for client-go's injected client path.
 
 use std::any::Any;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -85,4 +86,22 @@ fn ordinary_downstream_build_can_construct_an_injected_transaction() {
     );
 
     assert_eq!(transaction.start_timestamp().version(), 42);
+}
+
+#[test]
+fn ordinary_downstream_build_can_name_transaction_test_controls() {
+    assert_eq!(
+        tikv_client::transaction::PESSIMISTIC_LOCK_MAX_BACKOFF,
+        20_000
+    );
+    assert_eq!(tikv_client::transaction::DEFAULT_LOCK_TTL, 3_000);
+    assert_eq!(tikv_client::transaction::TTL_FACTOR, 6_000.0);
+    assert_eq!(
+        tikv_client::transaction::PRE_SPLIT_DETECT_THRESHOLD.load(Ordering::Relaxed),
+        100_000
+    );
+    assert_eq!(
+        tikv_client::transaction::PRE_SPLIT_SIZE_THRESHOLD.load(Ordering::Relaxed),
+        32 << 20
+    );
 }
