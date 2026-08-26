@@ -3773,7 +3773,9 @@ mod tests {
         }
     }
 
-    async fn source_receive_loop_recovers_panics_on_the_same_stream() {
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_region_request_TestBatchClientSendLoopPanic() {
         let pending = Arc::new(BatchPendingResponses::new());
         let (sender, receiver) = oneshot::channel();
         pending.register_sender_with_telemetry(
@@ -4187,11 +4189,6 @@ mod tests {
         source_close_fails_only_entries_not_yet_published();
     }
 
-    #[tokio::test]
-    async fn source_test_panic_in_recv_loop() {
-        source_receive_loop_recovers_panics_on_the_same_stream().await;
-    }
-
     #[test]
     fn source_test_recv_error_in_multiple_recv_loops() {
         source_connection_epoch_retires_only_the_recovery_leaders_host();
@@ -4276,11 +4273,5 @@ mod tests {
     #[test]
     fn source_test_batch_policy() {
         source_turbo_batch_policy_presets_and_custom_values_are_preserved();
-    }
-
-    #[tokio::test]
-    #[allow(non_snake_case)]
-    async fn source_go_region_request_TestBatchClientSendLoopPanic() {
-        source_receive_loop_recovers_panics_on_the_same_stream().await;
     }
 }

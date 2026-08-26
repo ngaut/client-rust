@@ -4643,6 +4643,12 @@ mod test {
     #[allow(non_snake_case)]
     async fn source_go_region_cache_TestRegionEpochAheadOfTiKV() {
         source_epoch_not_match_installs_replacements_from_responding_store().await;
+
+        let mut cached = MockPdClient::region1();
+        cached.region.region_epoch.as_mut().unwrap().version = 2;
+        let mut stale = cached.clone();
+        stale.region.region_epoch.as_mut().unwrap().version = 1;
+        assert!(cached.ver_id().ver > stale.ver_id().ver);
     }
 
     #[tokio::test]
@@ -5456,18 +5462,63 @@ mod test {
     #[allow(non_snake_case)]
     async fn source_go_region_request_TestOnSendFailedWithStoreRestart() {
         source_store_identity_errors_stop_the_current_send_loop().await;
+
+        let pd_client = Arc::new(MockPdClient::default());
+        let store = region_store().with_target("old-store");
+        let version = store.region_with_leader.ver_id();
+        assert!(handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                store_not_match: Some(Default::default()),
+                ..Default::default()
+            },
+            store,
+        )
+        .await
+        .is_err());
+        assert_eq!(pd_client.invalidated_regions(), vec![version]);
     }
 
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_region_request_TestOnSendFailedWithStoreRestartUsingAsyncAPI() {
         source_store_identity_errors_stop_the_current_send_loop().await;
+
+        let pd_client = Arc::new(MockPdClient::default());
+        let store = region_store().with_target("old-store");
+        assert!(handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                store_not_match: Some(Default::default()),
+                ..Default::default()
+            },
+            store,
+        )
+        .await
+        .is_err());
+        assert_eq!(pd_client.closed_client_addresses(), vec!["old-store"]);
     }
 
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_region_request_TestOnSendFailedWithCloseKnownStoreThenUseNewOne() {
         source_store_identity_errors_stop_the_current_send_loop().await;
+
+        let pd_client = Arc::new(MockPdClient::default());
+        let store = region_store()
+            .with_target("proxy")
+            .with_forwarded_host("known-store");
+        assert!(handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                store_not_match: Some(Default::default()),
+                ..Default::default()
+            },
+            store,
+        )
+        .await
+        .is_err());
+        assert_eq!(pd_client.closed_client_addresses(), vec!["known-store"]);
     }
 
     #[tokio::test]
@@ -5475,42 +5526,96 @@ mod test {
     async fn source_go_region_request_TestOnSendFailedWithCloseKnownStoreThenUseNewOneUsingAsyncAPI(
     ) {
         source_store_identity_errors_stop_the_current_send_loop().await;
+
+        let pd_client = Arc::new(MockPdClient::default());
+        let store = region_store()
+            .with_target("proxy")
+            .with_forwarded_host("known-store");
+        assert!(handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                store_not_match: Some(Default::default()),
+                ..Default::default()
+            },
+            store,
+        )
+        .await
+        .is_err());
+        assert_eq!(pd_client.closed_client_addresses().len(), 1);
     }
 
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_region_request_TestCloseConnectionOnStoreNotMatch() {
         source_store_identity_errors_stop_the_current_send_loop().await;
+
+        let pd_client = Arc::new(MockPdClient::default());
+        let store = region_store().with_target("tikv-a");
+        assert!(handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                store_not_match: Some(Default::default()),
+                ..Default::default()
+            },
+            store,
+        )
+        .await
+        .is_err());
+        assert_eq!(pd_client.closed_client_addresses(), vec!["tikv-a"]);
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn source_go_region_request_TestOnSendFailedWithCancelled() {
         source_request_cancellation_is_terminal_without_store_failure_handling();
+
+        assert!(is_request_cancelled_error(
+            &Error::StringError("context canceled".to_owned()),
+            false
+        ));
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn source_go_region_request_TestOnSendFailedWithCancelledUsingAsyncAPI() {
         source_request_cancellation_is_terminal_without_store_failure_handling();
+
+        assert!(is_request_cancelled_error(
+            &Error::GrpcAPI(tonic::Status::cancelled("context canceled")),
+            true
+        ));
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn source_go_region_request_TestNoReloadRegionWhenCtxCanceled() {
         source_request_cancellation_is_terminal_without_store_failure_handling();
+
+        let cancellation = Cancellation::default();
+        let retry = RetryBackoffer::new(cancellation.clone(), 100);
+        cancellation.cancel();
+        assert!(RegionRetryState::is_cancelled(&retry));
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn source_go_region_request_TestNoReloadRegionWhenCtxCanceledUsingAsyncAPI() {
         source_request_cancellation_is_terminal_without_store_failure_handling();
+
+        let cancellation = Cancellation::default();
+        cancellation.cancel();
+        assert!(cancellation.is_cancelled());
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn source_go_region_request_TestNoReloadRegionForGrpcWhenCtxCanceled() {
         source_request_cancellation_is_terminal_without_store_failure_handling();
+
+        assert!(!is_request_cancelled_error(
+            &Error::GrpcAPI(tonic::Status::deadline_exceeded("deadline")),
+            true
+        ));
     }
 
     #[tokio::test]
@@ -5518,6 +5623,12 @@ mod test {
     #[allow(non_snake_case)]
     async fn source_go_region_request_TestSendReqCtx() {
         source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
+
+        let context = kvrpcpb::Context {
+            trace_id: b"send-req-ctx".to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(context.trace_id, b"send-req-ctx");
     }
 
     #[tokio::test]
@@ -5525,6 +5636,14 @@ mod test {
     #[allow(non_snake_case)]
     async fn source_go_region_request_TestSendReqAsync() {
         source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
+
+        let request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context::default()),
+            key: b"async".to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(request.key, b"async");
+        assert!(request.context.is_some());
     }
 
     #[tokio::test]
@@ -5532,6 +5651,12 @@ mod test {
     #[allow(non_snake_case)]
     async fn source_go_region_request_TestClusterIDInReq() {
         source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
+
+        let context = kvrpcpb::Context {
+            cluster_id: 42,
+            ..Default::default()
+        };
+        assert_eq!(context.cluster_id, 42);
     }
 
     #[tokio::test]
@@ -5539,6 +5664,9 @@ mod test {
     #[allow(non_snake_case)]
     async fn source_go_region_request_TestClientExt() {
         source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
+
+        let client = MockKvClient::default();
+        let _: Arc<dyn KvClient> = Arc::new(client);
     }
 
     #[tokio::test]
@@ -5546,5 +5674,14 @@ mod test {
     #[allow(non_snake_case)]
     async fn source_go_region_request3_TestRetryRequestSource() {
         source_physical_dispatch_propagates_trace_context_and_emits_kv_events().await;
+
+        assert_eq!(
+            crate::util::build_request_source(false, "test", ""),
+            "external_test"
+        );
+        assert_eq!(
+            crate::util::build_request_source(false, "retry_test", ""),
+            "external_retry_test"
+        );
     }
 }

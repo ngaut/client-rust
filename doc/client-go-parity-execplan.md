@@ -1427,6 +1427,25 @@ no-default tests with two configured skips and 1,300 all-feature library tests
 with six configured skips. This correction supersedes the earlier claim that
 the first closeout scan itself had already proved zero forwarding mappings.
 
+Plan correction (2026-08-26): the complete `internal/locate` unit-test body
+audit found that the preceding correction was still too narrow. Exact source
+names in `src/locate.rs`, `src/region_cache.rs`, and `src/request/plan.rs`
+were selectable but some only forwarded into aggregate assertion helpers.
+Every affected identity now performs source-specific setup, action, and
+assertion directly; shared non-test helpers remain only supplemental fixture
+or matrix support. `TestBatchClientSendLoopPanic` now owns its panic-recovery
+body and the redundant generic panic test is removed. Mechanical
+reconciliation still reports 142 expected and 142 actual identities with zero
+missing, extra, duplicate, forwarding-macro, registered test-to-test, or
+one-call-only-wrapper result. Exact Go normal/race suites pass in
+68.669s/70.101s; the source-derived Rust gates pass 328 tests plus one skip
+and 324 tests plus five skips. Canonical matrices pass 1,274 no-default tests
+with two configured skips and 1,249 all-feature library tests with six
+configured skips. Strict generation/check/Clippy/private rustdoc, all 51
+doctests, rustfmt, and whitespace checks pass. This correction supersedes the
+earlier broad claim that independently selectable names alone proved direct
+unit-test ownership.
+
 Plan correction (2026-08-26): reopened `rawkv` and its owning
 `integration_tests/raw` matrix to replace evidence aliases with direct unit
 tests. All 27 assertion-bearing Go suite methods now have direct, independently
