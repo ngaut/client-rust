@@ -29,7 +29,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `kvproto` (native crate) | independent `tikv-client-kvproto` workspace crate; `tikv_client::proto` re-export | complete | Atomic receipt: [`kvproto-crate-completion-audit.md`](kvproto-crate-completion-audit.md). All 45 crate artifacts, 56 generator inputs, 41 generated protocol modules, descriptor set, three direct integration edges, and downstream type-identity gate are assigned. The crate is the single generated-type owner shared by direct consumers and `tikv-client`. |
 | `unistore` (native crate) | independent `unistore` workspace crate | complete | Atomic receipt: [`unistore-crate-completion-audit.md`](unistore-crate-completion-audit.md). All five crate artifacts/2,788 lines, 70 public type/function declaration points, 22 internal tests, two external-consumer tests, dependencies, and native consumers are assigned. Its source-mapped engine belongs to the complete client-go mocktikv receipt. |
 | `TiDB/pkg/store/mockstore/unistore` | no Rust parity claim | not-applicable | This separate TiDB server package is outside the pinned client-go source and the user-requested client parity goal. The native crate deliberately does not claim a partial transcreation of its SQL/RPC/schema/coprocessor inventory. |
-| `kv` | `src/kv`, root exports | complete | Receipt below; all five production files, three test/support files, key flags, lock/get metadata, variables, atomics, and read/location modes are covered. |
+| `kv` | public `src/kv`, root exports, and typed consumers | complete | Re-audited atomic receipt: [`kv-source-artifact-audit.md`](kv-source-artifact-audit.md). All eight artifacts/995 lines, every production surface, all four ordinary tests plus `TestMain`, and all 69 direct importers are assigned. The formerly combined option/value test is replaced by source-named case-level ports; source-uncovered gates execute all 22 flag operations and every foundational state branch. |
 | `metrics` | public `src/metrics.rs`, `src/metrics/shortcuts.rs`, process-wide integration in `src/stats.rs` | complete | Atomic receipt: [`metrics-source-artifact-audit.md`](metrics-source-artifact-audit.md). Both production files (1,726 lines), all 98 declarations/97 constructed and registered collectors, all 151 declarations/149 initialized shortcuts, exact names/help/labels/buckets/subsystems/const labels, native no-quantile summaries, initialization/registration, commit counters, read SLI, and the 15-vector stale-store lifecycle are covered. Mechanical source reconciliation reports zero metadata/order mismatches; all 34 importers are assigned. `rawkv`, root `tikv`, and integration update sites retain their own rows and are not promoted. |
 | `oracle` | `src/oracle.rs`, `src/timestamp.rs` | complete | Receipt below; complete interface/future/validator surface, exact timestamp helpers, global scope, noop behavior, and typed source errors are covered. |
 | `oracle/oracles` | `src/oracle/oracles.rs`, PD timestamp adapter | complete | Receipt below; local/mock/PD timestamp allocation, cache, refresh/adaptation, stale reads, validation singleflight/retry/cancellation, external/min timestamps, metrics, source test hooks, and native task-leak coverage are complete. |
@@ -645,44 +645,7 @@ No real-cluster validation applies to an interface-only test-support package. It
 
 ## Complete package receipt: `kv`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete production inventory is `kv/key.go` (88 lines), `kv/keyflags.go` (279 lines), `kv/kv.go` (264 lines), `kv/store_vars.go` (102 lines), and `kv/variables.go` (92 lines). Original test/support inventory is `kv/key_test.go` (54 lines), `kv/kv_test.go` (91 lines), and `kv/main_test.go` (25 lines). There is no `doc.go`, build/platform variant, generated input/output, fixture, or package-specific build file. Repository consumers were inventoried across retry configuration, `tikvrpc`, region routing, snapshots, transaction locking and buffering, mock stores, metrics, and integration tests; their behavioral adoption remains on those owning ledger rows.
-
-Rust implementation and integration files are:
-
-- `src/kv/key.rs`: next-key, prefix-next, three-way comparison, half-open `KeyRange`, and the existing owned byte-key contract.
-- `src/kv/key_flags.rs`: all fourteen source bits, persistent-mask behavior, every query method, all twenty-two ordered flag operations, and the source's fixed power-of-two public operation values.
-- `src/kv/types.rs`: pessimistic-lock returned values and context, wait sentinels/defaulting, synchronized result collection and iteration, resource tag/deadlock callbacks, typed observability boundary, value entries and native size accounting, get/batch-get options, and async getter interfaces.
-- `src/kv/store_vars.rs`: mutable process-wide store and commit-batch atomics; leader/follower/mixed/learner/prefer-leader modes; exact names, follower classification, byte values, and unknown-value round trips; and access-location modes.
-- `src/kv/variables.rs`: shared kill signal, optional higher-priority kill handler, transaction-file controls, source defaults, and default shared variables.
-- `src/kv/mod.rs` and `src/lib.rs`: public package and idiomatic root exports.
-
-Rust uses `Vec<u8>` map keys rather than Go's byte-preserving `string` conversion, `Arc<AtomicU32>` rather than raw shared pointers, and one mutex around the returned-value map rather than a separately exposed map and lock. Go's zero `time.Time` maps to `None`; constructors store `Some(SystemTime)`. The `util.LockKeysDetails` field is represented by an object-safe `LockStatistics` marker with `Any` access so this package can carry typed statistics while their structure and merge behavior remain owned by the `util` ledger row. `ErrDeadlock`'s protobuf and retry flag are represented together by `DeadlockError`; final error classification remains on the `error` row. Rust futures provide request cancellation, so getter traits do not duplicate Go's `context.Context` argument.
-
-All original assertions are represented: all-`0xFF` prefix-next keys become empty; get and batch-get options default off and enable commit timestamps; empty/non-empty value-entry cases match; and the leak-check support file is non-applicable because this package starts no task or thread and the complete Rust unit suite terminates normally. Added source-branch tests cover next-key and comparison, every flag implication/inverse, persistent flags, lock-context defaults and result filtering, replica/access byte values and names, process atomics, and variable defaults/shared kill state.
-
-Validation on Rust 1.93.0:
-
-    cargo test 'kv::'
-    # 12 passed; 0 failed (7 kv-package parity tests plus 5 already-receipted codec tests)
-
-    cargo test --lib
-    # 105 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation is required for this foundational type/state package: its own observable contracts are deterministic values, transitions, defaults, formatting, atomics, and synchronized collection behavior. Replica routing, lock protocol requests, statistics merging, kill handling during retries, and snapshot commit timestamps remain mandatory integration gates for their respective consumer packages. The host has no Go toolchain, so original Go tests could not be executed locally; their complete source assertions were transcreated and augmented in Rust.
+The earlier combined-test receipt is superseded by the 2026-08-26 atomic re-audit in [`kv-source-artifact-audit.md`](kv-source-artifact-audit.md). That receipt owns the immutable eight-artifact/995-line inventory, all four ordinary tests plus `TestMain`, all 69 direct importers, exact Go 1.25.12 execution, native representation decisions, source-uncovered branch gates, and final pinned-nightly validation.
 
 ## Complete package receipt: `internal/unionstore/arena`
 
