@@ -96,6 +96,10 @@ pub const MODE_RAW: Mode = KeyMode::Raw;
 pub const MODE_TXN: Mode = KeyMode::Txn;
 pub const NULLSPACE_ID: KeyspaceId = NULL_KEYSPACE_ID;
 
+fn split_region_key_batches(keys: Vec<Vec<u8>>) -> Vec<Vec<Vec<u8>>> {
+    crate::request::key_batches(keys, SPLIT_BATCH_REGION_LIMIT as isize)
+}
+
 /// client-go's `WithDefaultPipelinedTxn` values.
 pub const fn default_pipelined_txn_options() -> PipelinedTxnOptions {
     PipelinedTxnOptions {
@@ -1265,8 +1269,8 @@ impl KvStore {
             }
             let mut batches = Vec::new();
             for (_, (store, keys)) in groups {
-                for batch in keys.chunks(SPLIT_BATCH_REGION_LIMIT) {
-                    batches.push((store.clone(), batch.to_vec()));
+                for batch in split_region_key_batches(keys) {
+                    batches.push((store.clone(), batch));
                 }
             }
             let mut outcomes = Vec::with_capacity(batches.len());
@@ -1975,6 +1979,15 @@ mod tests {
             classify_split_response(response, SplitRegionMode::Legacy).unwrap(),
             SplitResponseAction::Complete(region_ids) if region_ids.is_empty()
         ));
+    }
+
+    #[test]
+    fn source_uncovered_internal_kvrpc_split_region_consumer_keeps_2049_boundary() {
+        let keys = (0_u32..2_050)
+            .map(|index| index.to_be_bytes().to_vec())
+            .collect::<Vec<_>>();
+        let batches = split_region_key_batches(keys);
+        assert_eq!(batches.iter().map(Vec::len).collect::<Vec<_>>(), [2_049, 1]);
     }
 
     #[test]
