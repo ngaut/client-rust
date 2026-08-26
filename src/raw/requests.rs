@@ -43,7 +43,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tonic::transport::Channel;
 
-const RAW_KV_REQUEST_BATCH_SIZE: u64 = 16 * 1024; // 16 KB
+const RAW_KV_REQUEST_BATCH_SIZE: u64 = super::RAW_BATCH_PUT_SIZE;
 const RAW_KV_REQUEST_KEY_BATCH_LIMIT: isize = 512;
 
 macro_rules! impl_raw_v2_response {
