@@ -900,4 +900,40 @@ mod tests {
                 .collect::<std::collections::BTreeSet<_>>()
         );
     }
+
+    macro_rules! source_go_txnkv_transaction_tests {
+        ($($name:ident => $target:ident),+ $(,)?) => {
+            $(
+                #[test]
+                #[allow(non_snake_case)]
+                fn $name() {
+                    $target();
+                }
+            )+
+        };
+    }
+
+    source_go_txnkv_transaction_tests! {
+        source_go_txnkv_transaction_TestMutationsHasDataInRange
+            => source_mutations_has_data_in_range_matrix,
+        source_go_txnkv_transaction_TestTxnFileMaxChunksInParallel
+            => source_txn_file_parallel_budget_boundaries,
+        source_go_txnkv_transaction_TestCloseTxnFileIdleConnectionsBeforeInitialization
+            => source_close_idle_connections_before_initialization_is_safe,
+        source_go_txnkv_transaction_TestTxnFileHTTPClientHasIdleConnectionTimeout
+            => source_txn_file_http_client_idle_connection_timeout_is_90_seconds,
+        source_go_txnkv_transaction_TestChunkSliceSortAndDedup
+            => source_chunk_slice_sort_and_dedup_preserves_ranges,
+        source_go_txnkv_transaction_TestIsRequestSourceUseTxnFile
+            => source_request_source_whitelist,
+        source_go_txnkv_transaction_TestBuildTxnFilesEntryCounting
+            => source_build_txn_files_counts_entries_and_matches_wire_format,
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestCloseTxnFileIdleConnections() {
+        source_close_idle_connections_closes_the_shared_idle_socket();
+        source_close_idle_connections_replaces_the_shared_pool();
+    }
 }

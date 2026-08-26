@@ -19419,4 +19419,67 @@ mod tests {
     fn source_test_send_request_async_does_not_settle_and_keeps_ru_details_on_transport_failure() {
         transaction_resource_control_does_not_settle_transport_failures();
     }
+
+    macro_rules! source_go_txnkv_transaction_tests {
+        ($($name:ident => $target:ident),+ $(,)?) => {
+            $(
+                #[test]
+                #[allow(non_snake_case)]
+                fn $name() {
+                    $target();
+                }
+            )+
+        };
+    }
+
+    source_go_txnkv_transaction_tests! {
+        source_go_txnkv_transaction_TestLockKeys
+            => source_lock_keys_modes_wait_timeout_and_force_lock_results,
+        source_go_txnkv_transaction_TestSharedLockCommitterIncompatibilities
+            => source_shared_lock_committer_incompatibilities,
+        source_go_txnkv_transaction_TestTxnFileCleanupContextUsesStoreContext
+            => source_txn_file_cleanup_is_detached_and_retains_the_transaction_start_ts,
+        source_go_txnkv_transaction_TestPrepareTxnFileCommitTS
+            => source_prepare_txn_file_commit_timestamp_waits_and_checks_schema_first,
+        source_go_txnkv_transaction_TestTxnFileCommitTSExpiredRetryUsesPreparedTimestamp
+            => source_txn_file_commit_ambiguity_and_expired_retry,
+        source_go_txnkv_transaction_TestTxnFilePrewriteUsesPrimaryKey
+            => source_txn_file_primary_prewrite_cleanup_and_batch_selection,
+        source_go_txnkv_transaction_TestTxnFilePrewriteExpandsSharedLockHolders
+            => source_txn_file_prewrite_expands_shared_lock_holders,
+        source_go_txnkv_transaction_TestTxnFilePrimaryBatchIndexFindsPrimaryRegion
+            => source_txn_file_primary_prewrite_cleanup_and_batch_selection,
+        source_go_txnkv_transaction_TestTxnFilePrimaryRollbackPropagatesKeyError
+            => source_txn_file_primary_prewrite_cleanup_and_batch_selection,
+        source_go_txnkv_transaction_TestTxnFileActionsApplyResourceGroupTagger
+            => source_txn_file_actions_apply_dynamic_or_static_resource_group_tag,
+        source_go_txnkv_transaction_TestTxnFileActionsPreserveStaticResourceGroupTag
+            => source_txn_file_actions_apply_dynamic_or_static_resource_group_tag,
+        source_go_txnkv_transaction_TestTxnFilePrewriteTaggerUsesFirstKeyWithoutSampleDataKeys
+            => source_txn_file_tagger_uses_first_key_and_static_tag_wins,
+        source_go_txnkv_transaction_TestTxnFilePrewriteTaggerAppliesWithoutFirstKey
+            => source_txn_file_tagger_uses_first_key_and_static_tag_wins,
+        source_go_txnkv_transaction_TestTxnFileCommitPrimaryRPCErrorMarksResultUndetermined
+            => source_txn_file_commit_ambiguity_and_expired_retry,
+        source_go_txnkv_transaction_TestTxnFileCommitSecondaryRPCErrorIsNotResultUndetermined
+            => source_txn_file_commit_ambiguity_and_expired_retry,
+        source_go_txnkv_transaction_TestTxnFileCommitClearsUndeterminedErrOnDefinitivePrimaryResponse
+            => source_txn_file_commit_ambiguity_and_expired_retry,
+        source_go_txnkv_transaction_TestTxnFileCommitPrimaryUndeterminedRegionError
+            => source_txn_file_commit_ambiguity_and_expired_retry,
+        source_go_txnkv_transaction_TestTxnFileCommitPrimaryRPCErrorIsNormalized
+            => source_txn_file_primary_rpc_error_is_normalized_without_rollback,
+        source_go_txnkv_transaction_TestTxnFileCommitPreservesCommitOnResourceControlResponseError
+            => source_txn_file_commit_survives_resource_accounting_response_error,
+        source_go_txnkv_transaction_TestUseTxnFileExcludesPipelinedTxn
+            => source_txn_file_admission_exclusions,
+        source_go_txnkv_transaction_TestUseTxnFileExcludesSharedLockTxn
+            => source_txn_file_admission_exclusions,
+        source_go_txnkv_transaction_TestUseTxnFileExcludesMutationAssertions
+            => source_txn_file_admission_exclusions,
+        source_go_txnkv_transaction_TestPreSplitTxnFileRegionsUsesDedicatedSplitPath
+            => source_pre_split_txn_file_regions_uses_dedicated_split_path,
+        source_go_txnkv_transaction_TestMinCommitTsManager
+            => source_min_commit_ts_manager_access_and_concurrency,
+    }
 }

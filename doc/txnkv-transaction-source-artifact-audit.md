@@ -51,7 +51,7 @@ The completed unionstore dependency remains reusable and includes a `unistore`-b
 
 ## Original unit-test mapping
 
-Mechanical source enumeration finds exactly 33 `func Test...` declarations. Every declaration, named subtest, table row, randomized round, and source assertion is executable below. Combined Rust tests share setup only when several Go declarations exercise the same private state machine; the third column records the retained case boundary explicitly.
+Mechanical source enumeration finds exactly 33 `func Test...` declarations. Every declaration now has an independently discoverable Rust identity named `source_go_txnkv_transaction_<GoName>`; the identity runs the assertion owner recorded below. Every named subtest, table row, randomized round, and source assertion remains executable. Combined assertion owners share setup only when several Go declarations exercise the same private state machine; the third column records the retained case boundary explicitly.
 
 | Source declaration | Rust evidence | Source cases retained |
 | --- | --- | --- |
@@ -104,18 +104,19 @@ The complete `internal/locate`, `internal/client`, `internal/apicodec`, `tikvrpc
 
 ## Validation boundary
 
-Final re-closure validation on `nightly-2026-08-22` used the exact batch code:
+Final independent-test validation on `nightly-2026-08-22` used the exact batch code:
 
 - `make check`: clean protocol generation; workspace all-target/all-feature check; rustfmt; strict workspace Clippy with warnings denied.
-- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 852 tests passed and one was intentionally skipped. This matrix includes the external mocktikv, public-protocol, ordinary-build injected-client, shared-UniStore, and package unit-test targets.
-- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib`: 840 tests passed and one was intentionally skipped.
-- `cargo +nightly-2026-08-22 test --lib source_` and its `--all-features` variant: 484 source-derived tests passed in each configuration. The transaction subset includes every case represented by the 33 original declarations, plus production-branch regressions discovered during the audit.
-- `cargo +nightly-2026-08-22 test --no-default-features --test public_injected_client_tests`: 2 tests passed, including ordinary-build access to the injected constructor and transaction configuration/pre-split controls.
+- `cargo nextest run --config-file config/nextest.toml --all --no-default-features`: 1,373 tests passed and one was intentionally skipped. This matrix includes the external mocktikv, public-protocol, ordinary-build injected-client, shared-UniStore, and package unit-test targets.
+- `cargo nextest run --config-file config/nextest.toml --all --all-features --lib`: 1,352 tests passed and one was intentionally skipped.
+- `cargo test --no-default-features --lib source_go_txnkv_transaction_ -- --nocapture` and the `--all-features` variant: all 33 independently named transaction-package tests passed in each configuration.
 - `make doc`: strict private-item workspace rustdoc passed; all 51 doctests passed.
 - `git diff --check`: passed.
-- Mechanical declaration comparison: 33 pinned source tests and 33 documented tests, with no missing or extra name.
+- Mechanical declaration comparison: 33 pinned source tests and 33 independently named Rust tests, with no missing or extra name.
+- `/private/tmp/go1.25.12-full/bin/go test ./txnkv/transaction` with isolated module/build caches: passed in 0.025 seconds.
+- `/private/tmp/go1.25.12-full/bin/go test -race ./txnkv/transaction` with the same isolated caches: passed in 1.068 seconds; the linker emitted only its known malformed `LC_DYSYMTAB` warning.
 
-Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. This host has no Go executable, so the pinned Go tests were not rerun in this re-closure; their declarations, subtests, table rows, randomized rounds, and assertions are mapped above and execute in Rust. Earlier repository-level receipts retain their separately recorded Go and real-cluster evidence.
+Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. The pinned Go normal and race baselines and both Rust feature configurations execute the declarations, subtests, table rows, randomized rounds, and assertions mapped above. Earlier repository-level receipts retain their separately recorded real-cluster evidence.
 
 A live TiKV/PD cluster is not required by any of the four package-local source test files. End-to-end cross-client differential runs for transaction, snapshot, lock resolver, safe point, and root-store orchestration remain a repository completion gate owned by their high-level packages; they are not an omitted artifact of this atomic package receipt.
 

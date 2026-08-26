@@ -2014,4 +2014,10 @@ mod tests {
             .pessimistic_lock_keys()
             .contains(b"shared".as_slice()));
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_txnkv_transaction_TestBufferBatchGetter() {
+        source_buffer_batch_getter_local_precedence_delete_and_commit_ts();
+    }
 }
