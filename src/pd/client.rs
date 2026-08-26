@@ -2542,4 +2542,10 @@ pub mod test {
     fn source_test_concurrent_close_conn_panic() {
         source_client_close_retires_every_pool_once_and_prevents_reconnect();
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_pd_codec_TestGetKeyspaceIDRejectsV3Identity() {
+        source_get_keyspace_id_loads_canonical_name_and_rejects_v3_identity();
+    }
 }

@@ -1273,3 +1273,21 @@ main-library tests plus one unrelated ignore, strict all-target
 check/Clippy/private rustdoc, all 51 doctests, rustfmt, exact
 inventory/declaration/importer reconciliation, and whitespace checks. This
 receipt is the package-sized integration boundary.
+
+Plan revision note (2026-08-26): independently reopened `internal/locate`
+against its exact 17-artifact/20,132-line boundary, 147 test declarations,
+five colocated benchmarks, every production/native representation surface,
+ten direct pinned protocol inputs, and 28 direct importer files. `TestMain`
+and the four testify suite runners have explicit non-test dispositions; every
+one of the remaining 142 assertion-bearing declarations now has an
+independently selectable, source-named Rust port. Sync/async source pairs keep
+separate identities while executing Rust's one future path. The source-name
+bijection, focused ports, and complete parallel suites pass without a
+production change, confirming the implementation while correcting the older
+grouped evidence. Exact Go normal/race suites pass. Final pinned-nightly gates
+pass all 142 independent ports, 986/983 source-derived tests, 1,233/1,230
+active no-default/all-feature main-library tests, and 1,285/1,264 canonical
+workspace tests plus one unrelated ignore/skip. Strict all-target
+check/Clippy/private rustdoc, all 51 doctests, formatting, exact
+inventory/declaration/importer reconciliation, source identity, and whitespace
+checks pass. This receipt is the package-sized integration boundary.

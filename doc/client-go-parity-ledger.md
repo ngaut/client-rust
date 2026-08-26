@@ -16,7 +16,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `internal/client/mockserver` | `src/store/mockserver.rs`, generated Tonic server bindings | complete | Re-audited atomic receipt: [`internal-client-mockserver-source-artifact-audit.md`](internal-client-mockserver-source-artifact-audit.md). The sole 196-line artifact, no-test/support boundary, all methods, and all five direct consumers are assigned. Differential fixes restore per-stream feedback numbering and source loopback address advertisement. |
 | `internal/kvrpc` | `src/request/shard.rs`, `src/raw/requests.rs`, root split consumer | complete | Re-audited atomic receipt: [`internal-kvrpc-source-artifact-audit.md`](internal-kvrpc-source-artifact-audit.md). The sole 82-line artifact, no-test/support boundary, all four production surfaces, and both direct importers are assigned. The differential corrects root split-region batching from 2,048/2 to source-exact 2,049/1. |
 | `internal/latch` | `src/transaction/latch.rs`, transaction client/commit | complete | Re-audited atomic receipt: [`internal-latch-source-artifact-audit.md`](internal-latch-source-artifact-audit.md). All five artifacts/758 lines, all four ordinary tests plus `TestMain`, and all four direct importers are assigned. The differential fixes shared-scheduler shutdown during client close; source ports retain the exact 10-worker/999-transaction stress shape. |
-| `internal/locate` | `src/region.rs`, `src/region_cache.rs`, `src/pd`, `src/request`, `src/store`, `src/traffic.rs` | complete | Complete package receipt below and full 17-artifact/production-symbol/147-test/dependency/consumer mapping in [`internal-locate-source-artifact-audit.md`](internal-locate-source-artifact-audit.md). Region coding and indexes, TTL/GC/refresh, store discovery/liveness/health, replica and proxy selection, sender retry/error precedence, runtime diagnostics, network accounting, configurable PD region-meta circuit breaking, native async ownership, and validation gates are accounted for. Raw, snapshot, transaction, root `tikv`, and other consumers retain independent statuses. |
+| `internal/locate` | `src/region.rs`, `src/region_cache.rs`, `src/pd`, `src/request`, `src/store`, `src/traffic.rs` | complete | Independently re-audited complete receipt below and full 17-artifact/production-symbol/147-declaration/dependency/consumer mapping in [`internal-locate-source-artifact-audit.md`](internal-locate-source-artifact-audit.md). All 142 assertion-bearing Go declarations now have independently selectable Rust identities; `TestMain` and the four testify suite runners have explicit dispositions. Exact Go normal/race suites and both complete Rust configurations pass. Region coding and indexes, TTL/GC/refresh, store discovery/liveness/health, replica and proxy selection, sender retry/error precedence, runtime diagnostics, network accounting, configurable PD region-meta circuit breaking, and native async ownership are accounted for. Raw, snapshot, transaction, root `tikv`, and other consumers retain independent statuses. |
 | `internal/logutil` | public-but-hidden `src/logutil.rs`, Rust `log` call sites, generated protobuf descriptors/type names | complete | Atomic receipt: [`internal-logutil-source-artifact-audit.md`](internal-logutil-source-artifact-audit.md). All three production files (237 lines), every exported/mutable surface, all 44 direct importers, and the no-test/no-support inventory are assigned. The 977 generated `prost::Name` implementations and complete 1,029-message descriptor pool give `Hex` generic recursive schema reflection and byte redaction instead of a lossy `Debug` substitute; typed logger/span contexts preserve fallback, event, formatted-event, tag, and testing-assertion behavior. |
 | `internal/mockstore/cluster` | public test-support `src/mock/cluster.rs` trait plus concrete mocktikv implementation | complete | Re-audited atomic receipt: [`internal-mockstore-cluster-source-artifact-audit.md`](internal-mockstore-cluster-source-artifact-audit.md). The sole 65-line source artifact, all nine interface methods, no-test/support boundary, both direct importers, concrete implementation, and ordinary-build alias are assigned. |
 | `internal/mockstore/deadlock` | reusable `unistore/src/deadlock.rs` plus live `MockEngine` integration | complete | Re-audited atomic receipt: [`internal-mockstore-deadlock-source-artifact-audit.md`](internal-mockstore-deadlock-source-artifact-audit.md). All three artifacts/257 lines, `TestDeadlock`, `TestMain`, and the sole source importer are assigned. The audit removes the test-only duplicate and fixes live multiple-edge retention plus source-exact terminal/range-resolve cleanup behavior. |
@@ -110,43 +110,11 @@ The pinned Go tests were inspected but not re-executed because this host has no 
 
 Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`; protocol pin: `kvproto@059694ae4472276644613acccefa24cbc89d959f`; PD dependency pin: `afa43111d1494d620c225e51461097097661d127`.
 
-The complete nine-production-file/eight-test-support-file/20,132-line inventory, SHA-256 identities, per-surface integration decisions, all 147 original declarations, ten direct protocol inputs, pinned PD circuit-breaker behavior, and all 28 importing Go files are recorded in [`internal-locate-source-artifact-audit.md`](internal-locate-source-artifact-audit.md). There is no package-local doc, build/platform variant, fixture, generated source, benchmark, example, metadata, or build file.
+The complete nine-production-file/eight-test-support-file/20,132-line inventory, SHA-256 identities, per-surface integration decisions, all 147 original declarations, ten direct protocol inputs, pinned PD circuit-breaker behavior, and all 28 importing Go files are recorded in [`internal-locate-source-artifact-audit.md`](internal-locate-source-artifact-audit.md). There is no package-local doc, build/platform variant, fixture, generated source, standalone benchmark file, example, metadata, or build file; all five benchmarks live in the inventoried tests. The 142 assertion-bearing tests have a source-name/Rust-identity bijection, while `TestMain` and four suite runners retain explicit non-test dispositions.
 
 Rust now preserves region coding and keyspace boundaries; exact region/version/range/bucket behavior; three coherent indexes; process-wide TTL/jitter; preload, full refresh, bounded GC, and four reload flags; cache-only/PD/range/batch location and grouping; stable store discovery/re-resolution/tombstones; TiFlash filters/compute discovery; liveness, health, slow/load/flow state; logical/physical/proxy routes; replica selector scores, attempts, error flags, time budgets, busy/stale/flashback/learner/NextGen paths; sender cancellation, retry/backoff, token, timeout, connection, epoch, bucket, and region-error precedence; runtime diagnostics; and request/response network accounting. Native futures consolidate Go's sync/callback façades, `BTreeMap` replaces the custom B-tree wrapper, and immutable PD peer metadata is filtered at selection rather than destructively edited. The configurable PD region-meta breaker implements the pinned closed/open/half-open state machine and exact overload code set.
 
-Validation on `nightly-2026-08-22`:
-
-    cargo +nightly-2026-08-22 test -p tikv-client --lib source_
-    # 292 passed; 0 failed
-
-    cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet
-    # 548 passed; 0 failed
-
-    cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet
-    # 548 passed; 0 failed
-
-    cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features
-    # passed with the existing warning backlog
-
-    cargo +nightly-2026-08-22 doc -p tikv-client --all-features --no-deps
-    # passed with two pre-existing unrelated rustdoc warnings
-
-    cargo +nightly-2026-08-22 fmt --all -- --check
-    git diff --check
-    # passed
-
-    cargo +nightly-2026-08-22 run -p tikv-client-proto-build
-    # checked-in bindings regenerated
-
-    for proto in apipb coprocessor disaggregated errorpb keyspacepb kvrpcpb metapb mpp pdpb tikvpb; do
-        cmp "proto/$proto.proto" "/private/tmp/kvproto-client-go-pin/proto/$proto.proto"
-    done
-    # all ten direct inputs byte-identical
-
-    # mechanical audit: 147 source declarations, 147 recorded names,
-    # no missing or extra test declaration
-
-The pinned Go tests were inspected but not re-executed because this host has no Go toolchain. Deterministic routing, cache, selector, error, coding, and lifecycle behavior plus completed loopback Tonic transport establish this package boundary without a live cluster. Raw, snapshot, transaction, root `tikv`, and final cross-client cluster workflows retain independent gates.
+The 2026-08-26 re-audit ran the exact package with Go 1.25.12: normal and race suites passed in 70.470s and 70.383s. On `nightly-2026-08-22`, all 142 independently named ports passed; source-derived inventories contain 986/983 tests, complete main-library matrices passed 1,233/1,230 active tests plus one unrelated ignore, and canonical workspace gates passed 1,285/1,264 tests plus one unrelated skip. Strict all-target check/Clippy/private rustdoc, all 51 doctests, rustfmt, exact inventory/declaration/importer reconciliation, source identity, and whitespace checks pass. No production divergence surfaced; this batch corrects the former grouped test evidence. Deterministic routing, cache, selector, error, coding, and lifecycle behavior plus completed loopback Tonic transport establish this package boundary without a live cluster. Raw, snapshot, transaction, root `tikv`, and final cross-client cluster workflows retain independent gates.
 
 ## Complete package receipt: `tikvrpc`
 

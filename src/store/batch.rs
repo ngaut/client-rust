@@ -4278,4 +4278,10 @@ mod tests {
     fn source_test_batch_policy() {
         source_turbo_batch_policy_presets_and_custom_values_are_preserved();
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn source_go_region_request_TestBatchClientSendLoopPanic() {
+        source_receive_loop_recovers_panics_on_the_same_stream();
+    }
 }
