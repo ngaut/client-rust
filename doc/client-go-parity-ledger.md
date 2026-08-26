@@ -23,7 +23,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `internal/mockstore/mocktikv` | hidden `src/mock/mocktikv`, reusable `unistore` engine crate, mock stream adapters | complete | Atomic receipt: [`internal-mockstore-mocktikv-source-artifact-audit.md`](internal-mockstore-mocktikv-source-artifact-audit.md). Runtime remediation now sets transactional `GetResponse.not_found` exactly as real TiKV/client-go require. Both the adapter matrix and an external `Transaction<MockPdClient>` regression prove an absent key decodes as `None`; the reusable engine and all other inventoried behavior remain assigned. |
 | `internal/resourcecontrol` | `src/resource_control.rs`, `src/request/{plan,plan_builder}.rs`, `src/store/{mod,request}.rs`, transaction request contexts / resource-manager proto | complete | Complete package receipt below and full artifact/symbol/consumer mapping in [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). Both production/test files, both legacy/NextGen variants, exact request/response accounting matrices, stream paths, bypass, routing inputs, controller ordering, RU updates, public native interfaces, and validation gates are covered. The external PD controller algorithm and downstream txn-file protocol retain separate ownership. |
 | `internal/unionstore` | `src/transaction/unionstore.rs` plus native ART/RBT/arena adapters | complete | Receipt below; all eight production files and six source test/support/benchmark artifacts are accounted for. Public transaction consumption remains on the separate `txnkv/transaction` row. |
-| `internal/unionstore/arena` | `src/transaction/arena.rs` | complete | Receipt below; block allocation, addresses, checkpoints, hooks, value-log history/revert/inspection, and all original tests are covered. |
+| `internal/unionstore/arena` | public `src/transaction/arena.rs` plus safe ART/RBT integration decision | complete | Re-audited atomic receipt: [`internal-unionstore-arena-source-artifact-audit.md`](internal-unionstore-arena-source-artifact-audit.md). Both artifacts/508 lines, all allocator/address/checkpoint/hook/value-log behavior, both original tests, and all 16 unionstore importers are assigned. The receipt explicitly distinguishes the complete reusable arena from Rust ART/RBT's safe `BTreeMap` representation. |
 | `internal/unionstore/art` | `src/transaction/art.rs` | complete | Receipt below; all nine source/test artifacts are covered by a safe ordered-map/value-log mapping, with the parent unionstore integration retained on its own row. |
 | `internal/unionstore/rbt` | `src/transaction/rbt.rs` | complete | Receipt below; all five source/test artifacts are covered by a safe ordered-map/value-log mapping, with the parent unionstore integration retained on its own row. |
 | `kvproto` (native crate) | independent `tikv-client-kvproto` workspace crate; `tikv_client::proto` re-export | complete | Atomic receipt: [`kvproto-crate-completion-audit.md`](kvproto-crate-completion-audit.md). All 45 crate artifacts, 56 generator inputs, 41 generated protocol modules, descriptor set, three direct integration edges, and downstream type-identity gate are assigned. The crate is the single generated-type owner shared by direct consumers and `tikv-client`. |
@@ -649,41 +649,7 @@ The earlier combined-test receipt is superseded by the 2026-08-26 atomic re-audi
 
 ## Complete package receipt: `internal/unionstore/arena`
 
-Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
-
-The complete inventory is production file `internal/unionstore/arena/arena.go` (429 lines) and original test file `internal/unionstore/arena/arena_test.go` (79 lines). There is no `doc.go`, build/platform variant, generated input/output, external fixture, or package-specific build file. Consumers are the ART, red-black-tree, and union-store memory buffers; those packages retain their own ledger rows and must integrate this primitive before claiming completion.
-
-Rust implementation and integration files are:
-
-- `src/transaction/arena.rs`: block arena, little-endian address/header encoding, compact key handles, checkpoints, truncation/reset, memory hooks, value-log append/read/history/snapshot selection, rollback traversal, current-version inspection, and generic node/database traits.
-- `src/transaction/mod.rs`: hidden public native module ownership for future transaction-buffer implementations.
-- `src/kv/key_flags.rs`: the completed source-compatible metadata type consumed by value-log inspection.
-
-The Rust API uses stable block indexes and offsets rather than raw pointers, borrowed slices for arena reads, `Arc` callbacks for memory changes, and traits with borrowed node data for value-log callbacks. It preserves source details that are easy to miss: eight-byte aligned node allocation; an allocation limit of 128 MiB including value-log headers; growth to the first power of two strictly greater than the requested size then capping at 128 MiB; null classification when either address half is `u32::MAX`; truncation capacity recomputed from used lengths rather than retained buffer allocations; no hook during enlargement/truncation but a hook after append crosses a block and after reset; zero-length tombstones; end-of-record value addresses; old-value chain selection; rollback without implicit truncation; and inspection that skips superseded versions.
-
-Both original tests are transcreated with their exact 80 MiB, 127 MiB, 4 KiB, 3,000-byte, and over-limit cases. Additional tests cover address round trips and compact handles, little-endian header traversal, alignment, capacity/truncation, empty checkpoints, tombstones, snapshot history, current-version filtering, rollback callbacks, hook counts, reset, and checkpoint ordering.
-
-Validation on Rust 1.93.0:
-
-    cargo test transaction::arena
-    # 4 passed; 0 failed
-
-    cargo test --lib
-    # 109 passed; 0 failed
-
-    cargo test --doc
-    # 49 passed; 0 failed
-
-    cargo clippy --all-targets --all-features -- -D warnings
-    # passed
-
-    cargo fmt --all -- --check
-    # passed
-
-    git diff --check
-    # passed
-
-No real-cluster validation applies because this package is deterministic in-process memory storage with no I/O. The host has no Go toolchain, so the original Go tests could not be executed locally; their exact cases and panic boundary run in Rust. Integration with each concrete union-store index remains on `internal/unionstore/art`, `internal/unionstore/rbt`, and `internal/unionstore`.
+The earlier coarse receipt is superseded by the 2026-08-26 atomic re-audit in [`internal-unionstore-arena-source-artifact-audit.md`](internal-unionstore-arena-source-artifact-audit.md). That receipt owns the immutable two-artifact/508-line inventory, both original tests, all 16 importers, exact Go 1.25.12 execution, the safe ART/RBT representation decision, and final pinned-nightly validation.
 
 ## Complete package receipt: `internal/mockstore/deadlock`
 
