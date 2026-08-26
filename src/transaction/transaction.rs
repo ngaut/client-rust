@@ -9132,7 +9132,6 @@ mod tests {
     use crate::enable_resource_control;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
-    use crate::new_rpc_interceptor;
     use crate::oracle::{OracleError, OracleOption, OracleResult, ReadTimestampValidator};
     use crate::proto::kvrpcpb;
     use crate::proto::pdpb::Timestamp;
@@ -14811,25 +14810,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transaction_rpc_interceptor_wraps_each_commit_rpc() {
-        let intercepted = Arc::new(Mutex::new(Vec::new()));
-        let observed = Arc::clone(&intercepted);
-        let interceptor = new_rpc_interceptor("record", move |target, request, next| {
-            let observed = Arc::clone(&observed);
-            Box::pin(async move {
-                observed
-                    .lock()
-                    .unwrap()
-                    .push((target.to_owned(), request.label()));
-                next().await
-            })
-        });
+    async fn source_integration_test_interceptor_transaction_commit_and_get() {
+        let manager = crate::MockInterceptorManager::new();
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |req: &dyn Any| {
                 if req.is::<kvrpcpb::PrewriteRequest>() {
                     Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
                 } else if req.is::<kvrpcpb::CommitRequest>() {
                     Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                } else if req.is::<kvrpcpb::GetRequest>() {
+                    Ok(Box::new(kvrpcpb::GetResponse {
+                        value: b"value".to_vec(),
+                        ..Default::default()
+                    }) as Box<dyn Any>)
                 } else {
                     panic!("unexpected request while testing transaction interceptor")
                 }
@@ -14837,18 +14830,35 @@ mod tests {
         )));
         let mut txn = Transaction::new(
             Timestamp::from_version(1),
+            pd_client.clone(),
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        );
+        txn.set_rpc_interceptor(manager.create_mock_interceptor("INTERCEPTOR-1"));
+        txn.put("key".to_owned(), "value").await.unwrap();
+        txn.commit().await.unwrap();
+
+        assert_eq!(manager.begin_count(), 2);
+        assert_eq!(manager.end_count(), 2);
+        assert_eq!(manager.exec_log(), ["INTERCEPTOR-1", "INTERCEPTOR-1"]);
+        manager.reset();
+
+        let mut txn = Transaction::new(
+            Timestamp::from_version(3),
             pd_client,
             TransactionOptions::new_optimistic(),
             Keyspace::Disable,
         );
-        txn.set_rpc_interceptor(interceptor);
-        txn.put("key".to_owned(), "value").await.unwrap();
-        txn.commit().await.unwrap();
-
+        txn.set_rpc_interceptor(manager.create_mock_interceptor("INTERCEPTOR-2"));
         assert_eq!(
-            *intercepted.lock().unwrap(),
-            [(String::new(), "kv_prewrite"), (String::new(), "kv_commit")]
+            txn.get("key".to_owned()).await.unwrap(),
+            Some(b"value".to_vec())
         );
+        assert_eq!(manager.begin_count(), 1);
+        assert_eq!(manager.end_count(), 1);
+        assert_eq!(manager.exec_log(), ["INTERCEPTOR-2"]);
+        txn.rollback().await.unwrap();
+        manager.reset();
     }
 
     #[tokio::test]
