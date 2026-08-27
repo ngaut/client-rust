@@ -1230,20 +1230,26 @@ source identity, and whitespace checks. Signed package-sized commit
 Plan revision note (2026-08-26): independently re-audited
 `internal/resourcecontrol` against its exact two-artifact/511-line boundary,
 five ordinary tests, five direct importer files, and both legacy/NextGen
-configurations. Each Go declaration now has an independently named Rust port;
+configurations. Each Go declaration now has an exact independently named Rust
+port with one definition;
 the previous combined response test is split into exact read-byte and batched-
 task cases while stream coverage remains separate. Production request/write/
 size/bypass/route and response/CPU/stream matrices match the source. The
 consumer audit found that txn-file post-commit settlement errors were logged
 and correctly ignored but did not increment `TxnFileErrorAccounting`; the red
 regression observed 0 instead of 1. Rust now increments the source metric once
-without changing the committed result. Exact Go normal and race suites pass in
-both modes. Final pinned-nightly gates pass 13 focused tests per mode, the
-consumer regression in both modes, 752/749 source-derived tests, 1,021 no-
-default workspace and 1,018 all-feature active library tests plus one unrelated
-ignore, strict all-target check/Clippy/private rustdoc, all 51 doctests,
-rustfmt, source identity, declaration/importer reconciliation, and whitespace
-checks. This receipt is the package-sized integration boundary.
+without changing the committed result. Two further red/green differential
+gates found debug-overflow divergence at extreme wire values: batched scan
+bytes panicked instead of wrapping Go `uint64`, and batched KV CPU retained
+`2^64` nanoseconds instead of wrapping Go `time.Duration` arithmetic to zero.
+The production path now wraps scan-byte addition, CPU addition, and legacy
+millisecond conversion explicitly. Exact Go normal and race suites pass in
+both modes. Final pinned-nightly gates pass five exact source identities and 15
+focused tests per mode, the consumer regression in both modes, complete
+1,401/1,365 unit matrices with only configured skips, strict generation/all-
+target check/Clippy/private rustdoc, all 51 doctests, rustfmt, source identity,
+declaration/importer reconciliation, and whitespace checks. This receipt is
+the package-sized integration boundary.
 
 Plan revision note (2026-08-26): independently re-audited root `tikv` against
 its exact 17-artifact/3,895-line boundary, 12 assertion-bearing suite methods,

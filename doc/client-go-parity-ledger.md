@@ -21,7 +21,7 @@ Statuses are `unassessed`, `seed`, `in-progress`, `blocked`, `complete`, or `not
 | `internal/mockstore/cluster` | public test-support `src/mock/cluster.rs` trait plus concrete mocktikv implementation | complete | Re-audited atomic receipt: [`internal-mockstore-cluster-source-artifact-audit.md`](internal-mockstore-cluster-source-artifact-audit.md). The sole 65-line source artifact, all nine interface methods, no-test/support boundary, both direct importers, concrete implementation, and ordinary-build alias are assigned. |
 | `internal/mockstore/deadlock` | reusable `unistore/src/deadlock.rs` plus live `MockEngine` integration | complete | Re-audited atomic receipt: [`internal-mockstore-deadlock-source-artifact-audit.md`](internal-mockstore-deadlock-source-artifact-audit.md). All three artifacts/257 lines, `TestDeadlock`, `TestMain`, and the sole source importer are assigned. The audit removes the test-only duplicate and fixes live multiple-edge retention plus source-exact terminal/range-resolve cleanup behavior. |
 | `internal/mockstore/mocktikv` | hidden `src/mock/mocktikv`, reusable `unistore` engine crate, mock stream adapters | complete | Independently re-audited atomic receipt: [`internal-mockstore-mocktikv-source-artifact-audit.md`](internal-mockstore-mocktikv-source-artifact-audit.md). All 14 artifacts/6,689 lines, 23 ordinary tests as direct independently selectable Rust ports, `TestMain`, production surfaces, and nine consumers are assigned. Repository-wide follow-ups removed the 22-name forwarding macro, redundant marshal aggregate, and the final helper-only `TestRegionContains` identity; exact reconciliation now finds no missing, extra, duplicate, forwarding, test-to-test, or one-call-only helper identity. The stronger ports retain complete scan histories, lock inventories/timestamps, resolve/GC/delete-range/status/marshal/region assertions without a new production change. The prior runtime remediation still sets transactional `GetResponse.not_found` exactly as real TiKV/client-go require; adapter and external `Transaction<MockPdClient>` regressions distinguish absence from empty values. |
-| `internal/resourcecontrol` | `src/resource_control.rs`, `src/request/{plan,plan_builder}.rs`, `src/store/{mod,request}.rs`, `src/{stats,transaction/transaction}.rs`, resource-manager proto | complete | Re-audited atomic receipt: [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). Both artifacts/511 lines, all five independently named Go test ports, all five direct importers, legacy/NextGen variants, exact request/response accounting matrices, stream paths, bypass, routing inputs, controller ordering, RU updates, and public native interfaces are assigned. A red/green consumer regression restored the missing `TxnFileErrorAccounting` metric while preserving committed txn-file results after settlement failure. Exact Go normal/race tests pass in both legacy and NextGen modes; final Rust gates pass 13 focused tests per mode, 752/749 source-derived tests, strict check/Clippy/private rustdoc, and 51 doctests. The external PD controller algorithm and broader txn-file protocol retain separate ownership. |
+| `internal/resourcecontrol` | `src/resource_control.rs`, `src/request/{plan,plan_builder}.rs`, `src/store/{mod,request}.rs`, `src/{stats,transaction/transaction}.rs`, resource-manager proto | complete | Re-audited atomic receipt: [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). Both artifacts/511 lines, all five exact independently named Go unit-test ports, all five direct importers, legacy/NextGen variants, exact request/response accounting matrices, stream paths, bypass, routing inputs, controller ordering, RU updates, and public native interfaces are assigned. Red/green gates restore the txn-file accounting-error metric plus Go `uint64` scan-byte and `time.Duration` CPU wrapping at malformed/extreme wire boundaries. Exact Go normal/race tests pass in both legacy and NextGen modes; final Rust gates pass 15 focused tests per mode, complete 1,401/1,365 unit matrices, strict check/Clippy/private rustdoc, and 51 doctests. The external PD controller algorithm and broader txn-file protocol retain separate ownership. |
 | `internal/unionstore` | `src/transaction/unionstore.rs` plus native ART/RBT/arena adapters | complete | Independently re-audited atomic receipt: [`internal-unionstore-source-artifact-audit.md`](internal-unionstore-source-artifact-audit.md). All 15 artifacts/4,813 lines, 54 executable Go test cases, `TestMain`, 12 benchmark contracts, every production surface, and all six direct consumers are assigned. Every test/benchmark has an exact independently selectable Rust identity. The latest red/green correction makes pipelined `BatchGet` bypass and refresh the point-read cache in both authoritative `MemDb` and transaction paths. |
 | `internal/unionstore/arena` | public `src/transaction/arena.rs` plus safe ART/RBT integration decision | complete | Re-audited atomic receipt: [`internal-unionstore-arena-source-artifact-audit.md`](internal-unionstore-arena-source-artifact-audit.md). Both artifacts/508 lines, all allocator/address/checkpoint/hook/value-log behavior, both original tests, and all 16 unionstore importers are assigned. The receipt explicitly distinguishes the complete reusable arena from Rust ART/RBT's safe `BTreeMap` representation. |
 | `internal/unionstore/art` | `src/transaction/art.rs`, `src/transaction/art_source_tests.rs`, `src/transaction/unionstore.rs` adapter | complete | Re-audited atomic receipt: [`internal-unionstore-art-source-artifact-audit.md`](internal-unionstore-art-source-artifact-audit.md). All nine artifacts/3,474 lines, all 35 original tests plus the benchmark contract, every production surface, and the sole direct parent importer are assigned. Five red-then-green fixes restore discard release/invalidation, append-order stage inspection, flags-only buffer limits, idempotent snapshot completion, and ignored adapter flag-update errors. |
@@ -179,33 +179,37 @@ Source pin: `client-go@52c1e76cec993571493c81de442bcbef90cdc106`.
 
 The complete production/test inventory, SHA-256 identities, per-symbol mapping, native typed-request decision, exact five-test mapping, and source-consumer audit are recorded in [`internal-resourcecontrol-source-artifact-audit.md`](internal-resourcecontrol-source-artifact-audit.md). The package has no additional support, fixture, generated/build, platform/build-tag, documentation, benchmark, harness, or metadata artifact.
 
-Rust now preserves the source request write matrix and byte totals, deliberately narrow request-size matrix, peer/replica/access routing inputs, predicted-read and Cop identities, internal/analyze/background bypass, legacy/NextGen scan bytes, Cop/BatchCop/CopStream response distinctions, CPU precedence, response sizing, public controller information interfaces, physical admission/settlement ordering, penalty/priority mutation, and RU-detail updates. The external PD controller implementation remains injected, and downstream txn-file behavior remains on `txnkv/transaction`; neither is overclaimed here.
+Rust now preserves the source request write matrix and byte totals, deliberately narrow request-size matrix, peer/replica/access routing inputs, predicted-read and Cop identities, internal/analyze/background bypass, legacy/NextGen scan bytes, Cop/BatchCop/CopStream response distinctions, CPU precedence and overflow, response sizing, public controller information interfaces, physical admission/settlement ordering, penalty/priority mutation, and RU-detail updates. All five Go unit tests have exact independently selectable Rust identities. The external PD controller implementation remains injected, and downstream txn-file behavior remains on `txnkv/transaction`; neither is overclaimed here.
 
 Validation on `nightly-2026-08-22`:
 
-    cargo +nightly-2026-08-22 test -p tikv-client resource_control --lib
-    # 14 passed; 0 failed
+    cargo +nightly-2026-08-22 test -p tikv-client --lib source_go_internal_resourcecontrol_resource_control_test_ --no-default-features
+    # 5 passed; 0 failed
 
-    cargo +nightly-2026-08-22 test -p tikv-client resource_control --lib --all-features
-    # 14 passed; 0 failed
+    cargo +nightly-2026-08-22 test -p tikv-client --lib source_go_internal_resourcecontrol_resource_control_test_ --all-features
+    # 5 passed; 0 failed
 
-    cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet
-    # 523 passed; 0 failed
+    cargo +nightly-2026-08-22 test -p tikv-client --lib resource_control::test:: --no-default-features
+    # 15 passed; 0 failed
 
-    cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet
-    # 523 passed; 0 failed
+    cargo +nightly-2026-08-22 test -p tikv-client --lib resource_control::test:: --all-features
+    # 15 passed; 0 failed
 
-    cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features
-    # passed with the existing warning backlog
+    make unit-test
+    # 1,401 passed with 2 configured skips (no-default workspace)
+    # 1,365 passed with 6 configured skips (all-feature library)
 
-    cargo +nightly-2026-08-22 doc -p tikv-client --all-features --no-deps
-    # passed with two pre-existing unrelated rustdoc warnings
+    make check
+    # generation, all-target check, rustfmt, and Clippy -D warnings passed
+
+    make doc
+    # private rustdoc -D warnings and 51 doctests passed
 
     cargo +nightly-2026-08-22 fmt --all -- --check
     git diff --check
     # passed
 
-The pinned Go tests were inspected but not re-executed because this host has no `go` binary. No live cluster is required for this deterministic accounting/interceptor package; final cross-client TiKV/PD validation still covers consumer-level RU behavior.
+The pinned Go package passed normal and race tests in both legacy and `nextgen` configurations. The race runs emitted only the known macOS malformed `LC_DYSYMTAB` warning. No live cluster is required for this deterministic accounting/interceptor package; final cross-client TiKV/PD validation still covers consumer-level RU behavior.
 
 ## Complete package receipt: `txnkv/rangetask`
 
