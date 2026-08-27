@@ -2424,7 +2424,8 @@ pub mod test {
     }
 
     #[tokio::test]
-    async fn source_test_kv_store_close_check_region_cache_closed_before_pd_close() {
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestKVStoreCloseCheckRegionCacheClosedBeforePDClose() {
         #[derive(Clone)]
         struct OrderCheckingClient {
             cache_closed: Arc<AtomicBool>,
