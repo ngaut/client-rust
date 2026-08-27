@@ -173,6 +173,22 @@ pub struct RelatedSchemaChange {
 }
 
 const MAX_EXECUTION_TIME_EXCEEDED_SIGNAL: u32 = 2;
+const GO_DURATION_MAX_MILLIS: i64 = i64::MAX / 1_000_000;
+
+fn go_system_time_sub_millis(end: SystemTime, start: SystemTime) -> i64 {
+    let (negative, duration) = match end.duration_since(start) {
+        Ok(duration) => (false, duration),
+        Err(error) => (true, error.duration()),
+    };
+    // time.Time.Sub saturates to time.Duration's signed nanosecond range
+    // before Milliseconds truncates it toward zero.
+    let millis = duration.as_millis().min(GO_DURATION_MAX_MILLIS as u128) as i64;
+    if negative {
+        -millis
+    } else {
+        millis
+    }
+}
 
 fn effective_pessimistic_lock_wait_time(context: &mut LockContext, now: SystemTime) -> Result<i64> {
     let wait_time = context.lock_wait_time();
@@ -211,23 +227,15 @@ fn calculate_pessimistic_lock_wait_time(
     let mut effective = wait_time;
     if wait_time != LOCK_ALWAYS_WAIT {
         let elapsed = wait_start_time
-            .and_then(|started| now.duration_since(started).ok())
-            .unwrap_or_default()
-            .as_millis()
-            .try_into()
-            .unwrap_or(i64::MAX);
-        effective = wait_time.saturating_sub(elapsed);
+            .map(|started| go_system_time_sub_millis(now, started))
+            .unwrap_or_default();
+        effective = wait_time.wrapping_sub(elapsed);
         if effective <= 0 {
             return Ok(LOCK_NO_WAIT);
         }
     }
     if let Some(deadline) = max_execution_deadline {
-        let remaining = deadline
-            .duration_since(now)
-            .unwrap_or_default()
-            .as_millis()
-            .try_into()
-            .unwrap_or(i64::MAX);
+        let remaining = go_system_time_sub_millis(deadline, now);
         if remaining <= 0 {
             return Ok(LOCK_NO_WAIT);
         }
@@ -258,6 +266,26 @@ impl PessimisticLockDispatchTiming {
             )?;
         }
         Ok(())
+    }
+}
+
+struct LockKeysCallbackGuard<F: FnOnce()> {
+    callback: Option<F>,
+}
+
+impl<F: FnOnce()> LockKeysCallbackGuard<F> {
+    fn new(callback: F) -> Self {
+        Self {
+            callback: Some(callback),
+        }
+    }
+}
+
+impl<F: FnOnce()> Drop for LockKeysCallbackGuard<F> {
+    fn drop(&mut self) {
+        if let Some(callback) = self.callback.take() {
+            callback();
+        }
     }
 }
 
@@ -3122,25 +3150,27 @@ impl<PdC: PdClient> Transaction<PdC> {
             .await
     }
 
-    /// Lock keys and invoke `callback` after the lock attempt, including an
-    /// attempt that returns an error.
+    /// Lock keys and invoke `callback` after the source aggressive-lock
+    /// applicability preflight, including any later error.
     pub async fn lock_keys_with_context_and_callback(
         &mut self,
         context: &mut LockContext,
         keys: impl IntoIterator<Item = impl Into<Key>>,
         callback: impl FnOnce(),
     ) -> Result<()> {
-        let result = self
-            .lock_keys_with_context_inner(context, keys.into_iter().map(Into::into).collect())
-            .await;
-        callback();
-        result
+        self.lock_keys_with_context_inner(
+            context,
+            keys.into_iter().map(Into::into).collect(),
+            callback,
+        )
+        .await
     }
 
-    async fn lock_keys_with_context_inner(
+    async fn lock_keys_with_context_inner<F: FnOnce()>(
         &mut self,
         context: &mut LockContext,
         keys: Vec<Key>,
+        callback: F,
     ) -> Result<()> {
         debug!("invoking transactional lock_keys request");
         self.check_allow_operation().await?;
@@ -3157,6 +3187,11 @@ impl<PdC: PdClient> Transaction<PdC> {
                 self.done_aggressive_locking().await?;
             }
         }
+        // client-go registers LockKeysFunc's defer only after
+        // exitAggressiveLockingIfInapplicable. Keep the callback alive across
+        // every later return (and future cancellation), but do not invoke it
+        // when that source preflight rejects shared aggressive locking.
+        let _callback = LockKeysCallbackGuard::new(callback);
         if self.aggressive_locking.is_some() && !self.is_pessimistic() {
             return Err(Error::StringError(
                 "trying to perform aggressive locking in optimistic transaction".to_owned(),
@@ -9415,6 +9450,35 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
     use fail::FailScenario;
+
+    #[test]
+    fn source_uncovered_effective_wait_preserves_future_start_time() {
+        let now = std::time::UNIX_EPOCH + Duration::from_secs(1);
+        let wait_start = now + Duration::from_millis(50);
+
+        assert_eq!(
+            super::calculate_pessimistic_lock_wait_time(None, 100, Some(wait_start), None, now,)
+                .unwrap(),
+            150,
+        );
+
+        let far_deadline = now
+            .checked_add(Duration::from_millis(
+                (super::GO_DURATION_MAX_MILLIS + 1) as u64,
+            ))
+            .unwrap();
+        assert_eq!(
+            super::calculate_pessimistic_lock_wait_time(
+                None,
+                crate::kv::LOCK_ALWAYS_WAIT,
+                Some(now),
+                Some(far_deadline),
+                now,
+            )
+            .unwrap(),
+            super::GO_DURATION_MAX_MILLIS,
+        );
+    }
 
     use crate::disable_resource_control;
     use crate::enable_resource_control;
@@ -16997,6 +17061,56 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn source_uncovered_lock_keys_callback_starts_after_aggressive_preflight() {
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_pessimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        transaction.start_aggressive_locking();
+
+        let mut context = LockContext::new(2, crate::kv::LOCK_NO_WAIT, SystemTime::now());
+        context.in_share_mode = true;
+        let callback_calls = Arc::new(AtomicUsize::new(0));
+        let captured = Arc::clone(&callback_calls);
+        let error = transaction
+            .lock_keys_with_context_and_callback(&mut context, ["shared".to_owned()], move || {
+                captured.fetch_add(1, Ordering::SeqCst);
+            })
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("shared lock is not supported in aggressive/fair locking mode"));
+        assert_eq!(callback_calls.load(Ordering::SeqCst), 0);
+        assert!(transaction.is_in_aggressive_locking_mode());
+
+        let mut optimistic = Transaction::new(
+            Timestamp::from_version(1),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        optimistic.start_aggressive_locking();
+        let mut context = LockContext::new(2, crate::kv::LOCK_NO_WAIT, SystemTime::now());
+        let callback_calls = Arc::new(AtomicUsize::new(0));
+        let captured = Arc::clone(&callback_calls);
+        let error = optimistic
+            .lock_keys_with_context_and_callback(&mut context, ["key".to_owned()], move || {
+                captured.fetch_add(1, Ordering::SeqCst);
+            })
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("trying to perform aggressive locking in optimistic transaction"));
+        assert_eq!(callback_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
