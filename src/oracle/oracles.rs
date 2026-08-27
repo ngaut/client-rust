@@ -1423,6 +1423,44 @@ mod tests {
 
     #[tokio::test]
     #[allow(non_snake_case)]
+    async fn source_go_integration_tests_store_test_TestOracle() {
+        let oracle = MockOracle::new();
+        let option = OracleOption::default();
+
+        let first = oracle.get_timestamp(&option).await.unwrap();
+        let second = oracle.get_timestamp(&option).await.unwrap();
+        assert!(first < second);
+
+        let low_first = oracle.get_low_resolution_timestamp(&option).await.unwrap();
+        let low_second = oracle.get_low_resolution_timestamp(&option).await.unwrap();
+        assert!(low_first < low_second);
+        let low_async = oracle.get_low_resolution_timestamp_async(&option);
+        assert!(low_async.wait().await.unwrap() > low_second);
+        let _ = oracle.until_expired(0, 0, &option);
+
+        oracle.disable();
+        let enabling_oracle = oracle.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            enabling_oracle.enable();
+        });
+        let mut backoffer =
+            crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 5_000);
+        let retried = loop {
+            match oracle.get_timestamp(&option).await {
+                Ok(timestamp) => break timestamp,
+                Err(error) => backoffer
+                    .backoff(crate::retry::BO_PD_RPC, error.to_string())
+                    .await
+                    .unwrap(),
+            }
+        };
+        assert!(retried > low_second);
+        assert!(oracle.is_expired(low_second, 50, &option));
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
     async fn source_go_oracle_oracles_pd_test_TestPDOracle_UntilExpired() {
         let oracle = PdOracle::new(
             Arc::new(TestPdSource::new(1_700_000_000_000)),

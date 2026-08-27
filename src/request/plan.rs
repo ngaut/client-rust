@@ -998,6 +998,36 @@ pub struct RetryableMultiRegion<P: Plan, PdC: PdClient, R: RegionRetryState = Ba
     pub(crate) snapshot_async_batch_get: bool,
 }
 
+fn multi_region_shard_error<T>(result: &Result<Vec<Result<T>>>) -> Option<&Error> {
+    match result {
+        Err(error) => Some(error),
+        Ok(results) => results.iter().find_map(|result| result.as_ref().err()),
+    }
+}
+
+fn assertion_only_error(error: &Error) -> bool {
+    match error {
+        Error::AssertionFailed(_) => true,
+        Error::ExtractedErrors(errors) | Error::MultipleKeyErrors(errors) => {
+            !errors.is_empty() && errors.iter().all(assertion_only_error)
+        }
+        Error::Connection { source, .. }
+        | Error::UndeterminedError(source)
+        | Error::PessimisticLockError { inner: source, .. } => assertion_only_error(source),
+        _ => false,
+    }
+}
+
+fn into_multi_region_shard_error<T>(result: Result<Vec<Result<T>>>) -> Error {
+    match result {
+        Err(error) => error,
+        Ok(results) => results
+            .into_iter()
+            .find_map(Result::err)
+            .expect("selected failing shard must contain an error"),
+    }
+}
+
 #[allow(private_bounds)]
 impl<P: Plan + Shardable, PdC: PdClient, R: RegionRetryState> RetryableMultiRegion<P, PdC, R>
 where
@@ -1131,23 +1161,34 @@ where
             .collect::<Vec<Option<Result<<Self as Plan>::Result>>>>();
         let snapshot_waits_for_all_shards = snapshot_region_scope.is_some();
         let mut selected_error_index = None;
+        let mut selected_error_is_assertion = false;
         let mut last_forked = None;
         while let Some(joined) = join_set.join_next().await {
             let (index, (result, forked)) = match joined {
                 Ok(joined) => joined,
                 Err(error) => return (Err(error.into()), backoff),
             };
-            if result.is_err() {
+            if let Some(error) = multi_region_shard_error(&result) {
                 if snapshot_waits_for_all_shards {
                     // client-go's synchronous and callback BatchGet fanout
                     // both wait for every region and overwrite the returned
                     // error in completion order.
                     selected_error_index = Some(index);
-                } else if selected_error_index.is_none() {
-                    // RawKV fanout cancels sibling retry owners and retains
-                    // the first completed error.
-                    selected_error_index = Some(index);
-                    cancel.cancel();
+                    selected_error_is_assertion = assertion_only_error(error);
+                } else {
+                    let assertion_only = assertion_only_error(error);
+                    // Prewrite keeps the first assertion failure while it
+                    // waits for a stronger error from another batch. Any
+                    // non-assertion failure cancels sibling retries now.
+                    if selected_error_index.is_none()
+                        || (selected_error_is_assertion && !assertion_only)
+                    {
+                        selected_error_index = Some(index);
+                        selected_error_is_assertion = assertion_only;
+                    }
+                    if !assertion_only {
+                        cancel.cancel();
+                    }
                 }
             }
             last_forked = Some(forked);
@@ -1175,15 +1216,13 @@ where
                 backoff,
             )
         } else if let Some(error_index) = selected_error_index {
-            let error = match results
-                .into_iter()
-                .nth(error_index)
-                .expect("selected shard index must exist")
-                .expect("completed failing shard must produce a result")
-            {
-                Err(error) => error,
-                Ok(_) => unreachable!("selected shard result must be an error"),
-            };
+            let error = into_multi_region_shard_error(
+                results
+                    .into_iter()
+                    .nth(error_index)
+                    .expect("selected shard index must exist")
+                    .expect("completed failing shard must produce a result"),
+            );
             (Err(error), backoff)
         } else {
             let results = results
@@ -2722,6 +2761,24 @@ where
                     kvrpcpb::write_conflict::Reason::Optimistic,
                 )
                 .into());
+            }
+
+            // client-go's pessimistic-lock response handler deliberately does
+            // not resolve a lock that TiKV reports as recently updated. Such
+            // a response is the terminal result of TiKV's lock wait, not an
+            // orphan-cleanup opportunity. Shared-lock wrappers have already
+            // been expanded by `HasLocks`, so apply the source threshold to
+            // every holder independently.
+            if clone.resolve_locks_context.pessimistic_region_resolve {
+                const SKIP_RESOLVE_THRESHOLD_MS: u64 = 300;
+                let before = locks.len();
+                locks.retain(|lock| {
+                    lock.duration_to_last_update_ms == 0
+                        || lock.duration_to_last_update_ms >= SKIP_RESOLVE_THRESHOLD_MS
+                });
+                if locks.is_empty() && before != 0 {
+                    return Err(crate::error::ERR_LOCK_WAIT_TIMEOUT.into());
+                }
             }
 
             if self.backoff.is_none() {

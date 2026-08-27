@@ -1667,7 +1667,7 @@ impl Pool for Spool {
 #[cfg(test)]
 mod tests {
     use std::any::Any;
-    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
     use std::sync::Mutex as StdMutex;
 
     use super::*;
@@ -1903,6 +1903,148 @@ mod tests {
         .await;
         assert!(result.is_err());
         assert!(!modern_mode.load(AtomicOrdering::Acquire));
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_gc_test_TestLoadTxnSafePointFallback() {
+        async fn load(
+            index: usize,
+            compatible_modes: &[AtomicBool; 3],
+            pd_calls: &[AtomicUsize; 3],
+            unified_safe_point: &AtomicU64,
+            keyspace_safe_point: &AtomicU64,
+        ) -> Result<u64> {
+            load_txn_safe_point_compatibly(
+                &compatible_modes[index],
+                || {
+                    pd_calls[index].fetch_add(1, AtomicOrdering::SeqCst);
+                    async { Err(Error::GrpcAPI(tonic::Status::unimplemented("old PD"))) }
+                },
+                || {
+                    let value = if index < 2 {
+                        unified_safe_point.load(AtomicOrdering::SeqCst)
+                    } else {
+                        keyspace_safe_point.load(AtomicOrdering::SeqCst)
+                    };
+                    async move { Ok(value) }
+                },
+            )
+            .await
+        }
+
+        let compatible_modes = [
+            AtomicBool::new(false),
+            AtomicBool::new(false),
+            AtomicBool::new(false),
+        ];
+        let pd_calls = [
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+        ];
+        let unified_safe_point = AtomicU64::new(10);
+        let keyspace_safe_point = AtomicU64::new(0);
+
+        unified_safe_point.store(11, AtomicOrdering::SeqCst);
+        for _ in 0..2 {
+            assert_eq!(
+                load(
+                    0,
+                    &compatible_modes,
+                    &pd_calls,
+                    &unified_safe_point,
+                    &keyspace_safe_point,
+                )
+                .await
+                .unwrap(),
+                11
+            );
+            assert_eq!(
+                load(
+                    1,
+                    &compatible_modes,
+                    &pd_calls,
+                    &unified_safe_point,
+                    &keyspace_safe_point,
+                )
+                .await
+                .unwrap(),
+                11
+            );
+            assert!(
+                load(
+                    2,
+                    &compatible_modes,
+                    &pd_calls,
+                    &unified_safe_point,
+                    &keyspace_safe_point,
+                )
+                .await
+                .unwrap()
+                    < 11
+            );
+        }
+
+        keyspace_safe_point.store(12, AtomicOrdering::SeqCst);
+        for _ in 0..2 {
+            assert_eq!(
+                load(
+                    2,
+                    &compatible_modes,
+                    &pd_calls,
+                    &unified_safe_point,
+                    &keyspace_safe_point,
+                )
+                .await
+                .unwrap(),
+                12
+            );
+            for index in 0..2 {
+                assert!(
+                    load(
+                        index,
+                        &compatible_modes,
+                        &pd_calls,
+                        &unified_safe_point,
+                        &keyspace_safe_point,
+                    )
+                    .await
+                    .unwrap()
+                        < 12
+                );
+            }
+        }
+
+        assert_eq!(
+            pd_calls.map(|calls| calls.load(AtomicOrdering::SeqCst)),
+            [1, 1, 1]
+        );
+        assert!(compatible_modes
+            .iter()
+            .all(|mode| mode.load(AtomicOrdering::Acquire)));
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_gc_test_TestCompatibleTxnSafePointLoaderValueParsing() {
+        let kv = MockSafePointKv::new();
+        for (value, expected) in [
+            ("", Some(0)),
+            ("1", Some(1)),
+            ("abcde", None),
+            ("459579321342754819", Some(459_579_321_342_754_819)),
+            ("459579321342754819abcdefg", None),
+            ("18446744073709551615", Some(u64::MAX)),
+            ("18446744073709551616", None),
+        ] {
+            kv.put(GC_SAVED_SAFE_POINT, value).await.unwrap();
+            let result = load_safe_point(&kv).await;
+            match expected {
+                Some(expected) => assert_eq!(result.unwrap(), expected, "value {value:?}"),
+                None => assert!(result.is_err(), "value {value:?} must be rejected"),
+            }
+        }
     }
 
     #[tokio::test]
@@ -2307,6 +2449,119 @@ mod tests {
         assert_eq!(state.scopes[oracle::GLOBAL_TXN_SCOPE], 90);
         assert_eq!(fixtures[0].safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
         assert_eq!(fixtures[1].safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_pd_api_test_TestGetStoresMinResolvedTS() {
+        let fixtures = [safe_ts_store(
+            1,
+            "testDC",
+            crate::store::EndpointType::TiKv,
+            150,
+        )];
+
+        let state = refresh_fixture(
+            &fixtures,
+            Some(MockResolvedTsProvider {
+                global: 100,
+                stores: HashMap::new(),
+            }),
+        )
+        .await;
+
+        assert_eq!(state.scopes[oracle::GLOBAL_TXN_SCOPE], 100);
+        assert_eq!(fixtures[0].safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_pd_api_test_TestDCLabelClusterMinResolvedTS() {
+        let fixtures = [safe_ts_store(
+            1,
+            "testDC",
+            crate::store::EndpointType::TiKv,
+            150,
+        )];
+        let stores = [fixtures[0].store.clone()];
+        let state = RwLock::new(SafeTsState::default());
+
+        refresh_safe_ts_state(
+            &state,
+            &stores,
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 100,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes[oracle::GLOBAL_TXN_SCOPE], 100);
+        assert_eq!(fixtures[0].safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
+
+        refresh_safe_ts_state(
+            &state,
+            &stores,
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 0,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes["testDC"], 150);
+        assert!(fixtures[0].safe_ts_requests.load(AtomicOrdering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_pd_api_test_TestInitClusterMinResolvedTSZero() {
+        let state = RwLock::new(SafeTsState::default());
+        let zero_fixture = safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 0);
+        refresh_safe_ts_state(
+            &state,
+            &[zero_fixture.store],
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 0,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes[oracle::GLOBAL_TXN_SCOPE], 0);
+
+        let pd_fixture = safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 150);
+        refresh_safe_ts_state(
+            &state,
+            &[pd_fixture.store],
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 100,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes[oracle::GLOBAL_TXN_SCOPE], 100);
+        assert_eq!(pd_fixture.safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
+
+        let fallback_fixture = safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 150);
+        refresh_safe_ts_state(
+            &state,
+            &[fallback_fixture.store],
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 0,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes[oracle::GLOBAL_TXN_SCOPE], 150);
+        assert!(
+            fallback_fixture
+                .safe_ts_requests
+                .load(AtomicOrdering::SeqCst)
+                >= 1
+        );
     }
 
     #[tokio::test]

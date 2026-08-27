@@ -3742,11 +3742,15 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct RecordedHealthFeedback(Mutex<Vec<u64>>);
+    struct RecordedHealthFeedback(Mutex<Vec<(u64, u64, i32)>>);
 
     impl ClientEventListener for RecordedHealthFeedback {
         fn on_health_feedback(&self, feedback: &kvrpcpb::HealthFeedback) {
-            self.0.lock().unwrap().push(feedback.feedback_seq_no);
+            self.0.lock().unwrap().push((
+                feedback.feedback_seq_no,
+                feedback.store_id,
+                feedback.slow_score,
+            ));
         }
     }
 
@@ -4011,8 +4015,10 @@ mod tests {
         ));
     }
 
+    #[cfg(not(feature = "nextgen"))]
     #[tokio::test]
-    async fn source_test_batch_client_receive_health_feedback() {
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_health_feedback_test_TestGetHealthFeedback() {
         let client = KvRpcClient::new(
             vec![TikvClient::new(
                 Channel::from_static("http://127.0.0.1:1").connect_lazy(),
@@ -4024,14 +4030,19 @@ mod tests {
         client.set_event_listener(replaced.clone());
         client.set_event_listener(active.clone());
 
-        let _ = run_batch_receive_loop(
-            futures::stream::iter(vec![Ok(tikvpb::BatchCommandsResponse {
+        let responses = (1..=3).map(|feedback_seq_no| {
+            Ok(tikvpb::BatchCommandsResponse {
                 health_feedback: Some(kvrpcpb::HealthFeedback {
-                    feedback_seq_no: 7,
+                    feedback_seq_no,
+                    store_id: 41,
+                    slow_score: 1,
                     ..Default::default()
                 }),
                 ..Default::default()
-            })]),
+            })
+        });
+        let _ = run_batch_receive_loop(
+            futures::stream::iter(responses),
             Arc::new(BatchPendingResponses::new()),
             String::new(),
             "test",
@@ -4044,7 +4055,10 @@ mod tests {
         .await;
 
         assert!(replaced.0.lock().unwrap().is_empty());
-        assert_eq!(*active.0.lock().unwrap(), [7]);
+        assert_eq!(
+            *active.0.lock().unwrap(),
+            [(1, 41, 1), (2, 41, 1), (3, 41, 1)]
+        );
     }
 
     #[tokio::test]
