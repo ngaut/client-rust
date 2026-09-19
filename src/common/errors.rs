@@ -49,6 +49,9 @@ pub enum Error {
     /// client-go does.
     #[error(transparent)]
     Oracle(#[from] crate::oracle::OracleError),
+    /// Region discovery exhausted its PD backoff budget or was cancelled.
+    #[error("PD region lookup backoff failed: {0:?}")]
+    RegionLookupRetry(#[source] Box<crate::retry::RetryError>),
     /// Feature is not implemented.
     #[error("Unimplemented feature")]
     Unimplemented,
