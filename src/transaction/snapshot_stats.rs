@@ -12,6 +12,7 @@ use futures::future::BoxFuture;
 
 use crate::interceptor::{RpcDispatchResult, RpcInterceptor, RpcNext};
 use crate::proto::kvrpcpb;
+use crate::request::{ApiV2Codec, KeyMode};
 use crate::store::Request;
 use crate::util::format_duration;
 
@@ -54,10 +55,134 @@ struct BackoffRuntimeStat {
 struct SnapshotRuntimeStatsInner {
     rpc: BTreeMap<SnapshotRpcCommand, RpcRuntimeStat>,
     scan_detail: SnapshotScanDetail,
+    point_response: PointResponseCoverage,
     time_detail: SnapshotTimeDetail,
     resolve_lock_duration: Duration,
     backoff: BTreeMap<&'static str, BackoffRuntimeStat>,
     read_pool_task_details: SnapshotPoolTaskDetails,
+}
+
+#[derive(Clone, Copy, Default)]
+struct PointResponseCoverage {
+    payload_bytes: u64,
+    seen_response: bool,
+    missing_scan_detail: bool,
+}
+
+impl PointResponseCoverage {
+    fn record_response(&mut self, scan_detail: Option<&kvrpcpb::ScanDetailV2>, payload_bytes: u64) {
+        self.payload_bytes = self.payload_bytes.wrapping_add(payload_bytes);
+        self.seen_response = true;
+        self.missing_scan_detail |= scan_detail.is_none();
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.payload_bytes = self.payload_bytes.wrapping_add(other.payload_bytes);
+        self.seen_response |= other.seen_response;
+        self.missing_scan_detail |= other.missing_scan_detail;
+    }
+}
+
+/// Point-read storage work reported by TiKV scan details.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PointReadScanDetail {
+    /// Total number of MVCC versions encountered by storage.
+    pub total_keys: i64,
+    /// Number of user keys processed by storage.
+    pub processed_keys: i64,
+    /// Total size of processed user keys and values.
+    pub processed_keys_size: i64,
+}
+
+/// Value snapshot of Get, BatchGet, and BufferBatchGet response statistics.
+///
+/// Its zero value is valid but has no response coverage. Use
+/// [`Self::record_response`] and [`Self::merge`] to populate the values and
+/// coverage state. Copies are independent; callers must synchronize shared
+/// reads and writes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PointResponseStats {
+    /// Aggregated point-read work reported by ScanDetailV2 records.
+    pub scan_detail: PointReadScanDetail,
+    /// Logical successful-response payload bytes. Get contributes value bytes;
+    /// batch reads contribute key and value bytes for successful pairs.
+    pub payload_bytes: u64,
+    seen_response: bool,
+    missing_scan_detail: bool,
+    invalid: bool,
+}
+
+impl PointResponseStats {
+    /// Whether this snapshot has not been invalidated.
+    pub fn is_valid(self) -> bool {
+        !self.invalid
+    }
+
+    /// Whether every observed response included ScanDetailV2.
+    pub fn scan_detail_complete(self) -> bool {
+        self.is_valid() && self.seen_response && !self.missing_scan_detail
+    }
+
+    /// Whether at least one response was observed and its payload was accounted for.
+    pub fn payload_complete(self) -> bool {
+        self.is_valid() && self.seen_response
+    }
+
+    /// Mark this snapshot invalid. Further records or merges cannot restore it.
+    pub fn invalidate(&mut self) {
+        self.invalid = true;
+    }
+
+    /// Record one recognized response, including empty and key-error responses.
+    pub fn record_response(
+        &mut self,
+        scan_detail: Option<&kvrpcpb::ScanDetailV2>,
+        payload_bytes: u64,
+    ) {
+        if !self.is_valid() {
+            return;
+        }
+        self.seen_response = true;
+        self.missing_scan_detail |= scan_detail.is_none();
+        self.payload_bytes = self.payload_bytes.wrapping_add(payload_bytes);
+        if let Some(detail) = scan_detail {
+            self.scan_detail.total_keys = self
+                .scan_detail
+                .total_keys
+                .wrapping_add(detail.total_versions as i64);
+            self.scan_detail.processed_keys = self
+                .scan_detail
+                .processed_keys
+                .wrapping_add(detail.processed_versions as i64);
+            self.scan_detail.processed_keys_size = self
+                .scan_detail
+                .processed_keys_size
+                .wrapping_add(detail.processed_versions_size as i64);
+        }
+    }
+
+    /// Add another snapshot while preserving coverage and invalidation state.
+    pub fn merge(&mut self, other: Self) {
+        if !self.is_valid() || !other.is_valid() {
+            self.invalidate();
+            return;
+        }
+        self.scan_detail.total_keys = self
+            .scan_detail
+            .total_keys
+            .wrapping_add(other.scan_detail.total_keys);
+        self.scan_detail.processed_keys = self
+            .scan_detail
+            .processed_keys
+            .wrapping_add(other.scan_detail.processed_keys);
+        self.scan_detail.processed_keys_size = self
+            .scan_detail
+            .processed_keys_size
+            .wrapping_add(other.scan_detail.processed_keys_size);
+        self.payload_bytes = self.payload_bytes.wrapping_add(other.payload_bytes);
+        self.seen_response |= other.seen_response;
+        self.missing_scan_detail |= other.missing_scan_detail;
+    }
 }
 
 /// Aggregated TiKV MVCC/RocksDB scan details returned with snapshot reads.
@@ -584,6 +709,22 @@ impl SnapshotRuntimeStats {
             .clone()
     }
 
+    /// Return a point-in-time copy of point-read response statistics.
+    pub fn point_response_stats(&self) -> PointResponseStats {
+        let inner = self.inner.lock().expect("snapshot stats lock poisoned");
+        PointResponseStats {
+            scan_detail: PointReadScanDetail {
+                total_keys: inner.scan_detail.total_keys as i64,
+                processed_keys: inner.scan_detail.processed_keys as i64,
+                processed_keys_size: inner.scan_detail.processed_keys_size as i64,
+            },
+            payload_bytes: inner.point_response.payload_bytes,
+            seen_response: inner.point_response.seen_response,
+            missing_scan_detail: inner.point_response.missing_scan_detail,
+            invalid: false,
+        }
+    }
+
     /// Return a point-in-time copy of the accumulated TiKV execution times.
     pub fn time_detail(&self) -> SnapshotTimeDetail {
         self.inner
@@ -661,6 +802,7 @@ impl SnapshotRuntimeStats {
             merged.duration += stat.duration;
         }
         inner.scan_detail.merge(&other.scan_detail);
+        inner.point_response.merge(other.point_response);
         inner.time_detail.merge(&other.time_detail);
         inner
             .read_pool_task_details
@@ -692,8 +834,24 @@ impl SnapshotRuntimeStats {
         stat.duration += duration;
     }
 
+    #[cfg(test)]
     fn record_exec_detail(&self, detail: &kvrpcpb::ExecDetailsV2) {
         let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
+        Self::merge_exec_detail(&mut inner, detail);
+    }
+
+    fn record_point_response(&self, detail: Option<&kvrpcpb::ExecDetailsV2>, payload_bytes: u64) {
+        let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
+        let scan_detail = detail.and_then(|detail| detail.scan_detail_v2.as_ref());
+        inner
+            .point_response
+            .record_response(scan_detail, payload_bytes);
+        if let Some(detail) = detail {
+            Self::merge_exec_detail(&mut inner, detail);
+        }
+    }
+
+    fn merge_exec_detail(inner: &mut SnapshotRuntimeStatsInner, detail: &kvrpcpb::ExecDetailsV2) {
         if let Some(scan_detail) = &detail.scan_detail_v2 {
             inner.scan_detail.merge_from_pb(scan_detail);
         }
@@ -990,8 +1148,10 @@ impl RpcInterceptor for SnapshotRuntimeStatsInterceptor {
                 stats.record_rpc(command, started.elapsed());
             }
             if let Ok(response) = &result {
-                if let Some(detail) = snapshot_exec_detail(response.as_ref()) {
-                    stats.record_exec_detail(detail);
+                if let Some((detail, payload_bytes)) =
+                    snapshot_point_response(request, response.as_ref())
+                {
+                    stats.record_point_response(detail, payload_bytes);
                 }
             }
             result
@@ -1037,28 +1197,81 @@ fn observe_snapshot_read_sli(response: &dyn Any) {
     crate::stats::observe_snapshot_read_sli(read_keys, read_time, read_size);
 }
 
-fn snapshot_exec_detail(response: &dyn Any) -> Option<&kvrpcpb::ExecDetailsV2> {
+fn snapshot_point_response<'a>(
+    request: &dyn Request,
+    response: &'a dyn Any,
+) -> Option<(Option<&'a kvrpcpb::ExecDetailsV2>, u64)> {
     if let Some(response) = response.downcast_ref::<kvrpcpb::GetResponse>() {
-        response
-            .region_error
-            .is_none()
-            .then_some(())
-            .and(response.exec_details_v2.as_ref())
+        if response.region_error.is_some() {
+            return None;
+        }
+        let payload_bytes = if response.error.is_none() {
+            response.value.len() as u64
+        } else {
+            0
+        };
+        Some((response.exec_details_v2.as_ref(), payload_bytes))
     } else if let Some(response) = response.downcast_ref::<kvrpcpb::BatchGetResponse>() {
-        response
-            .region_error
-            .is_none()
-            .then_some(())
-            .and(response.exec_details_v2.as_ref())
+        if response.region_error.is_some() {
+            return None;
+        }
+        let payload_bytes = if response.error.is_none() {
+            response.pairs.iter().try_fold(0_u64, |payload, pair| {
+                if pair.error.is_some() {
+                    return Some(payload);
+                }
+                let key_len = logical_point_key_len(request, &pair.key)?;
+                Some(payload.wrapping_add(key_len as u64 + pair.value.len() as u64))
+            })?
+        } else {
+            0
+        };
+        Some((response.exec_details_v2.as_ref(), payload_bytes))
     } else if let Some(response) = response.downcast_ref::<kvrpcpb::BufferBatchGetResponse>() {
-        response
-            .region_error
-            .is_none()
-            .then_some(())
-            .and(response.exec_details_v2.as_ref())
+        if response.region_error.is_some() {
+            return None;
+        }
+        let payload_bytes = if response.error.is_none() {
+            response.pairs.iter().try_fold(0_u64, |payload, pair| {
+                if pair.error.is_some() {
+                    return Some(payload);
+                }
+                let key_len = logical_point_key_len(request, &pair.key)?;
+                Some(payload.wrapping_add(key_len as u64 + pair.value.len() as u64))
+            })?
+        } else {
+            0
+        };
+        Some((response.exec_details_v2.as_ref(), payload_bytes))
     } else {
         None
     }
+}
+
+fn logical_point_key_len(request: &dyn Request, key: &[u8]) -> Option<usize> {
+    if key.is_empty() {
+        return Some(0);
+    }
+    let Some(context) = request.tikv_context() else {
+        return Some(key.len());
+    };
+    if context.api_version != kvrpcpb::ApiVersion::V2 as i32 {
+        return Some(key.len());
+    }
+    let keyspace_id = match context.keyspace.as_ref()? {
+        kvrpcpb::context::Keyspace::KeyspaceId(keyspace_id) => *keyspace_id,
+        kvrpcpb::context::Keyspace::KeyspaceIdentity(_) => return None,
+    };
+    let mode = match key.first()? {
+        b'r' => KeyMode::Raw,
+        b'x' => KeyMode::Txn,
+        _ => return None,
+    };
+    ApiV2Codec::new(mode, keyspace_id)
+        .ok()?
+        .decode_key(key)
+        .ok()
+        .map(|key| key.len())
 }
 
 fn snapshot_rpc_command(request: &dyn Request) -> Option<SnapshotRpcCommand> {
@@ -1079,6 +1292,195 @@ fn snapshot_rpc_command(request: &dyn Request) -> Option<SnapshotRpcCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn point_response_stats_track_response_and_scan_detail_coverage() {
+        let mut stats = PointResponseStats::default();
+        assert!(stats.is_valid());
+        assert!(!stats.scan_detail_complete());
+        assert!(!stats.payload_complete());
+
+        stats.record_response(Some(&kvrpcpb::ScanDetailV2::default()), 0);
+        assert!(stats.scan_detail_complete());
+        assert!(stats.payload_complete());
+        assert_eq!(stats.scan_detail, PointReadScanDetail::default());
+
+        stats.record_response(
+            Some(&kvrpcpb::ScanDetailV2 {
+                total_versions: 5,
+                processed_versions: 3,
+                processed_versions_size: 30,
+                ..Default::default()
+            }),
+            7,
+        );
+        assert_eq!(
+            stats.scan_detail,
+            PointReadScanDetail {
+                total_keys: 5,
+                processed_keys: 3,
+                processed_keys_size: 30,
+            }
+        );
+        assert_eq!(stats.payload_bytes, 7);
+
+        stats.record_response(None, 2);
+        assert!(stats.is_valid());
+        assert!(!stats.scan_detail_complete());
+        assert!(stats.payload_complete());
+        assert_eq!(stats.payload_bytes, 9);
+        stats.record_response(Some(&kvrpcpb::ScanDetailV2::default()), 0);
+        assert!(!stats.scan_detail_complete());
+    }
+
+    #[test]
+    fn point_response_stats_merge_and_invalidate_like_client_go() {
+        let mut complete = PointResponseStats::default();
+        complete.record_response(
+            Some(&kvrpcpb::ScanDetailV2 {
+                total_versions: 2,
+                ..Default::default()
+            }),
+            3,
+        );
+        let mut missing = PointResponseStats::default();
+        missing.record_response(None, 5);
+        let mut invalid = PointResponseStats::default();
+        invalid.invalidate();
+
+        for left in [PointResponseStats::default(), complete, missing, invalid] {
+            for right in [PointResponseStats::default(), complete, missing, invalid] {
+                let mut merged = left;
+                merged.merge(right);
+                let valid = left.is_valid() && right.is_valid();
+                let seen = left.payload_complete() || right.payload_complete();
+                let scan_complete = (left.scan_detail_complete() || !left.payload_complete())
+                    && (right.scan_detail_complete() || !right.payload_complete());
+                assert_eq!(merged.is_valid(), valid);
+                assert_eq!(merged.payload_complete(), valid && seen);
+                assert_eq!(
+                    merged.scan_detail_complete(),
+                    valid && seen && scan_complete
+                );
+                if valid {
+                    assert_eq!(
+                        merged.payload_bytes,
+                        left.payload_bytes + right.payload_bytes
+                    );
+                    assert_eq!(
+                        merged.scan_detail.total_keys,
+                        left.scan_detail.total_keys + right.scan_detail.total_keys
+                    );
+                } else {
+                    assert_eq!(merged.payload_bytes, left.payload_bytes);
+                    assert_eq!(merged.scan_detail, left.scan_detail);
+                }
+            }
+        }
+
+        let mut stats = complete;
+        stats.invalidate();
+        let invalid_before = stats;
+        stats.record_response(
+            Some(&kvrpcpb::ScanDetailV2 {
+                total_versions: 1,
+                ..Default::default()
+            }),
+            1,
+        );
+        assert_eq!(stats, invalid_before);
+    }
+
+    #[test]
+    fn point_response_payload_uses_only_successful_logical_values() {
+        let get_request = kvrpcpb::GetRequest::default();
+        let get = kvrpcpb::GetResponse {
+            value: b"value".to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(snapshot_point_response(&get_request, &get).unwrap().1, 5);
+
+        let get_error = kvrpcpb::GetResponse {
+            value: b"ignored".to_vec(),
+            error: Some(kvrpcpb::KeyError {
+                abort: "x".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            snapshot_point_response(&get_request, &get_error).unwrap().1,
+            0
+        );
+        let get_region_error = kvrpcpb::GetResponse {
+            region_error: Some(crate::proto::errorpb::Error::default()),
+            ..Default::default()
+        };
+        assert!(snapshot_point_response(&get_request, &get_region_error).is_none());
+
+        let batch_request = kvrpcpb::BatchGetRequest::default();
+        let batch = kvrpcpb::BatchGetResponse {
+            pairs: vec![
+                kvrpcpb::KvPair {
+                    key: b"a".to_vec(),
+                    value: b"123".to_vec(),
+                    ..Default::default()
+                },
+                kvrpcpb::KvPair {
+                    key: b"b".to_vec(),
+                    value: b"ignored".to_vec(),
+                    error: Some(kvrpcpb::KeyError {
+                        abort: "pair".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            snapshot_point_response(&batch_request, &batch).unwrap().1,
+            4
+        );
+
+        let buffer_request = kvrpcpb::BufferBatchGetRequest::default();
+        let buffer_batch = kvrpcpb::BufferBatchGetResponse {
+            pairs: vec![kvrpcpb::KvPair {
+                key: b"key".to_vec(),
+                value: b"v".to_vec(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            snapshot_point_response(&buffer_request, &buffer_batch)
+                .unwrap()
+                .1,
+            4
+        );
+
+        let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
+        let v2_request = kvrpcpb::BatchGetRequest {
+            context: Some(kvrpcpb::Context {
+                api_version: kvrpcpb::ApiVersion::V2 as i32,
+                keyspace: Some(kvrpcpb::context::Keyspace::KeyspaceId(7)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let v2_batch = kvrpcpb::BatchGetResponse {
+            pairs: vec![kvrpcpb::KvPair {
+                key: codec.encode_key(b"key"),
+                value: b"v".to_vec(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            snapshot_point_response(&v2_request, &v2_batch).unwrap().1,
+            4
+        );
+    }
 
     fn assert_clone_and_merge_preserve_independent_rpc_totals() {
         let stats = SnapshotRuntimeStats::new();

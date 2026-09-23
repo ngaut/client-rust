@@ -90,6 +90,12 @@ pub fn redact_key_error_if_necessary(error: &mut ProtoKeyError) {
     {
         redact_lock_info(lock_info);
     }
+    if let Some(shared_lock_lost) = &mut error.shared_lock_lost {
+        redact_nonempty(&mut shared_lock_lost.key);
+    }
+    if let Some(lock_upgrade_conflict) = &mut error.lock_upgrade_conflict {
+        redact_nonempty(&mut lock_upgrade_conflict.key);
+    }
 }
 
 fn redact_lock_info(lock_info: &mut crate::proto::kvrpcpb::LockInfo) {
@@ -191,6 +197,14 @@ mod tests {
                 key: b"assertion".to_vec(),
                 ..Default::default()
             }),
+            shared_lock_lost: Some(kvrpcpb::SharedLockLost {
+                key: b"lost".to_vec(),
+                ..Default::default()
+            }),
+            lock_upgrade_conflict: Some(kvrpcpb::LockUpgradeConflict {
+                key: b"upgrade".to_vec(),
+                ..Default::default()
+            }),
             primary_mismatch: Some(kvrpcpb::PrimaryMismatch {
                 lock_info: Some(lock()),
             }),
@@ -213,6 +227,8 @@ mod tests {
         assert_eq!(error.commit_ts_expired.as_ref().unwrap().key, b"?");
         assert_eq!(error.txn_not_found.as_ref().unwrap().primary_key, b"?");
         assert_eq!(error.assertion_failed.as_ref().unwrap().key, b"?");
+        assert_eq!(error.shared_lock_lost.as_ref().unwrap().key, b"?");
+        assert_eq!(error.lock_upgrade_conflict.as_ref().unwrap().key, b"?");
         assert_lock(
             error
                 .primary_mismatch
