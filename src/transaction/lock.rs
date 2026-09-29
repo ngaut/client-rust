@@ -507,6 +507,8 @@ pub(crate) async fn resolve_locks_for_read_with_context_result(
 pub(crate) struct ResolveLocksResult {
     pub(crate) live_locks: Vec<kvrpcpb::LockInfo>,
     pub(crate) ms_before_expired: i64,
+    pub(crate) ignore_locks: Vec<u64>,
+    pub(crate) access_locks: Vec<u64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -633,6 +635,7 @@ async fn resolve_locks_with_context_body(
     let caller_start_ts = timestamp.version();
     let current_ts = ts.version();
 
+    let result_lock_context = read_lock_context.cloned().unwrap_or_default();
     let mut live_locks = Vec::new();
     let mut ms_before_expired = None;
     let pessimistic_region_resolve = context.pessimistic_region_resolve;
@@ -701,6 +704,13 @@ async fn resolve_locks_with_context_body(
                     stats::increment_lock_resolver_action("expired");
                     stats::increment_lock_resolver_action("resolve_async_commit");
                     let commit_version = status.commit_ts();
+                    record_read_lock_status(
+                        &result_lock_context,
+                        lock.lock_version,
+                        commit_version,
+                        caller_start_ts,
+                        status.action,
+                    );
                     let mut keys = primary_lock.secondaries;
                     keys.push(lock.primary_lock.clone());
                     if let Some(read_lock_context) = read_lock_context {
@@ -781,6 +791,13 @@ async fn resolve_locks_with_context_body(
                     if let Some(commit_version) = secondary_status
                         .determine_commit_ts(lock.lock_version, primary_min_commit_ts)?
                     {
+                        record_read_lock_status(
+                            &result_lock_context,
+                            lock.lock_version,
+                            commit_version,
+                            caller_start_ts,
+                            status.action,
+                        );
                         let mut determined_status = (*status).clone();
                         determined_status.kind = if commit_version == 0 {
                             TransactionStatusKind::RolledBack
@@ -869,6 +886,15 @@ async fn resolve_locks_with_context_body(
                         .await?;
                 }
 
+                if status.is_status_determined() {
+                    record_read_lock_status(
+                        &result_lock_context,
+                        lock.lock_version,
+                        status.commit_ts(),
+                        caller_start_ts,
+                        status.action,
+                    );
+                }
                 if is_pessimistic_lock(&lock) {
                     if let TransactionStatusKind::Locked(ttl, lock_info) = &status.kind {
                         // client-go treats a nonzero CheckTxnStatus TTL as
@@ -1077,9 +1103,12 @@ async fn resolve_locks_with_context_body(
         )
         .await;
     }
+    let (ignore_locks, access_locks) = result_lock_context.snapshot();
     Ok(ResolveLocksResult {
         live_locks,
         ms_before_expired: ms_before_expired.unwrap_or(0),
+        ignore_locks,
+        access_locks,
     })
 }
 
@@ -1971,24 +2000,7 @@ impl ReadLockContext {
     }
 }
 
-/// Exact lock-hint membership encoded on one read request.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ReadLockHintsInRequest {
-    resolved: HashSet<u64>,
-    committed: HashSet<u64>,
-}
-
-impl ReadLockHintsInRequest {
-    pub(crate) fn reported_lock_type(&self, txn_id: u64) -> Option<&'static str> {
-        if self.resolved.contains(&txn_id) {
-            Some("resolved")
-        } else if self.committed.contains(&txn_id) {
-            Some("committed")
-        } else {
-            None
-        }
-    }
-}
+pub(crate) use crate::txnkv::txnlock::LockHintsInRequest as ReadLockHintsInRequest;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResolveLocksOptions {
@@ -2210,14 +2222,14 @@ impl ResolveLocksContext {
 /// when the owning future is dropped. The registry uses a short synchronous
 /// critical section specifically so this guard can uphold client-go's deferred
 /// `ResolveLocksDone` lifetime without relying on a Tokio runtime in `Drop`.
-pub(crate) struct ResolvingLocksGuard {
+pub struct ResolvingLocksGuard {
     context: ResolveLocksContext,
     caller_start_ts: u64,
     token: usize,
 }
 
 impl ResolvingLocksGuard {
-    pub(crate) fn new(
+    pub fn new(
         context: ResolveLocksContext,
         locks: &[kvrpcpb::LockInfo],
         caller_start_ts: u64,
@@ -2230,7 +2242,7 @@ impl ResolvingLocksGuard {
         }
     }
 
-    pub(crate) fn update(&self, locks: &[kvrpcpb::LockInfo]) {
+    pub fn update(&self, locks: &[kvrpcpb::LockInfo]) {
         self.context
             .update_resolving_locks_sync(locks, self.caller_start_ts, self.token);
     }
@@ -2275,6 +2287,94 @@ fn is_txn_not_found_error(error: &Error) -> bool {
 }
 
 impl LockResolver {
+    /// Attach operation metadata without creating another resolver owner.
+    pub fn with_request_context(mut self, context: &kvrpcpb::Context) -> Self {
+        self.ctx.request_source.clone_from(&context.request_source);
+        self.ctx.resource_group_name = context
+            .resource_control_context
+            .as_ref()
+            .map(|resource| resource.resource_group_name.clone());
+        self
+    }
+
+    /// Source `ResolveLocksWithOpts` using the caller's cumulative backoffer.
+    /// Scheduling remains inside the shared resolver; this boundary converts
+    /// logical keys and the source operation/result contract.
+    pub async fn resolve_locks_with_opts(
+        &self,
+        pd_client: Arc<impl PdClient>,
+        keyspace: Keyspace,
+        keyspace_name: Option<&str>,
+        retry_owner: Arc<Mutex<crate::retry::RetryBackoffer>>,
+        opts: crate::txnkv::txnlock::ResolveLocksOptions,
+    ) -> Result<crate::txnkv::txnlock::ResolveLockResult> {
+        if opts.locks.is_empty() {
+            return Ok(crate::txnkv::txnlock::ResolveLockResult::default());
+        }
+        if opts.for_read {
+            if let Some((lock, kind)) = opts.locks.iter().find_map(|lock| {
+                opts.lock_hints_in_request
+                    .reported_lock_type(lock.lock_version)
+                    .map(|kind| (lock, kind))
+            }) {
+                retry_owner
+                    .lock()
+                    .await
+                    .backoff(
+                        crate::retry::BO_TXN_LOCK_FAST,
+                        format!(
+                            "lock {} was reported despite being included in the request's {} locks",
+                            lock.lock_version, kind
+                        ),
+                    )
+                    .await?;
+            }
+        }
+        let started = opts
+            .detail
+            .as_ref()
+            .filter(|_| !opts.locks.is_empty())
+            .map(|_| std::time::Instant::now());
+        let txn_ids: Vec<_> = opts.locks.iter().map(|lock| lock.lock_version).collect();
+        let mut context = self.ctx.clone();
+        context.force_lite = opts.lite;
+        context.pessimistic_region_resolve = opts.pessimistic_region_resolve;
+        context.retry_owner = Some(retry_owner.clone());
+        let read_context = ReadLockContext::default();
+        let cancellation = retry_owner.lock().await.cancellation().clone();
+        let result = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(Error::StringError("context canceled".into())),
+            result = resolve_locks_with_context_inner(
+                opts.locks.encode_keyspace(keyspace, KeyMode::Txn),
+                Timestamp::from_version(opts.caller_start_ts), pd_client, keyspace, keyspace_name,
+                context, opts.for_read.then_some(&read_context),
+            ) => result,
+        };
+        if let (Some(detail), Some(started)) = (opts.detail, started) {
+            let mut detail = detail.lock().unwrap();
+            detail.resolve_lock_time_ns = detail
+                .resolve_lock_time_ns
+                .wrapping_add(started.elapsed().as_nanos() as i64);
+        }
+        let result = result?;
+        // Go appends once per input lock; internal snapshot hints are sets.
+        let ignored: HashSet<_> = result.ignore_locks.into_iter().collect();
+        let accessed: HashSet<_> = result.access_locks.into_iter().collect();
+        Ok(crate::txnkv::txnlock::ResolveLockResult {
+            ttl: result.ms_before_expired,
+            ignore_locks: txn_ids
+                .iter()
+                .copied()
+                .filter(|id| ignored.contains(id))
+                .collect(),
+            access_locks: txn_ids
+                .into_iter()
+                .filter(|id| accessed.contains(id))
+                .collect(),
+        })
+    }
+
     pub fn new(ctx: ResolveLocksContext) -> Self {
         Self { ctx }
     }
