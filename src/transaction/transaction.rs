@@ -1385,7 +1385,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.replica_read_config = config;
     }
 
-    pub(crate) fn set_enable_async_batch_get(&mut self, enabled: bool) {
+    /// Select client-go's asynchronous BatchGet response handling for future reads.
+    /// Embedded store owners may refresh this from their published configuration.
+    pub fn set_enable_async_batch_get(&mut self, enabled: bool) {
         self.enable_async_batch_get = enabled;
     }
 
@@ -1397,7 +1399,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         });
     }
 
-    pub(crate) fn set_lock_resolver_context(&mut self, context: ResolveLocksContext) {
+    /// Share the store-owned final-status cache, cleanup pool and resolving-lock
+    /// observations, as client-go KVTxn shares its store's LockResolver.
+    pub fn set_lock_resolver_context(&mut self, context: ResolveLocksContext) {
         self.lock_resolver_context = context;
     }
 
@@ -4726,7 +4730,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             .scan_and_fetch(
                 range,
                 limit,
-                !key_only && !self.options.read_only,
+                // Go Scanner never populates the snapshot's point-read cache.
+                false,
                 reverse,
                 move |new_range, new_limit| async move {
                     let mut range = new_range;

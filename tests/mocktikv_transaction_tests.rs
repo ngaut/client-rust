@@ -169,3 +169,47 @@ fn synchronous_injected_transaction_commits_and_rolls_back_the_native_buffer() {
     assert_eq!(reader.get(b"rolled_back".to_vec()).unwrap(), None);
     reader.rollback().unwrap();
 }
+
+#[tokio::test]
+async fn transaction_scans_do_not_populate_the_point_read_cache() {
+    use tikv_client::PdClient;
+    let (_, cluster, pd) = new_mock_tikv("", None).unwrap();
+    bootstrap_with_single_store(&cluster);
+    let pd = Arc::new(pd);
+    let mut writer = Transaction::new(
+        pd.clone().get_timestamp().await.unwrap(),
+        pd.clone(),
+        TransactionOptions::new_optimistic(),
+        Keyspace::Disable,
+    );
+    writer
+        .put(b"key".to_vec(), b"value".to_vec())
+        .await
+        .unwrap();
+    writer.commit().await.unwrap();
+    let mut reader = Transaction::new(
+        pd.clone().get_timestamp().await.unwrap(),
+        pd,
+        TransactionOptions::new_optimistic(),
+        Keyspace::Disable,
+    );
+    assert_eq!(
+        reader
+            .scan(b"a".to_vec()..b"z".to_vec(), 10)
+            .await
+            .unwrap()
+            .count(),
+        1
+    );
+    assert_eq!(
+        reader.snapshot_cache_size(),
+        0,
+        "Go Scanner does not populate KVSnapshot's point cache"
+    );
+    assert_eq!(
+        reader.get(b"key".to_vec()).await.unwrap(),
+        Some(b"value".to_vec())
+    );
+    assert_eq!(reader.snapshot_cache_size(), 1);
+    reader.rollback().await.unwrap();
+}

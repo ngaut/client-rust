@@ -871,9 +871,18 @@ impl SnapshotRuntimeStats {
     }
 
     pub(crate) fn record_backoff(&self, retry_type: &'static str, duration: Duration) {
+        self.record_backoff_totals(retry_type, 1, duration);
+    }
+
+    pub(crate) fn record_backoff_totals(
+        &self,
+        retry_type: &'static str,
+        count: u64,
+        duration: Duration,
+    ) {
         let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
         let stat = inner.backoff.entry(retry_type).or_default();
-        stat.count += 1;
+        stat.count += count;
         stat.duration += duration;
     }
 }
