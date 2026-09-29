@@ -622,7 +622,6 @@ async fn resolve_locks_with_context_body(
     read_lock_context: Option<&ReadLockContext>,
 ) -> Result<ResolveLocksResult> {
     debug!("resolving locks");
-    stats::increment_lock_resolver_action("resolve");
     reject_shared_locks(&locks)?;
     // client-go ResolveLocksWithOpts returns before consulting the oracle when
     // no locks were supplied. This also keeps an empty retry path independent
@@ -630,7 +629,14 @@ async fn resolve_locks_with_context_body(
     if locks.is_empty() {
         return Ok(ResolveLocksResult::default());
     }
-    let ts = pd_client.clone().get_timestamp().await?;
+    stats::increment_lock_resolver_action("resolve");
+    // TTL zero is TiKV's unconditional-resolution protocol. It must also
+    // remain usable when the timestamp oracle is unavailable.
+    let ts = if locks.iter().any(|lock| lock.lock_ttl != 0) {
+        pd_client.clone().get_timestamp().await?
+    } else {
+        Timestamp::from_version(0)
+    };
     let caller_start_ts = timestamp.version();
     let current_ts = ts.version();
 
@@ -1123,6 +1129,9 @@ async fn resolve_locks_with_context_body(
         .iter()
         .filter_map(|(id, hint)| matches!(hint, Some(LockResultHint::Access)).then_some(*id))
         .collect();
+    if ms_before_expired.is_some_and(|ttl| ttl > 0) {
+        stats::increment_lock_resolver_action("wait_expired");
+    }
     Ok(ResolveLocksResult {
         live_locks,
         ms_before_expired: ms_before_expired.unwrap_or(0),
@@ -2395,14 +2404,17 @@ impl LockResolver {
         context.retry_owner = Some(retry_owner.clone());
         let read_context = ReadLockContext::default();
         let cancellation = retry_owner.lock().await.cancellation().clone();
+        if cancellation.is_cancelled() {
+            return Err(Error::StringError("context canceled".into()));
+        }
         let result = tokio::select! {
             biased;
-            _ = cancellation.cancelled() => Err(Error::StringError("context canceled".into())),
             result = resolve_locks_with_context_inner(
                 opts.locks.encode_keyspace(keyspace, KeyMode::Txn),
                 Timestamp::from_version(opts.caller_start_ts), pd_client, keyspace, keyspace_name,
                 context, opts.for_read.then_some(&read_context),
             ) => result,
+            _ = cancellation.cancelled() => Err(Error::StringError("context canceled".into())),
         };
         if let (Some(detail), Some(started)) = (opts.detail, started) {
             let mut detail = detail.lock().unwrap();
@@ -3193,6 +3205,44 @@ mod tests {
                 wait_duration: Duration::from_millis(3),
             })
         }
+    }
+
+    #[tokio::test]
+    async fn zero_ttl_resolution_does_not_consult_the_oracle() {
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |request| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                    .unwrap();
+                assert_eq!(request.current_ts, u64::MAX);
+                Ok(Box::new(kvrpcpb::CheckTxnStatusResponse::default()))
+            },
+        )));
+        pd.set_timestamp_sequence([]);
+        let result = LockResolver::new(ResolveLocksContext::default())
+            .resolve_locks_with_opts(
+                pd,
+                Keyspace::Disable,
+                None,
+                Arc::new(Mutex::new(crate::retry::RetryBackoffer::new(
+                    Cancellation::default(),
+                    10,
+                ))),
+                crate::txnkv::txnlock::ResolveLocksOptions {
+                    caller_start_ts: 100,
+                    locks: vec![kvrpcpb::LockInfo {
+                        key: vec![1],
+                        primary_lock: vec![1],
+                        lock_version: 42,
+                        lock_type: kvrpcpb::Op::Put as i32,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.ignore_locks, vec![42]);
     }
 
     #[tokio::test]
