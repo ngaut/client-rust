@@ -254,6 +254,31 @@ struct PessimisticLockDispatchTiming {
 }
 
 impl PessimisticLockDispatchTiming {
+    /// Go handlePessimisticLockResponse checks the statement budget only when
+    /// the resolver reports a live owner. TiKV owns the actual lock wait.
+    fn check_wait(&self) -> Result<()> {
+        let wait_time = self.wait_time.unwrap_or(LOCK_ALWAYS_WAIT);
+        let now = SystemTime::now();
+        calculate_pessimistic_lock_wait_time(
+            self.killed.as_ref(),
+            wait_time,
+            self.wait_start_time,
+            self.max_execution_deadline,
+            now,
+        )?;
+        if wait_time == LOCK_NO_WAIT {
+            return Err(crate::error::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.into());
+        }
+        if wait_time != LOCK_ALWAYS_WAIT
+            && self
+                .wait_start_time
+                .is_some_and(|started| go_system_time_sub_millis(now, started) >= wait_time)
+        {
+            return Err(crate::error::ERR_LOCK_WAIT_TIMEOUT.into());
+        }
+        Ok(())
+    }
+
     fn prepare(&self, request: &mut kvrpcpb::PessimisticLockRequest) -> Result<()> {
         request.lock_ttl = self.start_instant.elapsed().as_millis() as u64 + managed_lock_ttl();
         if let Some(wait_time) = self.wait_time {
@@ -815,7 +840,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .may_backoff_region_error(Some(error))
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(backoff) => {
                 if error.epoch_not_match.is_some()
                     && !crate::retry::is_fake_region_error(Some(error))
@@ -839,7 +864,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff(BO_REGION_MISS, reason)
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(backoff) => {
                 let delay = backoff.next_delay_duration().ok_or_else(|| {
                     Error::StringError("txn file: region retry exhausted".to_owned())
@@ -858,7 +883,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff(BO_TIKV_RPC, reason)
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(backoff) => {
                 let delay = backoff.next_delay_duration().ok_or_else(|| {
                     Error::StringError("txn file: RPC retry exhausted".to_owned())
@@ -877,7 +902,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff_with_config_and_max_sleep(BO_TXN_LOCK, Some(max_sleep_ms), reason)
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(_) => {
                 tokio::time::sleep(Duration::from_millis(max_sleep_ms)).await;
                 Ok(())
@@ -4140,6 +4165,21 @@ impl<PdC: PdClient> Transaction<PdC> {
         if self.is_pipelined() {
             panic!("can not set a txn with pipelined memdb to pessimistic mode");
         }
+        // The source has one retry policy for KVTxn. Preserve an explicit
+        // override, but switching transaction kind must keep the native
+        // defaults eligible for the source retry owner.
+        let previous_defaults = if self.options.is_pessimistic() {
+            RetryOptions::default_pessimistic()
+        } else {
+            RetryOptions::default_optimistic()
+        };
+        if self.options.retry_options == previous_defaults {
+            self.options.retry_options = if pessimistic {
+                RetryOptions::default_pessimistic()
+            } else {
+                RetryOptions::default_optimistic()
+            };
+        }
         self.buffer.set_pessimistic(pessimistic);
         self.options.kind = if pessimistic {
             TransactionKind::Pessimistic(Timestamp::from_version(0))
@@ -4244,6 +4284,11 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub fn memory_hook_set(&self) -> bool {
         self.buffer.memdb_memory_hook_is_set()
+    }
+
+    /// Borrows the same authoritative MemDB without requiring a mutable txn.
+    pub fn get_mem_buffer_readonly(&self) -> &super::unionstore::MemDb {
+        self.buffer.mem_buffer_readonly()
     }
 
     /// Returns the exact staged MemDB used by transaction reads and commit.
@@ -5016,6 +5061,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         >::new()));
         loop {
             let timing_for_dispatch = timing.clone();
+            let timing_for_wait = timing.clone();
             let resource_group_tag = resource_group_tag.clone();
             let resource_group_tagger = resource_group_tagger.clone();
             let decorated_requests = Arc::clone(&decorated_requests);
@@ -5061,6 +5107,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     self.options.retry_options.lock_backoff.clone(),
                     self.keyspace,
                     self.lock_resolver_context.clone(),
+                    Some(Arc::new(move || timing_for_wait.check_wait())),
                 )
                 .preserve_shard();
             let result = if let Some(owner) = source_retry_owner.as_ref() {
@@ -6012,7 +6059,7 @@ async fn scatter_split_regions<PdC: PdClient>(
                         format!("scatter split region {region_id} failed: {error}"),
                     )
                     .await
-                    .map_err(|error| Error::StringError(error.to_string()))?,
+                    .map_err(Error::from)?,
             }
         }
     }
@@ -6049,7 +6096,7 @@ async fn wait_scatter_region_finish<PdC: PdClient>(rpc: Arc<PdC>, region_id: u64
         retry
             .backoff(BO_REGION_MISS, reason)
             .await
-            .map_err(|error| Error::StringError(error.to_string()))?;
+            .map_err(Error::from)?;
     }
 }
 
@@ -8828,6 +8875,7 @@ impl<PdC: PdClient> Committer<PdC> {
             self.options.retry_options.lock_backoff.clone(),
             self.keyspace,
             self.lock_resolver_context.clone(),
+            None,
         )
         .prewrite_lock_conflict(
             self.start_version.version(),
@@ -8871,7 +8919,7 @@ impl<PdC: PdClient> Committer<PdC> {
                                 format!("standard 2PC prewrite result undetermined: {error}"),
                             )
                             .await
-                            .map_err(|error| Error::StringError(error.to_string()))?;
+                            .map_err(Error::from)?;
                         return Box::pin(self.prewrite_with_retry_owner(Some(owner))).await;
                     }
                 }
@@ -9612,6 +9660,49 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
     use fail::FailScenario;
+
+    #[tokio::test]
+    async fn source_transaction_file_retry_preserves_terminal_error_identity() {
+        for kind in 0..4 {
+            let mut backoff = super::TxnFileRetryBackoff::Source(Arc::new(
+                tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                    crate::async_util::Cancellation::default(),
+                    1,
+                )),
+            ));
+            let expected = match kind {
+                1 => crate::error::ERR_TIKV_SERVER_TIMEOUT,
+                2 => crate::error::ERR_RESOLVE_LOCK_TIMEOUT,
+                _ => crate::error::ERR_REGION_UNAVAILABLE,
+            };
+            let mut terminal = None;
+            for _ in 0..8 {
+                let result = match kind {
+                    0 => backoff.backoff_region_miss("missing region").await,
+                    1 => backoff.backoff_rpc("RPC failed").await,
+                    2 => backoff.backoff_lock(1, "live lock").await,
+                    _ => {
+                        backoff
+                            .backoff_region_error(&crate::proto::errorpb::Error {
+                                region_not_found: Some(
+                                    crate::proto::errorpb::RegionNotFound::default(),
+                                ),
+                                ..Default::default()
+                            })
+                            .await
+                    }
+                };
+                if let Err(error) = result {
+                    terminal = Some(error);
+                    break;
+                }
+            }
+            assert!(
+                matches!(terminal, Some(Error::Static(error)) if error == expected),
+                "kind={kind}: {terminal:?}"
+            );
+        }
+    }
 
     #[test]
     fn source_uncovered_effective_wait_preserves_future_start_time() {

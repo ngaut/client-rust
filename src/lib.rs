@@ -258,7 +258,10 @@ pub use crate::pd::PdClient;
 #[doc(inline)]
 pub use crate::pd::{get_store_liveness_timeout, set_store_liveness_timeout};
 #[doc(inline)]
-pub use crate::pd::{Cluster, CodecPdClient, PdRegionCodec, PdRpcClient, RetryClient};
+pub use crate::pd::{
+    Cluster, CodecPdClient, PdRegionCodec, PdRpcClient, RegionScanOptions, RetryClient,
+    RetryClientTrait,
+};
 #[doc(inline)]
 pub use crate::raw::lowering as raw_lowering;
 #[doc(inline)]
