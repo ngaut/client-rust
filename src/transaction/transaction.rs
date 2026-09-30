@@ -95,6 +95,19 @@ const CLEANUP_MAX_BACKOFF: u64 = 20_000;
 pub const PESSIMISTIC_LOCK_MAX_BACKOFF: u64 = 20_000;
 const MAX_COMMIT_TS_EXPIRED_GAP: u64 = 3_600_000 << 18;
 
+// Like client-go's newCleanupBackoffer, compensating cleanup ignores query kill
+// signals but retains its cancellation scope, retry budget and other variables.
+fn new_cleanup_backoffer(
+    cancellation: crate::async_util::Cancellation,
+    max_sleep_ms: u64,
+    variables: &Variables,
+) -> RetryBackoffer {
+    let mut variables = variables.clone();
+    variables.killed = Arc::new(atomic::AtomicU32::new(0));
+    variables.kill_signal_handler = None;
+    RetryBackoffer::with_variables(cancellation, max_sleep_ms, Arc::new(variables))
+}
+
 fn commit_ts_expired_gap_is_too_large(expired: &kvrpcpb::CommitTsExpired) -> bool {
     // Go's uint64 subtraction wraps. Preserve that behavior for malformed as
     // well as valid TiKV responses instead of silently accepting a response
@@ -5147,17 +5160,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         &self,
         max_sleep_ms: u64,
     ) -> Option<Arc<tokio::sync::Mutex<RetryBackoffer>>> {
-        let defaults = if self.options.is_pessimistic() {
-            RetryOptions::default_pessimistic()
-        } else {
-            RetryOptions::default_optimistic()
-        };
-        (self.options.retry_options == defaults).then(|| {
-            Arc::new(tokio::sync::Mutex::new(RetryBackoffer::with_variables(
+        self.options.source_retry_owner(|| {
+            RetryBackoffer::with_variables(
                 crate::async_util::Cancellation::default(),
                 max_sleep_ms,
                 self.commit_settings.variables.clone(),
-            )))
+            )
         })
     }
 
@@ -5673,7 +5681,13 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         self.commit_settings
             .apply_pessimistic_rollback_request(&mut req, MAX_WRITE_EXECUTION_TIME);
-        let source_retry_owner = self.source_retry_owner(PESSIMISTIC_LOCK_MAX_BACKOFF);
+        let source_retry_owner = self.options.source_retry_owner(|| {
+            new_cleanup_backoffer(
+                crate::async_util::Cancellation::default(),
+                PESSIMISTIC_LOCK_MAX_BACKOFF,
+                &self.commit_settings.variables,
+            )
+        });
         let plan = plan_with_keyspace_name(
             self.rpc.clone(),
             self.keyspace,
@@ -6243,6 +6257,20 @@ impl Default for TransactionOptions {
 }
 
 impl TransactionOptions {
+    // Explicit Rust retry policies keep their own limits instead of acquiring
+    // the default cumulative backoff budget, including during cleanup.
+    fn source_retry_owner(
+        &self,
+        new_backoffer: impl FnOnce() -> RetryBackoffer,
+    ) -> Option<Arc<tokio::sync::Mutex<RetryBackoffer>>> {
+        let defaults = if self.is_pessimistic() {
+            RetryOptions::default_pessimistic()
+        } else {
+            RetryOptions::default_optimistic()
+        };
+        (self.retry_options == defaults).then(|| Arc::new(tokio::sync::Mutex::new(new_backoffer())))
+    }
+
     pub(crate) fn with_config_commit_defaults(
         mut self,
         enable_async_commit: bool,
@@ -6573,17 +6601,12 @@ impl<PdC: PdClient> Committer<PdC> {
         &self,
         max_sleep_ms: u64,
     ) -> Option<Arc<tokio::sync::Mutex<RetryBackoffer>>> {
-        let defaults = if self.options.is_pessimistic() {
-            RetryOptions::default_pessimistic()
-        } else {
-            RetryOptions::default_optimistic()
-        };
-        (self.options.retry_options == defaults).then(|| {
-            Arc::new(tokio::sync::Mutex::new(RetryBackoffer::with_variables(
+        self.options.source_retry_owner(|| {
+            RetryBackoffer::with_variables(
                 crate::async_util::Cancellation::default(),
                 max_sleep_ms,
                 self.settings.variables.clone(),
-            )))
+            )
         })
     }
 
@@ -9429,7 +9452,13 @@ impl<PdC: PdClient> Committer<PdC> {
     /// been prewritten (locks still pessimistic) uses the narrower
     /// `PessimisticRollback`.
     async fn rollback(self, prewritten: bool) -> Result<()> {
-        let source_retry_owner = self.source_retry_owner(CLEANUP_MAX_BACKOFF);
+        let source_retry_owner = self.options.source_retry_owner(|| {
+            new_cleanup_backoffer(
+                crate::async_util::Cancellation::default(),
+                CLEANUP_MAX_BACKOFF,
+                &self.settings.variables,
+            )
+        });
         self.rollback_with_retry_owner(prewritten, source_retry_owner)
             .await
     }
@@ -10754,6 +10783,207 @@ mod tests {
             *pessimistic_rollbacks.lock().unwrap(),
             [vec![b"k".to_vec()]]
         );
+    }
+
+    struct RejectCleanupKillHandler(Arc<AtomicUsize>);
+
+    impl crate::kv::KillSignalHandler for RejectCleanupKillHandler {
+        fn handle_signal(&self) -> crate::Result<()> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(crate::error::ERR_QUERY_INTERRUPTED.into())
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum CleanupKind {
+        Prewrite,
+        TransactionLocks,
+        StatementLocks,
+    }
+
+    async fn check_cleanup_retries_ignore_query_kill(kind: CleanupKind, retry_limit: Option<u32>) {
+        for signal in [0, 7] {
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let captured = Arc::clone(&attempts);
+            let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request: &dyn Any| {
+                    let attempt = captured.fetch_add(1, Ordering::SeqCst);
+                    let region_error = (retry_limit.is_some() || attempt == 0).then(|| {
+                        crate::proto::errorpb::Error {
+                            not_leader: Some(crate::proto::errorpb::NotLeader {
+                                region_id: 2,
+                                leader: None,
+                            }),
+                            ..Default::default()
+                        }
+                    });
+                    if matches!(kind, CleanupKind::Prewrite) {
+                        assert!(request.is::<kvrpcpb::BatchRollbackRequest>());
+                        Ok(Box::new(kvrpcpb::BatchRollbackResponse {
+                            region_error,
+                            ..Default::default()
+                        }) as Box<dyn Any>)
+                    } else {
+                        assert!(request.is::<kvrpcpb::PessimisticRollbackRequest>());
+                        Ok(Box::new(kvrpcpb::PessimisticRollbackResponse {
+                            region_error,
+                            ..Default::default()
+                        }) as Box<dyn Any>)
+                    }
+                },
+            )));
+            let killed = Arc::new(std::sync::atomic::AtomicU32::new(signal));
+            let handler_calls = Arc::new(AtomicUsize::new(0));
+            let mut variables = crate::Variables::new(Arc::clone(&killed));
+            variables.kill_signal_handler = Some(Arc::new(RejectCleanupKillHandler(Arc::clone(
+                &handler_calls,
+            ))));
+            variables.backoff_weight = 3;
+            variables.backoff_lock_fast = 5;
+            let variables = Arc::new(variables);
+            let mut options = if matches!(kind, CleanupKind::Prewrite) {
+                TransactionOptions::new_optimistic()
+            } else {
+                TransactionOptions::new_pessimistic()
+            }
+            .drop_check(CheckLevel::None);
+            if let Some(limit) = retry_limit {
+                options = options.retry_options(if limit == 0 {
+                    RetryOptions::none()
+                } else {
+                    RetryOptions {
+                        region_backoff: Backoff::no_jitter_backoff(1, 1, limit),
+                        lock_backoff: Backoff::no_backoff(),
+                    }
+                });
+            }
+            let result = if matches!(kind, CleanupKind::StatementLocks) {
+                let mut transaction =
+                    Transaction::new(Timestamp::from_version(1), rpc, options, Keyspace::Disable);
+                transaction.set_variables(Arc::clone(&variables));
+                transaction
+                    .pessimistic_lock_rollback(
+                        std::iter::once(Key::from(b"k".to_vec())),
+                        Timestamp::from_version(1),
+                        Timestamp::from_version(2),
+                    )
+                    .await
+            } else {
+                let committer = source_test_committer(
+                    rpc,
+                    Some(Key::from(b"k".to_vec())),
+                    vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+                    options,
+                    CommitSettings {
+                        variables: Arc::clone(&variables),
+                        ..Default::default()
+                    },
+                )
+                .with_pessimistic_lock_keys(BTreeSet::from([b"k".to_vec()]));
+                committer
+                    .rollback(matches!(kind, CleanupKind::Prewrite))
+                    .await
+            };
+            if let Some(limit) = retry_limit {
+                assert!(
+                    result.is_err(),
+                    "cleanup must respect an explicit retry limit"
+                );
+                assert_eq!(attempts.load(Ordering::SeqCst), limit as usize + 1);
+            } else {
+                result.expect(
+                    "Go cleanup retries must survive the statement kill signal and handler",
+                );
+                assert_eq!(attempts.load(Ordering::SeqCst), 2);
+            }
+            assert_eq!(handler_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                killed.load(Ordering::SeqCst),
+                signal,
+                "cleanup must not clear the shared query kill signal"
+            );
+            assert!(variables.kill_signal_handler.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_retries_ignore_query_kill_for_prewrite_rollback() {
+        check_cleanup_retries_ignore_query_kill(CleanupKind::Prewrite, None).await;
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_retries_ignore_query_kill_for_transaction_lock_rollback() {
+        check_cleanup_retries_ignore_query_kill(CleanupKind::TransactionLocks, None).await;
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_retries_ignore_query_kill_for_statement_lock_rollback() {
+        check_cleanup_retries_ignore_query_kill(CleanupKind::StatementLocks, None).await;
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_preserves_explicit_retry_limits() {
+        for kind in [
+            CleanupKind::Prewrite,
+            CleanupKind::TransactionLocks,
+            CleanupKind::StatementLocks,
+        ] {
+            for limit in [0, 1] {
+                check_cleanup_retries_ignore_query_kill(kind, Some(limit)).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_preserves_variables_and_cancellation() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut variables = crate::Variables::default();
+        variables.killed.store(7, Ordering::SeqCst);
+        variables.kill_signal_handler =
+            Some(Arc::new(RejectCleanupKillHandler(Arc::clone(&calls))));
+        variables.backoff_weight = 3;
+        variables.backoff_lock_fast = 5;
+        variables.disable_txn_file = true;
+        variables.txn_file_min_mutation_size = 123;
+        let cancellation = crate::async_util::Cancellation::default();
+        let mut cleanup = super::new_cleanup_backoffer(cancellation.clone(), 17, &variables);
+        assert_eq!(cleanup.max_sleep_ms(), 51);
+        assert_eq!(cleanup.variables().backoff_lock_fast, 5);
+        assert!(cleanup.variables().disable_txn_file);
+        assert_eq!(cleanup.variables().txn_file_min_mutation_size, 123);
+        assert!(!Arc::ptr_eq(&cleanup.variables().killed, &variables.killed));
+        assert_eq!(cleanup.variables().killed.load(Ordering::SeqCst), 0);
+        assert!(cleanup.variables().kill_signal_handler.is_none());
+        cancellation.cancel();
+        assert!(matches!(
+            cleanup
+                .backoff(crate::retry::BO_REGION_MISS, "cleanup canceled")
+                .await,
+            Err(crate::retry::RetryError::Cancelled { .. })
+        ));
+        assert_eq!(cleanup.total_backoff_times(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(variables.killed.load(Ordering::SeqCst), 7);
+        assert!(variables.kill_signal_handler.is_some());
+
+        // Ordinary foreground/secondary/pipelined owners retain the query signal.
+        let committer = source_test_committer(
+            Arc::new(MockPdClient::default()),
+            Some(Key::from(b"k".to_vec())),
+            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+            TransactionOptions::new_optimistic(),
+            CommitSettings {
+                variables: Arc::new(variables),
+                ..Default::default()
+            },
+        );
+        let ordinary = committer.source_retry_owner(17).unwrap();
+        let ordinary = ordinary.lock().await;
+        assert!(ordinary.check_killed().is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        ordinary.variables().killed.store(0, Ordering::SeqCst);
+        assert!(ordinary.check_killed().is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
