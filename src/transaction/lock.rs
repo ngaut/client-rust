@@ -2405,7 +2405,7 @@ impl LockResolver {
         let read_context = ReadLockContext::default();
         let cancellation = retry_owner.lock().await.cancellation().clone();
         if cancellation.is_cancelled() {
-            return Err(Error::StringError("context canceled".into()));
+            return Err(Error::ContextCanceled);
         }
         let result = tokio::select! {
             biased;
@@ -2414,7 +2414,7 @@ impl LockResolver {
                 Timestamp::from_version(opts.caller_start_ts), pd_client, keyspace, keyspace_name,
                 context, opts.for_read.then_some(&read_context),
             ) => result,
-            _ = cancellation.cancelled() => Err(Error::StringError("context canceled".into())),
+            _ = cancellation.cancelled() => Err(Error::ContextCanceled),
         };
         if let (Some(detail), Some(started)) = (opts.detail, started) {
             let mut detail = detail.lock().unwrap();

@@ -1491,7 +1491,7 @@ impl KvClient for RpcClient {
             ))));
         }
         if failpoint_bool("rpcContextCancelErr") {
-            return Err(Error::StringError("context canceled".to_owned()));
+            return Err(Error::ContextCanceled);
         }
         Ok(response)
     }

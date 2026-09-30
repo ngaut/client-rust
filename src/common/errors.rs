@@ -26,6 +26,10 @@ pub use crate::proto::kvrpcpb::KeyError as ProtoKeyError;
 #[derive(Debug, Error)]
 #[allow(clippy::large_enum_variant)]
 pub enum Error {
+    /// The operation's cancellation scope was canceled, like Go's context.Canceled.
+    /// The variant, rather than its display text, identifies cancellation.
+    #[error("context canceled")]
+    ContextCanceled,
     /// A source-compatible singleton error category.
     #[error(transparent)]
     Static(#[from] crate::error::StaticError),

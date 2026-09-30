@@ -101,7 +101,7 @@ impl<P: Plan> Plan for RpcCancellable<P> {
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
-                Err(Error::StringError("context canceled".to_owned()))
+                Err(Error::ContextCanceled)
             }
             result = self.inner.execute() => result,
         }
@@ -1337,10 +1337,7 @@ where
         one_region: Option<bool>,
     ) -> (Result<<Self as Plan>::Result>, R) {
         if backoff.is_cancelled() {
-            return (
-                Err(Error::StringError("context canceled".to_owned())),
-                backoff,
-            );
+            return (Err(Error::ContextCanceled), backoff);
         }
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();
@@ -1968,7 +1965,7 @@ fn is_request_cancelled_error(error: &Error, request_context_cancelled: bool) ->
         Error::Connection { source, .. } => {
             is_request_cancelled_error(source, request_context_cancelled)
         }
-        Error::StringError(message) => message == "context canceled",
+        Error::ContextCanceled => true,
         _ => false,
     }
 }
@@ -3390,6 +3387,25 @@ mod test {
         };
         assert!(region_error.execute().await.is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn source_cancellation_uses_identity_not_error_text() {
+        let text = Error::StringError("context canceled".to_owned());
+        assert!(!is_request_cancelled_error(&text, false));
+        assert!(!is_request_cancelled_error(&text, true));
+        assert!(is_request_cancelled_error(&Error::ContextCanceled, false));
+        assert_eq!(Error::ContextCanceled.to_string(), "context canceled");
+        let wrapped = Error::Connection {
+            source: Box::new(Error::ContextCanceled),
+            address: "store".to_owned(),
+            version: 1,
+        };
+        assert!(is_request_cancelled_error(&wrapped, false));
+        assert!(!is_request_cancelled_error(
+            &Error::GrpcAPI(tonic::Status::unknown("context canceled")),
+            true,
+        ));
     }
 
     #[test]
@@ -5023,10 +5039,7 @@ mod test {
             },
             true
         ));
-        assert!(is_request_cancelled_error(
-            &Error::StringError("context canceled".to_owned()),
-            false
-        ));
+        assert!(is_request_cancelled_error(&Error::ContextCanceled, false));
         assert!(!is_request_cancelled_error(
             &Error::GrpcAPI(tonic::Status::deadline_exceeded("deadline")),
             true
@@ -6137,10 +6150,7 @@ mod test {
     fn source_go_region_request_TestOnSendFailedWithCancelled() {
         source_request_cancellation_is_terminal_without_store_failure_handling();
 
-        assert!(is_request_cancelled_error(
-            &Error::StringError("context canceled".to_owned()),
-            false
-        ));
+        assert!(is_request_cancelled_error(&Error::ContextCanceled, false));
     }
 
     #[test]

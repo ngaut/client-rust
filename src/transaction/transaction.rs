@@ -435,7 +435,7 @@ fn shared_lock_abort_from_error(error: &Error) -> Option<SharedLockAbort> {
 fn is_transaction_transport_error(error: &Error) -> bool {
     match error {
         Error::Grpc(_) | Error::GrpcAPI(_) | Error::Channel(_) => true,
-        Error::StringError(message) if message == "context canceled" => true,
+        Error::ContextCanceled => true,
         Error::Connection { source, .. } | Error::UndeterminedError(source) => {
             is_transaction_transport_error(source)
         }
@@ -452,6 +452,7 @@ fn is_txn_file_retryable_transport_error(error: &Error) -> bool {
         // client-go's RegionRequestSender returns a cancelled request context
         // directly. Retrying it loses the original cause and can duplicate a
         // transaction-file request that the caller has already abandoned.
+        Error::ContextCanceled => false,
         Error::GrpcAPI(status) if status.code() == tonic::Code::Cancelled => false,
         Error::Connection { source, .. } | Error::UndeterminedError(source) => {
             is_txn_file_retryable_transport_error(source)
@@ -9739,6 +9740,26 @@ mod tests {
                 "kind={kind}: {terminal:?}"
             );
         }
+    }
+
+    #[test]
+    fn source_cancellation_uses_identity_not_error_text() {
+        let text = crate::Error::StringError("context canceled".to_owned());
+        assert!(!super::is_transaction_transport_error(&text));
+        assert!(!super::is_txn_file_retryable_transport_error(&text));
+        assert!(super::is_transaction_transport_error(
+            &crate::Error::ContextCanceled
+        ));
+        assert!(!super::is_txn_file_retryable_transport_error(
+            &crate::Error::ContextCanceled
+        ));
+        let wrapped = crate::Error::Connection {
+            source: Box::new(crate::Error::ContextCanceled),
+            address: "store".to_owned(),
+            version: 1,
+        };
+        assert!(super::is_transaction_transport_error(&wrapped));
+        assert!(!super::is_txn_file_retryable_transport_error(&wrapped));
     }
 
     #[test]

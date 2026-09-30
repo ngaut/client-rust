@@ -40,7 +40,7 @@ Run native commands from `/Users/qiliu/projects/client-rust`. First run `cargo t
 ## Surprises & Discoveries
 
 
-TiDB's latest branch deliberately reverted the earlier native owner integration in `2471be70e9` without a reason. The user has been asked whether to keep that revert or restore the integration. This native repair is independent and already within the user's authorized client-go parity scope. Do not restore or update the TiDB dependency while that direction is pending. Its caller/store/background bridge lifetime inference remains a separate gap.
+TiDB's latest branch deliberately reverted the earlier native owner integration in `2471be70e9` without a reason. The user subsequently explicitly authorized removal of all reviewed duplicates and updating the TiDB dependency. The restoration and dependency refresh are now authorized; the historical repair below was independently validated before that decision. Its caller/store/background bridge lifetime inference remains a separate gap.
 
 ## Decision Log
 
@@ -63,7 +63,7 @@ Exact validation commands run from the native repository:
 
 Logs are `/private/tmp/native-cleanup-retry-red.log`, `native-cleanup-retry-green.log`, `native-cleanup-retry-lib.log` and `native-cleanup-retry-clippy.log`. The initial finite-budget test fixture incorrectly returned success after its first failure; it was corrected to return repeated region failures when testing exhaustion. The final finite-budget tests stop after exactly one RPC for no retries and two RPCs for one permitted retry. The repaired default cleanup path succeeds after two RPCs without invoking the killed-query handler or resetting the caller's atomic signal.
 
-This repository has no `make lint` target; strict Clippy is the native lint gate. TiDB files, protobuf generation inputs, Go files and Bazel metadata were not changed. TiDB server builds and Go lint were not rerun for this independent native repair. Real TiKV faults, feature-matrix builds, sysbench, TPC-C, TPC-H and YCSB were not verified. The change copies Variables and creates an independent kill atomic only when creating a default cleanup owner; ordinary successful transaction paths are unchanged. Transport/store cancellation ownership remains a separate structural gap, and the TiDB revert decision remains pending. No full-parity or benchmark-improvement claim is made.
+This repository has no `make lint` target; strict Clippy is the native lint gate. TiDB files, protobuf generation inputs, Go files and Bazel metadata were not changed. TiDB server builds and Go lint were not rerun for this independent native repair. Real TiKV faults, feature-matrix builds, sysbench, TPC-C, TPC-H and YCSB were not verified. The change copies Variables and creates an independent kill atomic only when creating a default cleanup owner; ordinary successful transaction paths are unchanged. Transport/store cancellation ownership remains a separate structural gap, and the TiDB integration is being restored in the authorized follow-up. No full-parity or benchmark-improvement claim is made.
 
 ## Recovery
 
