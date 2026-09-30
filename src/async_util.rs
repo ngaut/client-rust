@@ -30,6 +30,19 @@ pub async fn with_background_rpc_context<T>(
         .await
 }
 
+// Capture before spawning: Tokio task locals are not inherited by child tasks.
+pub(crate) fn inherit_background_rpc_context<T>(
+    future: impl std::future::Future<Output = T>,
+) -> impl std::future::Future<Output = T> {
+    let owner = background_rpc_cancellation();
+    async move {
+        match owner {
+            Some(owner) => with_background_rpc_context(owner, future).await,
+            None => future.await,
+        }
+    }
+}
+
 /// A synchronous task owned by an executor.
 pub type Task = Box<dyn FnOnce() + Send + 'static>;
 

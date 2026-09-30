@@ -10,7 +10,7 @@ Replace display-text matching with a typed Rust equivalent of Go context.Cancele
 - [x] Introduce Error::ContextCanceled and migrate every native producer and consumer.
 - [x] Preserve remote gRPC cancellation handling and recursive connection causes.
 - [x] Verify regressions, full library tests, strict Clippy and formatting.
-- [ ] Commit and publish to master, then refresh TiDB using its source sync script.
+- [x] Commit and publish to master as 89926da, then refresh TiDB using its source sync script.
 
 ## Decisions and discoveries
 

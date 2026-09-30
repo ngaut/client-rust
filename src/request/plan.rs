@@ -1188,21 +1188,23 @@ where
                 clone.set_snapshot_retry_owner(owner);
             }
             let permits = permits.clone();
-            join_set.spawn(async move {
-                (
-                    idx,
-                    Self::traced_single_shard_handler(
-                        pd_client,
-                        clone,
-                        region,
-                        backoff,
-                        permits,
-                        preserve_region_results,
-                        one_region,
+            join_set.spawn(crate::async_util::inherit_background_rpc_context(
+                async move {
+                    (
+                        idx,
+                        Self::traced_single_shard_handler(
+                            pd_client,
+                            clone,
+                            region,
+                            backoff,
+                            permits,
+                            preserve_region_results,
+                            one_region,
+                        )
+                        .await,
                     )
-                    .await,
-                )
-            });
+                },
+            ));
         }
 
         let mut results = std::iter::repeat_with(|| None)
@@ -2424,12 +2426,14 @@ where
             clone.apply_store(&store);
             let backoff = self.backoff.clone();
             let concurrency_permits = concurrency_permits.clone();
-            join_set.spawn(async move {
-                (
-                    idx,
-                    Self::single_store_handler(clone, backoff, concurrency_permits).await,
-                )
-            });
+            join_set.spawn(crate::async_util::inherit_background_rpc_context(
+                async move {
+                    (
+                        idx,
+                        Self::single_store_handler(clone, backoff, concurrency_permits).await,
+                    )
+                },
+            ));
         }
 
         let results =

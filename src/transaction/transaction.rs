@@ -5832,97 +5832,101 @@ impl<PdC: PdClient> Transaction<PdC> {
                 "starting auto-heartbeat, start_ts: {}, interval: {:?}",
                 start_ts_for_log, heartbeat_interval,
             );
-            tokio::spawn(async move {
-                if let Some(pre) = lifecycle_hooks.pre {
-                    pre();
-                }
-                let mut consecutive_failures = 0_u32;
-                loop {
-                    tokio::time::sleep(heartbeat_interval).await;
-                    if current_generation.load(atomic::Ordering::Acquire) != generation {
-                        break;
+            tokio::spawn(crate::async_util::with_background_rpc_context(
+                crate::async_util::Cancellation::default(),
+                async move {
+                    if let Some(pre) = lifecycle_hooks.pre {
+                        pre();
                     }
-                    let transaction_status: TransactionStatus =
-                        status.load(atomic::Ordering::Acquire).into();
-                    if matches!(
-                        transaction_status,
-                        TransactionStatus::Rolledback
-                            | TransactionStatus::Committed
-                            | TransactionStatus::Dropped
-                    ) {
-                        break;
-                    }
-                    if killed
-                        .as_ref()
-                        .is_some_and(|killed| killed.load(atomic::Ordering::Acquire) != 0)
-                    {
-                        break;
-                    }
-                    let now = match rpc.clone().get_timestamp().await {
-                        Ok(now) => now,
-                        Err(error) => {
-                            warn!(
-                                "auto-heartbeat get timestamp failed, start_ts: {}: {}",
-                                start_ts_for_log, error
-                            );
+                    let mut consecutive_failures = 0_u32;
+                    loop {
+                        tokio::time::sleep(heartbeat_interval).await;
+                        if current_generation.load(atomic::Ordering::Acquire) != generation {
                             break;
                         }
-                    };
-                    let uptime = crate::oracle::extract_physical(now.version())
-                        .saturating_sub(crate::oracle::extract_physical(start_ts.version()))
-                        .max(0) as u64;
-                    if uptime > crate::config::get_global_config().max_txn_ttl {
-                        if let Some(lock_expired) = &lock_expired {
-                            lock_expired.store(1, atomic::Ordering::Release);
+                        let transaction_status: TransactionStatus =
+                            status.load(atomic::Ordering::Acquire).into();
+                        if matches!(
+                            transaction_status,
+                            TransactionStatus::Rolledback
+                                | TransactionStatus::Committed
+                                | TransactionStatus::Dropped
+                        ) {
+                            break;
                         }
-                        break;
-                    }
-                    let mut request = new_heart_beat_request(
-                        start_ts.clone(),
-                        primary_key.clone(),
-                        uptime.saturating_add(managed_lock_ttl()),
-                    );
-                    request.min_commit_ts = min_commit_ts.get();
-                    request.is_txn_file = is_txn_file;
-                    commit_settings.apply_heartbeat_request(&mut request, MAX_WRITE_EXECUTION_TIME);
-                    let result = plan_with_keyspace_name(
-                        rpc.clone(),
-                        keyspace,
-                        keyspace_name.as_deref(),
-                        rpc_interceptor.clone(),
-                        None,
-                        None,
-                        ru_details.clone(),
-                        ReplicaReadConfig::default(),
-                        request,
-                    )
-                    .retry_multi_region(region_backoff.clone())
-                    .extract_error()
-                    .merge(CollectSingle)
-                    .post_process_default()
-                    .plan()
-                    .execute()
-                    .await;
-                    match result {
-                        Ok(_) => consecutive_failures = 0,
-                        Err(error) => {
-                            consecutive_failures = consecutive_failures.saturating_add(1);
-                            if heartbeat_error_stops_immediately(&error)
-                                || consecutive_failures > 10
-                            {
+                        if killed
+                            .as_ref()
+                            .is_some_and(|killed| killed.load(atomic::Ordering::Acquire) != 0)
+                        {
+                            break;
+                        }
+                        let now = match rpc.clone().get_timestamp().await {
+                            Ok(now) => now,
+                            Err(error) => {
                                 warn!(
-                                    "auto-heartbeat stopped, start_ts: {}, consecutive failures: {}: {}",
-                                    start_ts_for_log, consecutive_failures, error
+                                    "auto-heartbeat get timestamp failed, start_ts: {}: {}",
+                                    start_ts_for_log, error
                                 );
                                 break;
                             }
+                        };
+                        let uptime = crate::oracle::extract_physical(now.version())
+                            .saturating_sub(crate::oracle::extract_physical(start_ts.version()))
+                            .max(0) as u64;
+                        if uptime > crate::config::get_global_config().max_txn_ttl {
+                            if let Some(lock_expired) = &lock_expired {
+                                lock_expired.store(1, atomic::Ordering::Release);
+                            }
+                            break;
+                        }
+                        let mut request = new_heart_beat_request(
+                            start_ts.clone(),
+                            primary_key.clone(),
+                            uptime.saturating_add(managed_lock_ttl()),
+                        );
+                        request.min_commit_ts = min_commit_ts.get();
+                        request.is_txn_file = is_txn_file;
+                        commit_settings
+                            .apply_heartbeat_request(&mut request, MAX_WRITE_EXECUTION_TIME);
+                        let result = plan_with_keyspace_name(
+                            rpc.clone(),
+                            keyspace,
+                            keyspace_name.as_deref(),
+                            rpc_interceptor.clone(),
+                            None,
+                            None,
+                            ru_details.clone(),
+                            ReplicaReadConfig::default(),
+                            request,
+                        )
+                        .retry_multi_region(region_backoff.clone())
+                        .extract_error()
+                        .merge(CollectSingle)
+                        .post_process_default()
+                        .plan()
+                        .execute()
+                        .await;
+                        match result {
+                            Ok(_) => consecutive_failures = 0,
+                            Err(error) => {
+                                consecutive_failures = consecutive_failures.saturating_add(1);
+                                if heartbeat_error_stops_immediately(&error)
+                                    || consecutive_failures > 10
+                                {
+                                    warn!(
+                                    "auto-heartbeat stopped, start_ts: {}, consecutive failures: {}: {}",
+                                    start_ts_for_log, consecutive_failures, error
+                                );
+                                    break;
+                                }
+                            }
                         }
                     }
-                }
-                if let Some(post) = lifecycle_hooks.post {
-                    post();
-                }
-            });
+                    if let Some(post) = lifecycle_hooks.post {
+                        post();
+                    }
+                },
+            ));
         }))
     }
 
@@ -9268,6 +9272,19 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn commit_secondary(self, commit_version: Timestamp) -> Result<()> {
+        // client-go uses store.Ctx() for secondary commits, including async commit.
+        let cancellation = self.lock_resolver_context.background_cancellation();
+        crate::async_util::with_background_rpc_context(cancellation.clone(), async move {
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => Err(Error::ContextCanceled),
+                result = self.commit_secondary_in_background(commit_version) => result,
+            }
+        })
+        .await
+    }
+
+    async fn commit_secondary_in_background(self, commit_version: Timestamp) -> Result<()> {
         debug!(
             "committing secondary keys, start_ts: {}, mutations: {}",
             self.start_version.version(),
@@ -9453,15 +9470,21 @@ impl<PdC: PdClient> Committer<PdC> {
     /// been prewritten (locks still pessimistic) uses the narrower
     /// `PessimisticRollback`.
     async fn rollback(self, prewritten: bool) -> Result<()> {
+        // Go transaction rollback uses a background context. Statement lock
+        // rollback calls pessimistic_lock_rollback and retains its caller.
+        let cancellation = crate::async_util::Cancellation::default();
         let source_retry_owner = self.options.source_retry_owner(|| {
             new_cleanup_backoffer(
-                crate::async_util::Cancellation::default(),
+                cancellation.clone(),
                 CLEANUP_MAX_BACKOFF,
                 &self.settings.variables,
             )
         });
-        self.rollback_with_retry_owner(prewritten, source_retry_owner)
-            .await
+        crate::async_util::with_background_rpc_context(
+            cancellation,
+            self.rollback_with_retry_owner(prewritten, source_retry_owner),
+        )
+        .await
     }
 
     async fn rollback_with_retry_owner(
@@ -10828,6 +10851,11 @@ mod tests {
             let captured = Arc::clone(&attempts);
             let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
                 move |request: &dyn Any| {
+                    assert_eq!(
+                        crate::async_util::background_rpc_cancellation().is_some(),
+                        !matches!(kind, CleanupKind::StatementLocks),
+                        "the operation owner, not the RPC type, selects its lifetime"
+                    );
                     let attempt = captured.fetch_add(1, Ordering::SeqCst);
                     let region_error = (retry_limit.is_some() || attempt == 0).then(|| {
                         crate::proto::errorpb::Error {
@@ -11130,6 +11158,11 @@ mod tests {
                             request.context.as_ref().unwrap().resource_group_tag.clone(),
                         )
                     };
+                assert_eq!(
+                    crate::async_util::background_rpc_cancellation().is_some(),
+                    action != "prewrite",
+                    "foreground prewrite and background completion have distinct owners"
+                );
                 captured_requests
                     .lock()
                     .unwrap()
@@ -17267,6 +17300,10 @@ mod tests {
                             .expect("managed heartbeat carries a request context")
                             .max_execution_duration_ms,
                         20_000
+                    );
+                    assert!(
+                        crate::async_util::background_rpc_cancellation().is_some(),
+                        "TTL manager owns its background RPC lifetime"
                     );
                     *captured.lock().unwrap() = Some((request.min_commit_ts, request.is_txn_file));
                     sent_by_hook.notify_one();

@@ -2046,6 +2046,11 @@ impl Default for ResolveLocksOptions {
 }
 
 impl ResolveLocksContext {
+    // The client closes this shared owner before retiring its transport.
+    pub(crate) fn background_cancellation(&self) -> Cancellation {
+        self.async_resolve_pool.inner.cancellation.child()
+    }
+
     fn for_async_cleanup(&self, preserve_request_source: bool) -> Self {
         Self {
             request_source: if preserve_request_source {
@@ -2065,8 +2070,9 @@ impl ResolveLocksContext {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_async_resolve_pool_size(&mut self, size: usize) {
+    /// Configures cleanup concurrency before sharing this context with transactions.
+    /// Zero uses inline cleanup without closing the client-owned lifetime.
+    pub fn set_async_resolve_pool_size(&mut self, size: usize) {
         self.async_resolve_pool = AsyncResolveTaskPool::new(Arc::new(Semaphore::new(size)));
     }
 
