@@ -30,3 +30,7 @@ logs are /private/tmp/native-replica-owner-{red,green,all,clippy}.log.
 After publication, TiDB must synchronize through its maintained script and
 replace its own candidate score/filter/tie loop. No real-cluster or benchmark
 validation and no complete cache-owner migration is claimed.
+
+The public embedding path is tikv::{MixedReplicaSelection, ReplicaCandidate,
+ReplicaLiveness}; region_cache itself is private. TiDB compilation caught the
+missing public facade export, which is supplied in the publication follow-up.
