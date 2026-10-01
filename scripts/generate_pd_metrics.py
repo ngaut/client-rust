@@ -140,6 +140,8 @@ for name, package in PACKAGES.items():
     subprocess.run(['rustfmt','--edition','2021',str(target)], check=True)
     fixture=ROOT/'doc/pd-metrics-oracle'
     fixture.mkdir(parents=True, exist_ok=True)
-    (fixture/(name+'_test.go.txt')).write_text(oracle(data))
+    oracle_path = fixture / (name + '_test.go.txt')
+    oracle_path.write_text(oracle(data))
+    subprocess.run(['gofmt', '-s', '-w', str(oracle_path)], check=True)
     (fixture/(name+'_declarations.json')).write_text(json.dumps(data,indent=2)+'\n')
     print(name, len(data['collectors']), 'collectors,', len(data['shortcuts']), 'observers')
