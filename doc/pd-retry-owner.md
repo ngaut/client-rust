@@ -42,7 +42,7 @@ initialize; a stalled member probe must finish inside the requested deadline.
 
 Implement src/pd/backoff.rs and backoff_tests.rs as one complete Go package:
 exponential base/max/total normalization, optional checker and overwrite,
-warning cadence, original error identity, one reusable timer, budget spent only
+warning cadence, original error identity, one lazily initialized reusable timer, budget spent only
 on completed waits, deferred reset, context attachment and failpoint probe.
 A done future carries the owning context error; reuse TraceContext rather than
 creating another context type. Fixed interval retry has a ticker anchored at
@@ -104,7 +104,11 @@ The two source retry helpers intentionally return different errors when canceled
 Backoffer.Exec returns ctx.Err; Retry returns the last operation error. They both
 invoke the operation before checking cancellation. A sleep after each attempt
 would drift fixed retry intervals when operations take time, and dropping a
-Rust future needs RAII reset in addition to normal return handling.
+Rust future needs RAII reset in addition to normal return handling. Self-review
+also reproduces eager timer allocation on immediate success and Tokio Interval
+catch-up bursts below its five-millisecond missed-tick threshold. Pin optional
+timer storage lazily and use Go runtime ticker phase arithmetic with a reusable
+Sleep; both additional regressions fail before and pass after correction.
 
 ## Decision Log
 
@@ -120,10 +124,13 @@ reflection for diagnostics; their spelling is language-specific.
 ## Outcomes & Retrospective
 
 
-The complete retry package passes its original Go race/goleak tests, 94 focused
-native PD cases and 1,469 library tests (two existing ignored). Strict Clippy,
+The complete retry package passes its original Go race/goleak tests, 95 focused
+native PD cases and 1,470 library tests (two existing ignored). Strict Clippy,
 all-target compilation, formatting and complete inventory/source-restoration
-checks pass. Both transport regressions fail before and pass after the repair.
+checks pass. Both transport regressions and both timer self-review regressions fail before
+and pass after repair. Final focused/full/static gates were repeated after the
+timer corrections. Initial native publication is 043e71e; its follow-up retains
+Go timer activation and exact missed-tick semantics.
 Native publication and TiDB integration still use the gates above. All 77 known findings remain open in their existing
 workstream assignments. No live PD, Linux, sysbench, TPC-C, TPC-H or YCSB result
 is claimed by this deterministic dependency repair.

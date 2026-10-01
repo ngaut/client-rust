@@ -289,18 +289,21 @@ async fn fixed_interval_waits_after_last_failure_and_handles_zero_attempts() {
 
 #[tokio::test(start_paused = true)]
 async fn fixed_interval_keeps_ticker_phase_after_slow_operations() {
-    let count = AtomicUsize::new(0);
-    let start = Instant::now();
-    retry(pending(), 3, ms(100), || async {
-        if count.fetch_add(1, Ordering::SeqCst) == 0 {
-            tokio::time::sleep(ms(450)).await;
-        }
-        Err(error())
-    })
-    .await
-    .unwrap_err();
-    // Pending tick at 100ms is received at 450ms, then ticks at 500 and 600ms.
-    assert_eq!(start.elapsed(), ms(600));
+    // Cover both ordinary service intervals and lateness below Tokio's
+    // five-millisecond missed-tick threshold. Go drops missed ticks in both.
+    for (interval, operation, expected) in [(100, 450, 600), (1, 3, 5)] {
+        let count = AtomicUsize::new(0);
+        let start = Instant::now();
+        retry(pending(), 3, ms(interval), || async {
+            if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                tokio::time::sleep(ms(operation)).await;
+            }
+            Err(error())
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(start.elapsed(), ms(expected), "interval={interval}ms");
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -356,4 +359,19 @@ async fn source_failpoint_marks_a_completed_wait() {
         .await
         .unwrap_err();
     assert!(test_backoff_execute());
+}
+
+#[test]
+fn immediate_completion_does_not_construct_a_retry_timer() {
+    // Go only creates a timer after a retryable failure. No Tokio timer
+    // driver is needed when the operation succeeds or rejects retry.
+    let mut bo = Backoffer::new(ms(10), ms(100), ms(1000));
+    futures::executor::block_on(bo.exec(pending(), || ready(Ok(())))).unwrap();
+    reset(&bo);
+    bo.set_retryable_checker(Some(Box::new(|_| false)), true);
+    assert!(matches!(
+        futures::executor::block_on(bo.exec(pending(), || ready(Err(Error::Unimplemented)))),
+        Err(Error::Unimplemented)
+    ));
+    reset(&bo);
 }

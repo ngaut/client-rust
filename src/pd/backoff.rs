@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use log::{Level, Log, Metadata, Record};
 use tokio::sync::Mutex;
-use tokio::time::{Instant, MissedTickBehavior};
+use tokio::time::Instant;
 
 use crate::trace::TraceContext;
 use crate::{Error, Result};
@@ -92,8 +92,9 @@ impl Backoffer {
         let reset = ResetOnDrop(self);
         let bo = &mut *reset.0;
         tokio::pin!(context_done);
-        // Reuse one timer as Go does. It is armed only after a retryable error.
-        let timer = tokio::time::sleep(Duration::ZERO);
+        // Go creates no timer on immediate success or a non-retryable error.
+        // Pin its optional storage once, then reuse it after the first failure.
+        let timer = None::<tokio::time::Sleep>;
         tokio::pin!(timer);
         loop {
             let result = f().await;
@@ -112,11 +113,7 @@ impl Backoffer {
             let interval = bo.next_interval();
             bo.next_log_time = bo.next_log_time.saturating_add(interval);
             if !bo.log_interval.is_zero() && bo.next_log_time >= bo.log_interval {
-                let remainder = bo.next_log_time.as_nanos() % bo.log_interval.as_nanos();
-                bo.next_log_time = Duration::new(
-                    (remainder / 1_000_000_000) as u64,
-                    (remainder % 1_000_000_000) as u32,
-                );
+                bo.next_log_time = duration_remainder(bo.next_log_time, bo.log_interval);
                 let metadata = Metadata::builder()
                     .level(Level::Warn)
                     .target(module_path!())
@@ -128,10 +125,15 @@ impl Backoffer {
                     )).build());
                 }
             }
-            timer.as_mut().reset(Instant::now() + interval);
+            let deadline = Instant::now() + interval;
+            if let Some(timer) = timer.as_mut().as_pin_mut() {
+                timer.reset(deadline);
+            } else {
+                timer.set(Some(tokio::time::sleep_until(deadline)));
+            }
             tokio::select! {
                 error = &mut context_done => return Err(error),
-                _ = &mut timer => {
+                _ = timer.as_mut().as_pin_mut().expect("retry timer initialized") => {
                     let _ = fail::eval("backOffExecute", |_| {
                         BACKOFF_EXECUTED.store(true, Ordering::SeqCst);
                     });
@@ -171,6 +173,14 @@ impl Drop for ResetOnDrop<'_> {
     fn drop(&mut self) {
         self.0.reset();
     }
+}
+
+fn duration_remainder(value: Duration, divisor: Duration) -> Duration {
+    let nanos = value.as_nanos() % divisor.as_nanos();
+    Duration::new(
+        (nanos / 1_000_000_000) as u64,
+        (nanos % 1_000_000_000) as u32,
+    )
 }
 
 fn function_name<F>() -> &'static str {
@@ -226,9 +236,10 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    let mut ticker = tokio::time::interval_at(Instant::now() + interval, interval);
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    tokio::pin!(context_done);
+    assert!(!interval.is_zero(), "non-positive interval for ticker");
+    let mut next_tick = Instant::now() + interval;
+    let ticker = tokio::time::sleep_until(next_tick);
+    tokio::pin!(ticker, context_done);
     let mut last_error = None;
     for _ in 0..max_times {
         let error = match f().await {
@@ -237,8 +248,15 @@ where
         };
         tokio::select! {
             _ = &mut context_done => return Err(error),
-            _ = ticker.tick() => {}
+            _ = &mut ticker => {}
         }
+        // Go's ticker advances to the next original-phase deadline, dropping
+        // missed ticks. Tokio Interval permits catch-up bursts below 5ms even
+        // in Skip mode, so use Go's scheduling formula with one reusable timer.
+        let now = Instant::now();
+        let overdue = now.saturating_duration_since(next_tick);
+        next_tick = now + interval - duration_remainder(overdue, interval);
+        ticker.as_mut().reset(next_tick);
         last_error = Some(error);
     }
     last_error.map_or(Ok(()), Err)

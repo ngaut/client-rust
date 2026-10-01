@@ -58,7 +58,7 @@
     },
     {
       "owner": "time.Duration, Timer and Ticker",
-      "native": "Reuse/reset one pinned Tokio Sleep for exponential waits and one phase-based Interval with Skip for fixed retries. Duration::ZERO total is unbounded; negative durations/counts have no unsigned native representation. Saturating doubling prevents Rust overflow on durations outside Go signed range."
+      "native": "Lazily initialize and reuse one pinned Tokio Sleep for exponential waits. Fixed retry uses one reusable Sleep and Go runtime ticker phase arithmetic without Tokio Interval's five-millisecond burst tolerance. Duration::ZERO total is unbounded; negative durations/counts have no unsigned representation. Saturating doubling prevents Rust overflow."
     },
     {
       "owner": "runtime function names and logging",
@@ -224,17 +224,18 @@
     "Cargo.lock"
   ],
   "validation": {
-    "status": "native and original source passed; TiDB publication gates pending",
+    "status": "original, final native and timer self-review gates passed; TiDB integration publication pending",
     "red": "source_retry_ on unchanged native production: two regressions fail (first-error initialization and ignored GetMembers timeout), existing retry-config control passes; /private/tmp/pd-retry-red.log",
     "original": "go test -mod=readonly -race ./pkg/retry -count=1: passed with isolated failpoint enable/disable and all source bytes restored",
-    "focused": "cargo test --locked --lib pd:: -- --test-threads=1: 94 passed",
-    "native_library": "cargo test --locked --lib -- --test-threads=1: 1469 passed, 2 existing ignored",
+    "focused": "cargo test --locked --lib pd:: -- --test-threads=1: 95 passed",
+    "native_library": "cargo test --locked --lib -- --test-threads=1: 1470 passed, 2 existing ignored",
     "static": "cargo clippy --locked --lib -- -D warnings; cargo check --locked --all-targets; cargo fmt --all --check; git diff --check: passed",
     "unverified": [
       "Linux execution",
       "live PD/microservice topology",
       "full parent package acceptance",
       "sysbench/TPC-C/TPC-H/YCSB performance"
-    ]
+    ],
+    "self_review_red": "Immediate success without a Tokio driver panicked before lazy timer allocation; a 1ms ticker with a 3ms operation completed three failed attempts at 3ms instead of Go phase 5ms before explicit missed-tick scheduling. Both fail before and pass after repair; /private/tmp/pd-retry-lazy-timer-red.log and /private/tmp/pd-retry-ticker-red.log."
   }
 }
