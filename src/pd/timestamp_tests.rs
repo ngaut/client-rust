@@ -38,6 +38,7 @@ struct PdServer {
     group: Arc<std::sync::RwLock<tsopb::KeyspaceGroup>>,
     revision: Arc<AtomicUsize>,
     discovery_requests: Arc<AtomicUsize>,
+    stall_discovery: Arc<std::sync::atomic::AtomicBool>,
     tso_headers: Arc<std::sync::Mutex<Vec<tsopb::RequestHeader>>>,
     cluster_info: Arc<std::sync::RwLock<Option<pdpb::GetClusterInfoResponse>>>,
     reply: Reply,
@@ -360,6 +361,7 @@ impl Server {
             })),
             revision: Arc::new(AtomicUsize::new(1)),
             discovery_requests: Arc::new(AtomicUsize::new(0)),
+            stall_discovery: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tso_headers: Arc::new(std::sync::Mutex::new(Vec::new())),
             cluster_info: Arc::new(std::sync::RwLock::new(None)),
             reply,
@@ -1473,6 +1475,9 @@ impl tonic::server::UnaryService<tsopb::FindGroupByKeyspaceIdRequest> for TsoSer
                 service.endpoint.strip_prefix("http://").unwrap()
             );
             service.discovery_requests.fetch_add(1, Ordering::SeqCst);
+            if service.stall_discovery.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
             Ok(tonic::Response::new(tsopb::FindGroupByKeyspaceIdResponse {
                 header: Some(tsopb::ResponseHeader {
                     cluster_id: 42,
@@ -1651,4 +1656,47 @@ async fn source_service_header_errors_do_not_fall_back() {
         .connect_cluster(&[server.service.endpoint.clone()], Duration::from_secs(1))
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn source_service_failed_initial_probe_rotates_to_healthy_endpoint() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let a = Server::start(Reply::Timestamp).await;
+    let b = Server::start(Reply::Timestamp).await;
+    let (stalled, healthy) = if a.service.endpoint < b.service.endpoint {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    stalled
+        .service
+        .stall_discovery
+        .store(true, Ordering::SeqCst);
+    *pd.service.cluster_info.write().unwrap() = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        tso_urls: vec![
+            stalled.service.endpoint.clone(),
+            healthy.service.endpoint.clone(),
+        ],
+        ..Default::default()
+    });
+    let connection = Connection::new(Arc::new(SecurityManager::default()));
+    let endpoints = [pd.service.endpoint.clone()];
+    assert!(connection
+        .connect_cluster(&endpoints, Duration::from_millis(100))
+        .await
+        .is_err());
+    let cluster = connection
+        .connect_cluster(&endpoints, Duration::from_secs(1))
+        .await
+        .expect("failed probes must advance selection even before initial publication");
+    let client = Arc::new(RetryClient::new_with_cluster(
+        Arc::new(SecurityManager::default()),
+        Duration::from_secs(1),
+        cluster,
+    ));
+    assert_eq!(client.clone().get_timestamp().await.unwrap().physical, 200);
+    assert_eq!(stalled.service.discovery_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(healthy.service.discovery_requests.load(Ordering::SeqCst), 1);
+    client.close().await;
 }

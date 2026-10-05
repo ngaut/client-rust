@@ -526,6 +526,8 @@ pub(crate) struct LeaderConnection {
 #[derive(Clone)]
 pub struct Connection {
     security_mgr: Arc<SecurityManager>,
+    // Initialization retries share probe selection before a Cluster exists.
+    discovery: TsoDiscovery,
 }
 
 impl Connection {
@@ -534,7 +536,10 @@ impl Connection {
     }
 
     pub fn new(security_mgr: Arc<SecurityManager>) -> Connection {
-        Connection { security_mgr }
+        Connection {
+            security_mgr,
+            discovery: TsoDiscovery::default(),
+        }
     }
 
     pub async fn connect_cluster(
@@ -546,7 +551,7 @@ impl Connection {
         let (client, keyspace_client, members, url) =
             self.try_connect_leader(&members, timeout).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
-        let mut discovery = TsoDiscovery::default();
+        let mut discovery = self.discovery.clone();
         let (route, channel) = self.discover(&mut discovery, id, &url, timeout).await?;
         let tso = Manager::new();
         tso.store(&tso_connection(id, route.clone(), channel, timeout)?, false);

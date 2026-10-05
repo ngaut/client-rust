@@ -258,9 +258,9 @@ pub use crate::pd::backoff as pd_backoff;
 pub use crate::pd::circuitbreaker as pd_circuitbreaker;
 pub use crate::pd::metrics as pd_metrics;
 #[doc(inline)]
-pub use crate::pd::service_discovery as pd_service_discovery;
-#[doc(inline)]
 pub use crate::pd::opt as pd_options;
+#[doc(inline)]
+pub use crate::pd::service_discovery as pd_service_discovery;
 #[doc(inline)]
 pub use crate::pd::PdClient;
 #[doc(inline)]

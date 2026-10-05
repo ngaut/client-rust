@@ -6,6 +6,7 @@
 use crate::proto::{keyspacepb, meta_storagepb, pdpb, tsopb};
 use futures::{Stream, StreamExt};
 use prost::Message;
+use std::sync::{Arc, Mutex};
 use std::{future::Future, pin::Pin, time::Duration};
 use tonic::{transport::Channel, Request, Status};
 
@@ -81,6 +82,11 @@ pub struct TsoDiscovery {
     keyspace_id: u32,
     assigned_group: bool,
     revision: u64,
+    cursor: Arc<Mutex<DiscoveryCursor>>,
+}
+
+#[derive(Debug, Default)]
+struct DiscoveryCursor {
     urls: Vec<String>,
     next: usize,
 }
@@ -91,8 +97,7 @@ impl Default for TsoDiscovery {
             keyspace_id: NULL_KEYSPACE_ID,
             assigned_group: false,
             revision: 0,
-            urls: Vec::new(),
-            next: 0,
+            cursor: Arc::new(Mutex::new(DiscoveryCursor::default())),
         }
     }
 }
@@ -231,12 +236,19 @@ impl TsoDiscovery {
         } else {
             let mut urls = info.tso_urls;
             urls.sort();
-            if self.urls != urls {
-                self.urls = urls;
-                self.next = 0;
-            }
-            let url = self.urls[self.next % self.urls.len()].clone();
-            self.next = (self.next + 1) % self.urls.len();
+            // Attempts are not published routing observations. Share the
+            // selection cursor across snapshots so an error or cancellation
+            // advances the next probe without accepting failed group metadata.
+            let url = {
+                let mut cursor = self.cursor.lock().expect("TSO discovery cursor poisoned");
+                if cursor.urls != urls {
+                    cursor.urls = urls;
+                    cursor.next = 0;
+                }
+                let url = cursor.urls[cursor.next % cursor.urls.len()].clone();
+                cursor.next = (cursor.next + 1) % cursor.urls.len();
+                url
+            };
             let (mut group, mut revision) =
                 self.find_group(cluster_id, &url, timeout, &dial).await?;
             // A discovery server outside the group can return only secondaries.
@@ -279,8 +291,7 @@ impl TsoDiscovery {
     fn classic(&mut self, leader: &str) -> TsoRoute {
         // A subsequent API-mode entry creates a new group discovery lifecycle.
         self.revision = 0;
-        self.urls.clear();
-        self.next = 0;
+        *self.cursor.lock().expect("TSO discovery cursor poisoned") = DiscoveryCursor::default();
         TsoRoute {
             endpoint: leader.to_owned(),
             keyspace_id: self.keyspace_id,
