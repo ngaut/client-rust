@@ -284,6 +284,73 @@ impl TsoStream {
     }
 }
 
+/// Shared Go tryConnectToTSO feedback. Local cancellation never enters this owner.
+#[derive(Clone, Debug, Default)]
+pub struct TsoForwarding {
+    state: Arc<Mutex<TsoForwardingState>>,
+}
+
+#[derive(Debug, Default)]
+struct TsoForwardingState {
+    primary: Option<TsoRoute>,
+    enabled: bool,
+    attempts: usize,
+    network_errors: usize,
+    fallback: Option<TsoRoute>,
+}
+
+impl TsoForwarding {
+    fn configure(&self, primary: &TsoRoute, enabled: bool) {
+        let mut state = self.state.lock().expect("TSO forwarding poisoned");
+        if state.primary.as_ref() != Some(primary) || state.enabled != enabled {
+            *state = TsoForwardingState {
+                primary: Some(primary.clone()),
+                enabled,
+                ..Default::default()
+            };
+        }
+    }
+
+    /// Record a failed stream construction, excluding caller/route cancellation.
+    pub fn record_error(&self, route: &TsoRoute, status: &Status) {
+        let mut state = self.state.lock().expect("TSO forwarding poisoned");
+        if !state.enabled {
+            return;
+        }
+        if state.fallback.as_ref() == Some(route) {
+            state.fallback = None;
+            state.attempts = 0;
+            state.network_errors = 0;
+            return;
+        }
+        if state.primary.as_ref() != Some(route) {
+            return;
+        }
+        state.attempts = (state.attempts + 1).min(6);
+        if matches!(
+            status.code(),
+            tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Cancelled
+        ) {
+            state.network_errors = (state.network_errors + 1).min(6);
+        }
+        // Go considers six attempts as one window; a mixed window cannot forward.
+        if state.attempts == 6 && state.network_errors != 6 {
+            state.attempts = 0;
+            state.network_errors = 0;
+        }
+    }
+
+    /// A successfully served primary ends its previous construction-failure window.
+    pub fn record_success(&self, route: &TsoRoute) {
+        let mut state = self.state.lock().expect("TSO forwarding poisoned");
+        if state.primary.as_ref() == Some(route) {
+            state.attempts = 0;
+            state.network_errors = 0;
+            state.fallback = None;
+        }
+    }
+}
+
 /// Clone before refreshing, then publish only after discovery and dialing have
 /// succeeded. Failed RPCs must not overwrite the last accepted revision/route.
 #[derive(Clone, Debug)]
@@ -293,6 +360,8 @@ pub struct TsoDiscovery {
     revision: u64,
     service_urls: Vec<String>,
     cursor: Arc<Mutex<DiscoveryCursor>>,
+    forwarding: TsoForwarding,
+    accepted_route: Option<TsoRoute>,
 }
 
 #[derive(Debug, Default)]
@@ -309,11 +378,18 @@ impl Default for TsoDiscovery {
             revision: 0,
             service_urls: Vec::new(),
             cursor: Arc::new(Mutex::new(DiscoveryCursor::default())),
+            forwarding: TsoForwarding::default(),
+            accepted_route: None,
         }
     }
 }
 
 impl TsoDiscovery {
+    /// Shared stream-construction feedback for this discovery lifetime.
+    pub fn forwarding(&self) -> TsoForwarding {
+        self.forwarding.clone()
+    }
+
     /// Called after LoadKeyspace and before publishing an API-v2 client.
     pub fn set_keyspace(&mut self, meta: &keyspacepb::KeyspaceMeta) -> Result<(), Status> {
         let id = match meta.keyspace {
@@ -328,6 +404,7 @@ impl TsoDiscovery {
         };
         if self.keyspace_id != id {
             self.revision = 0;
+            self.accepted_route = None;
         }
         self.keyspace_id = id;
         self.assigned_group = meta
@@ -351,12 +428,16 @@ impl TsoDiscovery {
         Fut: Future<Output = Result<Channel, Status>>,
     {
         // Bound dialing as well as all discovery requests with the caller's budget.
-        tokio::time::timeout(
+        let result = tokio::time::timeout(
             timeout,
             self.discover_inner(cluster_id, leader, use_pd_proxy, timeout, dial),
         )
         .await
-        .map_err(|_| Status::deadline_exceeded("TSO discovery timed out"))?
+        .map_err(|_| Status::deadline_exceeded("TSO discovery timed out"))?;
+        if let Ok((route, _)) = &result {
+            self.accepted_route = Some(route.clone());
+        }
+        result
     }
 
     async fn discover_inner<F, Fut>(
@@ -381,7 +462,23 @@ impl TsoDiscovery {
             Err(error) if error.code() == tonic::Code::Unimplemented => {
                 return Ok((self.classic(leader), channel));
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                // Go checks service mode independently of timestamp connections.
+                // A failed observation must not revoke the last accepted provider.
+                if matches!(
+                    error.code(),
+                    tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+                ) {
+                    if let Some(mut route) = self.accepted_route.clone() {
+                        if route.group_id.is_none() {
+                            route.endpoint = leader.to_owned();
+                        }
+                        let route_channel = dial(route.endpoint.clone()).await?;
+                        return Ok((route, route_channel));
+                    }
+                }
+                return Err(error);
+            }
         };
         if let Some(error) = info
             .header
@@ -529,6 +626,7 @@ impl TsoDiscovery {
         primary: &TsoRoute,
         pd_urls: &[String],
         proxy: bool,
+        enable_forwarding: bool,
         timeout: Duration,
         dial: F,
     ) -> Result<Vec<(TsoRoute, Channel)>, Status>
@@ -536,17 +634,73 @@ impl TsoDiscovery {
         F: Fn(String) -> Fut,
         Fut: Future<Output = Result<Channel, Status>>,
     {
-        if !proxy {
-            return Ok(vec![(
-                primary.clone(),
-                dial(primary.endpoint.clone()).await?,
-            )]);
-        }
         let urls = if primary.group_id.is_some() {
             &self.service_urls
         } else {
             pd_urls
         };
+        self.forwarding
+            .configure(primary, enable_forwarding && !proxy);
+        if !proxy {
+            let channel = dial(primary.endpoint.clone()).await?;
+            let (fallback, eligible) = {
+                let state = self
+                    .forwarding
+                    .state
+                    .lock()
+                    .expect("TSO forwarding poisoned");
+                (
+                    state.fallback.clone(),
+                    state.enabled && state.network_errors >= 6,
+                )
+            };
+            if let Some(fallback) = fallback {
+                if !urls.contains(&fallback.endpoint) {
+                    // Accepted membership removed this backup. Never retain its stream.
+                    self.forwarding.record_success(primary);
+                } else if health_check(channel.clone(), timeout).await.ok() == Some(1) {
+                    // Go checkLeader restores the primary only after SERVING.
+                    self.forwarding.record_success(primary);
+                } else {
+                    return Ok(vec![(fallback.clone(), dial(fallback.endpoint).await?)]);
+                }
+            } else if eligible {
+                use rand::seq::SliceRandom;
+                let mut backups = urls
+                    .iter()
+                    .filter(|url| *url != &primary.endpoint)
+                    .collect::<Vec<_>>();
+                backups.shuffle(&mut rand::thread_rng());
+                for endpoint in backups {
+                    let result = tokio::time::timeout(timeout, async {
+                        let backup = dial(endpoint.clone()).await?;
+                        if health_check(backup.clone(), timeout).await? != 1 {
+                            return Err(Status::unavailable("TSO backup is not serving"));
+                        }
+                        Ok(backup)
+                    })
+                    .await;
+                    if let Ok(Ok(backup)) = result {
+                        let mut route = primary.clone();
+                        route.endpoint = endpoint.clone();
+                        route.forwarded_host = Some(primary.endpoint.clone());
+                        let mut state = self
+                            .forwarding
+                            .state
+                            .lock()
+                            .expect("TSO forwarding poisoned");
+                        if state.enabled
+                            && state.primary.as_ref() == Some(primary)
+                            && state.network_errors >= 6
+                        {
+                            state.fallback = Some(route.clone());
+                            return Ok(vec![(route, backup)]);
+                        }
+                    }
+                }
+            }
+            return Ok(vec![(primary.clone(), channel)]);
+        }
         let mut routes = Vec::new();
         for endpoint in urls {
             if endpoint.is_empty()
