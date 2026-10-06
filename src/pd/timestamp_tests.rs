@@ -272,6 +272,10 @@ impl tonic::server::UnaryService<pdpb::ScanRegionsRequest> for PdServer {
     type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
 
     fn call(&mut self, request: tonic::Request<pdpb::ScanRegionsRequest>) -> Self::Future {
+        self.region_metadata
+            .lock()
+            .unwrap()
+            .push(request.metadata().contains_key("pd-allow-follower-handle"));
         assert!(request.metadata().contains_key("grpc-timeout"));
         assert_eq!(request.get_ref().header.as_ref().unwrap().cluster_id, 42);
         let request = request.into_inner();
@@ -2162,6 +2166,15 @@ async fn pd_region_batch_native_cache_permission_fallback_and_close() {
         }
     }
     assert_eq!(follower.service.region_metadata.lock().unwrap().len(), 3);
+    follower.service.region_failure.store(0, Ordering::SeqCst);
+    for _ in 0..2 {
+        client
+            .clone()
+            .scan_regions(b"a".to_vec(), b"z".to_vec(), 1)
+            .await
+            .unwrap();
+    }
+    assert_eq!(follower.service.region_metadata.lock().unwrap().len(), 4);
     assert!(leader
         .service
         .region_metadata

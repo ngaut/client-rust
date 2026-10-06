@@ -53,8 +53,8 @@ pub trait RetryClientTrait {
     }
 
     /// One cache lookup attempt. Retries must bypass follower/router metadata.
-    /// The built-in client already connects to the PD leader; adapters with
-    /// follower reads must override this method and honor `leader_only`.
+    /// Clients supporting follower reads override this compatibility default
+    /// and honor `leader_only` independently of the process-wide option.
     async fn get_region_for_cache(
         self: Arc<Self>,
         key: Vec<u8>,
@@ -538,7 +538,13 @@ impl RetryClientTrait for RetryClient<Cluster> {
     ) -> Result<Vec<RegionWithLeader>> {
         retry!(self, "scan_regions", |cluster| {
             cluster
-                .scan_regions(start_key.clone(), end_key.clone(), limit, self.timeout)
+                .scan_regions_routed(
+                    start_key.clone(),
+                    end_key.clone(),
+                    limit,
+                    self.timeout,
+                    true,
+                )
                 .map(|result| result.and_then(regions_from_scan_response))
         })
     }
