@@ -223,7 +223,10 @@ impl RegionService {
         // Go checks API cooldown after its follower health sweep, not on every
         // selection; repeated in-flight failures never extend the original time.
         let now = Instant::now();
-        for candidate in candidates {
+        // Membership can change while a health RPC is pending. Go checks the
+        // current API ring after its network sweep, not the retired snapshot.
+        let current = self.state.lock().expect("PD region service poisoned");
+        for candidate in &current.candidates {
             candidate.check_cooldown(now);
         }
     }
@@ -325,7 +328,7 @@ mod availability_tests {
         assert!(replacement.candidate.available());
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn pd_availability_batch_stale_health_completion_and_ring_exhaustion() {
         let service = RegionService::default();
         let old = follower(&service);
@@ -346,6 +349,9 @@ mod availability_tests {
             entered.notified().await;
             service.update_members("leader", &["leader".into()]);
             service.update_members("leader", &urls());
+            let replacement = follower(&service);
+            replacement.observe_error(false, Some(ErrorType::RegionNotFound as i32));
+            tokio::time::advance(REGION_COOLDOWN + Duration::from_secs(1)).await;
             release.notify_one();
         };
         tokio::join!(probe, change);
