@@ -304,6 +304,11 @@ impl RetryClient<Cluster> {
         Self::connect_for_keyspace(endpoints, security_mgr, timeout, None).await
     }
 
+    /// Changes subsequent region requests without rebuilding discovery or TSO.
+    pub fn set_enable_follower_handle(&self, enabled: bool) {
+        self.connection.options.set_enable_follower_handle(enabled);
+    }
+
     pub(crate) fn initial_keyspace(&self) -> Option<&keyspacepb::KeyspaceMeta> {
         self.initial_keyspace.as_ref()
     }
@@ -430,6 +435,24 @@ impl RetryClientTrait for RetryClient<Cluster> {
             let key = key.clone();
             cluster
                 .get_region(key.clone(), self.timeout)
+                .map(move |result| {
+                    result.and_then(|resp| {
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
+                    })
+                })
+        })
+    }
+
+    async fn get_region_for_cache(
+        self: Arc<Self>,
+        key: Vec<u8>,
+        previous: bool,
+        leader_only: bool,
+    ) -> Result<RegionWithLeader> {
+        retry!(self, "get_region_for_cache", |cluster| {
+            let key = key.clone();
+            cluster
+                .get_region_routed(key.clone(), self.timeout, true, previous, !leader_only)
                 .map(move |result| {
                     result.and_then(|resp| {
                         region_from_response(resp, || Error::RegionForKeyNotFound { key })
