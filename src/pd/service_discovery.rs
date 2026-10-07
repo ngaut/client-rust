@@ -233,6 +233,7 @@ pub struct TsoStream {
     pub route: TsoRoute,
     requests: tokio::sync::mpsc::Sender<pdpb::TsoRequest>,
     responses: TsoResponses,
+    forwarding: TsoForwarding,
 }
 
 impl TsoStream {
@@ -240,6 +241,7 @@ impl TsoStream {
         route: TsoRoute,
         channel: Channel,
         first: pdpb::TsoRequest,
+        forwarding: &TsoForwarding,
     ) -> Result<(Self, pdpb::TsoResponse), Status> {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         // Servers may withhold response headers until the first request.
@@ -254,16 +256,31 @@ impl TsoStream {
                     receiver.recv().await.map(|request| (request, receiver))
                 }),
             )
-            .await?;
+            .await
+            .map_err(|status| {
+                forwarding.record_error(&route, &status);
+                status
+            })?;
+        // Go's construction window ends when the stream opens, before Recv.
+        // Application errors and EOF from an established stream cannot admit a proxy.
+        forwarding.record_success(&route);
         let response = responses
             .next()
             .await
-            .ok_or_else(|| Status::unavailable("TSO response stream is closed"))??;
+            .ok_or_else(|| Status::unavailable("TSO response stream is closed"))
+            .and_then(|response| response);
+        if route.forwarded_host.is_some() {
+            if let Err(status) = &response {
+                forwarding.record_error(&route, status);
+            }
+        }
+        let response = response?;
         Ok((
             Self {
                 route,
                 requests,
                 responses,
+                forwarding: forwarding.clone(),
             },
             response,
         ))
@@ -273,14 +290,23 @@ impl TsoStream {
         &mut self,
         request: pdpb::TsoRequest,
     ) -> Result<pdpb::TsoResponse, Status> {
-        self.requests
-            .send(request)
-            .await
-            .map_err(|_| Status::unavailable("TSO request stream is closed"))?;
-        self.responses
-            .next()
-            .await
-            .ok_or_else(|| Status::unavailable("TSO response stream is closed"))?
+        let result = async {
+            self.requests
+                .send(request)
+                .await
+                .map_err(|_| Status::unavailable("TSO request stream is closed"))?;
+            self.responses
+                .next()
+                .await
+                .ok_or_else(|| Status::unavailable("TSO response stream is closed"))?
+        }
+        .await;
+        if self.route.forwarded_host.is_some() {
+            if let Err(status) = &result {
+                self.forwarding.record_error(&self.route, status);
+            }
+        }
+        result
     }
 }
 

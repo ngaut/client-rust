@@ -2305,7 +2305,15 @@ async fn availability_pair_with_proxy(
     enabled: bool,
     proxy: bool,
 ) -> (Server, Server, Arc<RetryClient>) {
-    let leader = Server::start(Reply::Timestamp).await;
+    availability_pair_with_reply(enabled, proxy, Reply::Timestamp).await
+}
+
+async fn availability_pair_with_reply(
+    enabled: bool,
+    proxy: bool,
+    reply: Reply,
+) -> (Server, Server, Arc<RetryClient>) {
+    let leader = Server::start(reply).await;
     let follower = Server::start(Reply::Timestamp).await;
     if proxy {
         leader.service.health_status.store(2, Ordering::SeqCst);
@@ -2926,4 +2934,16 @@ async fn tso_failure_batch_retains_provider_when_mode_observation_fails() {
         .await
         .unwrap();
     let _ = probe.await;
+}
+
+#[tokio::test]
+async fn tso_failure_batch_established_eof_does_not_enable_forwarding() {
+    let (leader, follower, client) = availability_pair_with_reply(true, false, Reply::End).await;
+    leader.service.health_status.store(2, Ordering::SeqCst);
+    for _ in 0..8 {
+        assert!(client.tso_for_test().await.get_timestamp().await.is_err());
+        client.reconnect_for_test().await.unwrap();
+    }
+    assert_eq!(follower.service.received.load(Ordering::SeqCst), 0);
+    client.close().await;
 }

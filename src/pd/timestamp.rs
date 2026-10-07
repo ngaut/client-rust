@@ -235,13 +235,13 @@ async fn run_discovered(
             .unwrap()
             .1
             .clone();
-        let opening = !streams.contains_key(&endpoint);
         let exchange = async {
             if let Some(stream) = streams.get_mut(&endpoint) {
                 stream.request(request).await
             } else {
                 let (stream, response) =
-                    TsoStream::open_and_request(route.clone(), channel, request).await?;
+                    TsoStream::open_and_request(route.clone(), channel, request, &forwarding)
+                        .await?;
                 streams.insert(endpoint.clone(), stream);
                 Ok(response)
             }
@@ -262,16 +262,8 @@ async fn run_discovered(
             }
         };
         match response {
-            Some(Ok(response)) => {
-                forwarding.record_success(&route);
-                allocate_timestamps(&response, &mut *pending.lock().await)?;
-            }
-            failed => {
-                if let Some(Err(status)) = failed {
-                    if opening || route.forwarded_host.is_some() {
-                        forwarding.record_error(&route, &status);
-                    }
-                }
+            Some(Ok(response)) => allocate_timestamps(&response, &mut *pending.lock().await)?,
+            Some(Err(_)) | None => {
                 streams.remove(&endpoint);
                 for group in pending.lock().await.drain(..) {
                     group.done.complete();
