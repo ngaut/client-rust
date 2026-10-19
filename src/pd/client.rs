@@ -243,6 +243,11 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
+    /// client-go `pd.Client.Close` for the transaction client's owner: joins
+    /// the client's workers and retires its connections. Clients without
+    /// background work need not override it.
+    async fn close(&self) {}
+
     /// Loads metadata using client-go's canonical default keyspace name.
     async fn get_keyspace_meta(&self, name: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.load_keyspace(&build_keyspace_name(name)).await
@@ -1551,6 +1556,10 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.pd.load_keyspace(keyspace).await
+    }
+
+    async fn close(&self) {
+        PdRpcClient::close(self).await;
     }
 }
 
