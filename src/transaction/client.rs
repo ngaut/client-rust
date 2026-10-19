@@ -1045,7 +1045,10 @@ mod latch_config_tests {
         // The secondaries commit in the background; give them time to land.
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         let mut reader = client.begin_optimistic().await.unwrap();
-        assert_eq!(reader.get(b"c".to_vec()).await.unwrap(), Some(b"v".to_vec()));
+        assert_eq!(
+            reader.get(b"c".to_vec()).await.unwrap(),
+            Some(b"v".to_vec())
+        );
         reader.rollback().await.unwrap();
 
         assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 1);
