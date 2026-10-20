@@ -1117,7 +1117,8 @@ mod tests {
 }
 
 /// client-go `RegionRequestSender.SendReq`: sends `request` to the region its
-/// context names, choosing the replica, retrying send failures and the
+/// context names within `timeout` per RPC (also TiKV's maximum execution
+/// duration when the request sets none, as client-go does), choosing the replica, retrying send failures and the
 /// region errors the sender handles itself (a new leader, a busy server, a
 /// stale command), and applying the rest to the region cache before
 /// returning them as [`Error::RegionError`] -- an epoch mismatch, a missing
@@ -1126,8 +1127,9 @@ mod tests {
 pub async fn send_req<PdC, Req>(
     pd_client: std::sync::Arc<PdC>,
     keyspace: crate::request::Keyspace,
-    request: Req,
+    mut request: Req,
     backoffer: crate::retry::RetryBackoffer,
+    timeout: Duration,
 ) -> crate::Result<Req::Response>
 where
     PdC: crate::pd::PdClient,
@@ -1140,7 +1142,14 @@ where
     if let Some(injected) = failpoint_send_req_result(crate::store::Request::label(&request)) {
         return injected;
     }
+    if crate::store::Request::max_execution_duration_ms(&request) == 0 {
+        crate::store::Request::set_max_execution_duration_ms(
+            &mut request,
+            u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+        );
+    }
     let mut responses = crate::request::PlanBuilder::new(pd_client, keyspace, request)
+        .request_timeout(timeout)
         .retry_region_request(backoffer)
         .plan()
         .execute()
@@ -1248,6 +1257,7 @@ mod send_req_tests {
             Keyspace::Disable,
             request_to_region1(0),
             crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000),
+            std::time::Duration::from_secs(1),
         )
         .await
         .unwrap();
@@ -1265,6 +1275,7 @@ mod send_req_tests {
             Keyspace::Disable,
             request_to_region1(5),
             crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000),
+            std::time::Duration::from_secs(1),
         )
         .await
         .unwrap_err();
@@ -1297,25 +1308,43 @@ mod send_req_tests {
             || crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000);
 
         fail::cfg("tikvStoreSendReqResult", "return(GCNotLeader)").unwrap();
-        let error = send_req(pd.clone(), Keyspace::Disable, gc_request(), backoffer())
-            .await
-            .unwrap_err();
+        let error = send_req(
+            pd.clone(),
+            Keyspace::Disable,
+            gc_request(),
+            backoffer(),
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(&error, Error::RegionError(e) if e.not_leader.is_some()),
             "{error:?}"
         );
         fail::cfg("tikvStoreSendReqResult", "return(GCServerIsBusy)").unwrap();
-        let error = send_req(pd.clone(), Keyspace::Disable, gc_request(), backoffer())
-            .await
-            .unwrap_err();
+        let error = send_req(
+            pd.clone(),
+            Keyspace::Disable,
+            gc_request(),
+            backoffer(),
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(&error, Error::RegionError(e) if e.server_is_busy.is_some()),
             "{error:?}"
         );
         fail::cfg("tikvStoreSendReqResult", "return(timeout)").unwrap();
-        let error = send_req(pd.clone(), Keyspace::Disable, gc_request(), backoffer())
-            .await
-            .unwrap_err();
+        let error = send_req(
+            pd.clone(),
+            Keyspace::Disable,
+            gc_request(),
+            backoffer(),
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(
             error.to_string(),
             Error::StringError("timeout".to_owned()).to_string()
@@ -1323,9 +1352,15 @@ mod send_req_tests {
         assert_eq!(sent.load(AtomicOrdering::SeqCst), 0);
 
         fail::remove("tikvStoreSendReqResult");
-        send_req(pd, Keyspace::Disable, gc_request(), backoffer())
-            .await
-            .unwrap();
+        send_req(
+            pd,
+            Keyspace::Disable,
+            gc_request(),
+            backoffer(),
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
         assert_eq!(sent.load(AtomicOrdering::SeqCst), 1);
         scenario.teardown();
     }
@@ -1354,6 +1389,7 @@ mod send_req_tests {
             Keyspace::Disable,
             request_to_region1(0),
             crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000),
+            std::time::Duration::from_secs(1),
         )
         .await
         .unwrap_err();
