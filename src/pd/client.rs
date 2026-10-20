@@ -276,6 +276,44 @@ pub trait PdClient: Send + Sync + 'static {
     /// [`Self::get_tiflash_compute_stores`] reloads the list from PD.
     fn invalidate_tiflash_compute_stores(&self) {}
 
+    /// client-go `RegionCache.GetTiFlashRPCContext(bo, id, loadBalance,
+    /// labelFilter)`: the TiFlash peer and store a batch task for `region`
+    /// goes to, or why the region has none. Clients without a region cache
+    /// refuse.
+    async fn get_tiflash_rpc_context(
+        &self,
+        _region: &RegionWithLeader,
+        _load_balance: bool,
+        _filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> Result<
+        std::result::Result<
+            (metapb::Peer, metapb::Store),
+            crate::region_cache::TiFlashRpcContextUnavailableDetail,
+        >,
+    > {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// client-go `RegionCache.GetAllValidTiFlashStores(id, currentStore,
+    /// labelFilter)`: the region's usable TiFlash stores, `current_store`
+    /// first, and those whose peer is not pending.
+    async fn get_all_valid_tiflash_stores(
+        &self,
+        _ver_id: &RegionVerId,
+        current_store: StoreId,
+        _filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> (Vec<StoreId>, Vec<StoreId>) {
+        (vec![current_store], Vec::new())
+    }
+
+    /// client-go `RegionCache.GetTiFlashStores(labelFilter)`.
+    fn get_tiflash_stores(
+        &self,
+        _filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> Vec<metapb::Store> {
+        Vec::new()
+    }
+
     /// Loads metadata using client-go's canonical default keyspace name.
     async fn get_keyspace_meta(&self, name: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.load_keyspace(&build_keyspace_name(name)).await
@@ -1648,6 +1686,40 @@ where
 
     fn invalidate_tiflash_compute_stores(&self) {
         self.region_cache.invalidate_tiflash_compute_stores();
+    }
+
+    async fn get_tiflash_rpc_context(
+        &self,
+        region: &RegionWithLeader,
+        load_balance: bool,
+        filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> Result<
+        std::result::Result<
+            (metapb::Peer, metapb::Store),
+            crate::region_cache::TiFlashRpcContextUnavailableDetail,
+        >,
+    > {
+        self.region_cache
+            .get_tiflash_rpc_context(region, load_balance, filter)
+            .await
+    }
+
+    async fn get_all_valid_tiflash_stores(
+        &self,
+        ver_id: &RegionVerId,
+        current_store: StoreId,
+        filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> (Vec<StoreId>, Vec<StoreId>) {
+        self.region_cache
+            .get_all_valid_tiflash_stores(ver_id, current_store, filter)
+            .await
+    }
+
+    fn get_tiflash_stores(
+        &self,
+        filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> Vec<metapb::Store> {
+        self.region_cache.get_tiflash_stores(filter)
     }
 }
 
