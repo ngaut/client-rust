@@ -1709,6 +1709,92 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
             .await
     }
 
+    /// pd-client `GetAllMembers` (Go `store.GetPDClient().GetAllMembers`).
+    pub async fn get_all_members(&self) -> Result<pdpb::GetMembersResponse>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd.clone().get_all_members().await
+    }
+
+    /// pd-client `StoreGlobalConfig`.
+    pub async fn store_global_config(
+        &self,
+        config_path: String,
+        changes: Vec<pdpb::GlobalConfigItem>,
+    ) -> Result<()>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd.clone().store_global_config(config_path, changes).await
+    }
+
+    /// pd-client `ListResourceGroups` within this client's keyspace.
+    pub async fn list_resource_groups(
+        &self,
+        with_ru_stats: bool,
+    ) -> Result<Vec<crate::proto::resource_manager::ResourceGroup>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .list_resource_groups(keyspace_id, with_ru_stats)
+            .await
+    }
+
+    /// pd-client `AddResourceGroup` within this client's keyspace.
+    pub async fn add_resource_group(
+        &self,
+        group: crate::proto::resource_manager::ResourceGroup,
+    ) -> Result<String>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .put_resource_group(keyspace_id, group, true)
+            .await
+    }
+
+    /// pd-client `ModifyResourceGroup` within this client's keyspace.
+    pub async fn modify_resource_group(
+        &self,
+        group: crate::proto::resource_manager::ResourceGroup,
+    ) -> Result<String>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .put_resource_group(keyspace_id, group, false)
+            .await
+    }
+
+    /// pd-client `DeleteResourceGroup` within this client's keyspace.
+    pub async fn delete_resource_group(&self, name: &str) -> Result<String>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .delete_resource_group(keyspace_id, name.to_owned())
+            .await
+    }
+
+    /// The PD client's options (pd-client `UpdateOption`): TSO follower
+    /// proxy, batch wait, RPC concurrency, follower handle.
+    pub fn pd_options(&self) -> Option<std::sync::Arc<super::opt::Options>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd.options()
+    }
+
     fn gc_keyspace_id(&self) -> Result<u32> {
         match self.keyspace_meta.as_ref() {
             Some(meta) => match keyspace_from_pd_meta(meta)? {

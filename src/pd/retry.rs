@@ -216,6 +216,55 @@ pub trait RetryClientTrait {
         Err(Error::Unimplemented)
     }
 
+    /// The client's dynamic options (pd-client `UpdateOption`), when it has
+    /// any.
+    fn options(&self) -> Option<Arc<super::opt::Options>> {
+        None
+    }
+
+    /// pd-client `GetAllMembers`.
+    async fn get_all_members(self: Arc<Self>) -> Result<pdpb::GetMembersResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `StoreGlobalConfig`.
+    async fn store_global_config(
+        self: Arc<Self>,
+        _config_path: String,
+        _changes: Vec<pdpb::GlobalConfigItem>,
+    ) -> Result<()> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `ListResourceGroups` within `keyspace_id`.
+    async fn list_resource_groups(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _with_ru_stats: bool,
+    ) -> Result<Vec<crate::proto::resource_manager::ResourceGroup>> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `AddResourceGroup` (`add`) or `ModifyResourceGroup` within
+    /// `keyspace_id`, answering PD's response body.
+    async fn put_resource_group(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _group: crate::proto::resource_manager::ResourceGroup,
+        _add: bool,
+    ) -> Result<String> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `DeleteResourceGroup` within `keyspace_id`.
+    async fn delete_resource_group(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _name: String,
+    ) -> Result<String> {
+        Err(Error::Unimplemented)
+    }
+
     async fn advance_txn_safe_point(
         self: Arc<Self>,
         _keyspace_id: u32,
@@ -813,6 +862,57 @@ impl RetryClientTrait for RetryClient<Cluster> {
     async fn get_gc_state(self: Arc<Self>, keyspace_id: u32) -> Result<pdpb::GetGcStateResponse> {
         retry!(self, "get_gc_state", |cluster| {
             cluster.get_gc_state(keyspace_id, self.timeout)
+        })
+    }
+
+    fn options(&self) -> Option<Arc<super::opt::Options>> {
+        Some(self.connection.options.clone())
+    }
+
+    async fn get_all_members(self: Arc<Self>) -> Result<pdpb::GetMembersResponse> {
+        retry!(self, "get_all_members", |cluster| {
+            cluster.get_all_members(self.timeout)
+        })
+    }
+
+    async fn store_global_config(
+        self: Arc<Self>,
+        config_path: String,
+        changes: Vec<pdpb::GlobalConfigItem>,
+    ) -> Result<()> {
+        retry!(self, "store_global_config", |cluster| {
+            cluster.store_global_config(config_path.clone(), changes.clone(), self.timeout)
+        })
+    }
+
+    async fn list_resource_groups(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        with_ru_stats: bool,
+    ) -> Result<Vec<crate::proto::resource_manager::ResourceGroup>> {
+        retry!(self, "list_resource_groups", |cluster| {
+            cluster.list_resource_groups(keyspace_id, with_ru_stats, self.timeout)
+        })
+    }
+
+    async fn put_resource_group(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        group: crate::proto::resource_manager::ResourceGroup,
+        add: bool,
+    ) -> Result<String> {
+        retry!(self, "put_resource_group", |cluster| {
+            cluster.put_resource_group(keyspace_id, group.clone(), add, self.timeout)
+        })
+    }
+
+    async fn delete_resource_group(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        name: String,
+    ) -> Result<String> {
+        retry!(self, "delete_resource_group", |cluster| {
+            cluster.delete_resource_group(keyspace_id, name.clone(), self.timeout)
         })
     }
 

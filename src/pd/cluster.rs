@@ -673,6 +673,191 @@ impl Cluster {
 }
 
 impl Cluster {
+    fn leader_url(&self) -> Option<String> {
+        self.members
+            .leader
+            .as_ref()
+            .and_then(|member| self.connection.member_url(member))
+    }
+
+    /// pd-client `GetAllMembers`.
+    pub fn get_all_members(
+        &self,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::GetMembersResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        async move {
+            let mut client = client.await?;
+            let req = pd_request!(cluster_id, pdpb::GetMembersRequest);
+            req.send(&mut client, timeout).await
+        }
+    }
+
+    /// pd-client `StoreGlobalConfig`.
+    pub fn store_global_config(
+        &self,
+        config_path: String,
+        changes: Vec<pdpb::GlobalConfigItem>,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<()>> + Send + 'static {
+        let client = self.rpc_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = pdpb::StoreGlobalConfigRequest {
+                changes,
+                config_path,
+            }
+            .into_request();
+            req.set_timeout(timeout);
+            let response = client.store_global_config(req).await?.into_inner();
+            match response.error {
+                Some(error) => Err(internal_err!(error.message)),
+                None => Ok(()),
+            }
+        }
+    }
+
+    /// pd-client's resource-manager client over the PD leader (the resource
+    /// manager is a PD service unless it runs as a microservice).
+    fn resource_manager_client(
+        &self,
+    ) -> impl Future<
+        Output = Result<
+            crate::proto::resource_manager::resource_manager_client::ResourceManagerClient<Channel>,
+        >,
+    > + Send
+           + 'static {
+        let connection = self.connection.clone();
+        let leader = self.leader_url();
+        async move {
+            let leader = leader.ok_or_else(|| internal_err!("no PD leader"))?;
+            Ok(
+                crate::proto::resource_manager::resource_manager_client::ResourceManagerClient::new(
+                    connection.channel(&leader).await?,
+                ),
+            )
+        }
+    }
+
+    /// pd-client `ListResourceGroups`.
+    pub fn list_resource_groups(
+        &self,
+        keyspace_id: u32,
+        with_ru_stats: bool,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<Vec<crate::proto::resource_manager::ResourceGroup>>> + Send + 'static
+    {
+        let client = self.resource_manager_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = crate::proto::resource_manager::ListResourceGroupsRequest {
+                with_ru_stats,
+                keyspace_id: Some(resource_keyspace(keyspace_id)),
+            }
+            .into_request();
+            req.set_timeout(timeout);
+            let response = client
+                .list_resource_groups(req)
+                .await
+                .map_err(|status| {
+                    internal_err!("get all resource group failed, {}", status.message())
+                })?
+                .into_inner();
+            match response.error {
+                Some(error) => Err(internal_err!(
+                    "get all resource group failed, {}",
+                    error.message
+                )),
+                None => Ok(response.groups),
+            }
+        }
+    }
+
+    /// pd-client `AddResourceGroup` (`add`) or `ModifyResourceGroup`.
+    pub fn put_resource_group(
+        &self,
+        keyspace_id: u32,
+        mut group: crate::proto::resource_manager::ResourceGroup,
+        add: bool,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<String>> + Send + 'static {
+        let client = self.resource_manager_client();
+        async move {
+            // Ensure the group carries the client's keyspace, as Go does.
+            match &group.keyspace_id {
+                None => group.keyspace_id = Some(resource_keyspace(keyspace_id)),
+                Some(value) => {
+                    let inner = match value.keyspace {
+                        Some(crate::proto::resource_manager::keyspace_id_value::Keyspace::Value(
+                            id,
+                        )) => id,
+                        _ => crate::request::NULL_KEYSPACE_ID,
+                    };
+                    if inner != keyspace_id {
+                        return Err(internal_err!(
+                            "the keyspace ID of the resource group {} mismatches the client's {}",
+                            inner,
+                            keyspace_id
+                        ));
+                    }
+                }
+            }
+            let mut client = client.await?;
+            let mut req = crate::proto::resource_manager::PutResourceGroupRequest {
+                group: Some(group),
+            }
+            .into_request();
+            req.set_timeout(timeout);
+            let response = if add {
+                client.add_resource_group(req).await?
+            } else {
+                client.modify_resource_group(req).await?
+            }
+            .into_inner();
+            match response.error {
+                Some(error) => Err(internal_err!("[resource_manager] {}", error.message)),
+                None => Ok(response.body),
+            }
+        }
+    }
+
+    /// pd-client `DeleteResourceGroup`.
+    pub fn delete_resource_group(
+        &self,
+        keyspace_id: u32,
+        name: String,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<String>> + Send + 'static {
+        let client = self.resource_manager_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = crate::proto::resource_manager::DeleteResourceGroupRequest {
+                resource_group_name: name,
+                keyspace_id: Some(resource_keyspace(keyspace_id)),
+            }
+            .into_request();
+            req.set_timeout(timeout);
+            let response = client.delete_resource_group(req).await?.into_inner();
+            match response.error {
+                Some(error) => Err(internal_err!("[resource_manager] {}", error.message)),
+                None => Ok(response.body),
+            }
+        }
+    }
+}
+
+/// The resource manager's keyspace field: Go's client always sets it, the
+/// null keyspace as `uint32.Max`.
+fn resource_keyspace(keyspace_id: u32) -> crate::proto::resource_manager::KeyspaceIdValue {
+    crate::proto::resource_manager::KeyspaceIdValue {
+        keyspace: Some(crate::proto::resource_manager::keyspace_id_value::Keyspace::Value(
+            keyspace_id,
+        )),
+    }
+}
+
+impl Cluster {
     fn update_region_members(&self) {
         let leader = self
             .members
@@ -1445,6 +1630,16 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::GetMembersRequest {
+    type Client = RoutedPdClient;
+    type Response = pdpb::GetMembersResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.get_members(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for pdpb::GetGcStateRequest {
     type Client = RoutedPdClient;
     type Response = pdpb::GetGcStateResponse;
@@ -1585,6 +1780,12 @@ impl PdMessage for keyspacepb::LoadKeyspaceRequest {
 
 trait PdResponse {
     fn header(&self) -> Option<&pdpb::ResponseHeader>;
+}
+
+impl PdResponse for pdpb::GetMembersResponse {
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
+    }
 }
 
 impl PdResponse for pdpb::GetStoreResponse {
