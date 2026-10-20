@@ -878,11 +878,18 @@ impl RetryClientTrait for RetryClient<Cluster> {
     async fn store_global_config(
         self: Arc<Self>,
         config_path: String,
-        changes: Vec<pdpb::GlobalConfigItem>,
+        mut changes: Vec<pdpb::GlobalConfigItem>,
     ) -> Result<()> {
-        retry!(self, "store_global_config", |cluster| {
-            cluster.store_global_config(config_path.clone(), changes.clone(), self.timeout)
-        })
+        // Go's StoreGlobalConfig is one leader RPC, not retried, projecting
+        // each item's name, value, kind and payload.
+        for item in &mut changes {
+            item.error = None;
+        }
+        let request = {
+            let cluster = self.cluster.read().await;
+            cluster.0.store_global_config(config_path, changes, self.timeout)
+        };
+        request.await
     }
 
     async fn list_resource_groups(
