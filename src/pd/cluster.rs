@@ -869,6 +869,170 @@ impl Cluster {
             }
         }
     }
+
+    /// The leader URL the resource-manager token stream connects to.
+    pub(crate) fn resource_manager_leader_url(&self) -> Option<String> {
+        self.leader_url()
+    }
+
+    /// pd-client's resource-manager token client and the leader URL it uses.
+    pub(crate) fn resource_manager_token_client(
+        &self,
+    ) -> impl Future<
+        Output = Result<(
+            crate::proto::resource_manager::resource_manager_client::ResourceManagerClient<Channel>,
+            String,
+        )>,
+    > + Send
+           + 'static {
+        let connection = self.connection.clone();
+        let leader = self.leader_url();
+        async move {
+            let leader = leader.ok_or_else(|| internal_err!("no PD leader"))?;
+            let channel = connection.channel(&leader).await?;
+            Ok((
+                crate::proto::resource_manager::resource_manager_client::ResourceManagerClient::new(
+                    channel,
+                ),
+                leader,
+            ))
+        }
+    }
+
+    /// pd-client `GetResourceGroup`: one unretried read. RPC failures carry
+    /// the gRPC status as the cause of `ErrClientGetResourceGroup`; `None`
+    /// is a response without a group.
+    pub fn get_resource_group(
+        &self,
+        keyspace_id: u32,
+        name: String,
+        with_ru_stats: bool,
+    ) -> impl Future<Output = Result<Option<crate::proto::resource_manager::ResourceGroup>>>
+           + Send
+           + 'static {
+        let client = self.resource_manager_client();
+        async move {
+            let mut client = client.await?;
+            let req = crate::proto::resource_manager::GetResourceGroupRequest {
+                resource_group_name: name.clone(),
+                with_ru_stats,
+                keyspace_id: Some(resource_keyspace(keyspace_id)),
+            };
+            let response = match client.get_resource_group(req).await {
+                Ok(response) => response.into_inner(),
+                Err(status) => {
+                    return Err(Error::PdResourceGroup(
+                        super::errs::ClientGetResourceGroupError {
+                            resource_group_name: name,
+                            cause: grpc_error_text(&status),
+                            error: Some(Arc::new(status)),
+                        },
+                    ))
+                }
+            };
+            if let Some(error) = response.error {
+                return Err(Error::PdResourceGroup(
+                    super::errs::ClientGetResourceGroupError {
+                        resource_group_name: name,
+                        cause: error.message,
+                        error: None,
+                    },
+                ));
+            }
+            Ok(response.group)
+        }
+    }
+
+    /// pd-client's meta storage client on the serving PD member.
+    fn meta_storage_client(
+        &self,
+    ) -> impl Future<
+        Output = Result<crate::proto::meta_storagepb::meta_storage_client::MetaStorageClient<Channel>>,
+    > + Send
+           + 'static {
+        let connection = self.connection.clone();
+        let leader = self.leader_url();
+        async move {
+            let leader = leader
+                .ok_or_else(|| Error::Pd(super::errs::ERR_CLIENT_GET_META_STORAGE_CLIENT.error()))?;
+            Ok(
+                crate::proto::meta_storagepb::meta_storage_client::MetaStorageClient::new(
+                    connection.channel(&leader).await?,
+                ),
+            )
+        }
+    }
+
+    /// pd-client meta storage `Get`, bounded by the client timeout.
+    pub fn meta_storage_get(
+        &self,
+        request: crate::proto::meta_storagepb::GetRequest,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<crate::proto::meta_storagepb::GetResponse>> + Send + 'static
+    {
+        let client = self.meta_storage_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = request.into_request();
+            req.set_timeout(timeout);
+            Ok(client.get(req).await?.into_inner())
+        }
+    }
+
+    /// pd-client meta storage `Put`, bounded by the client timeout.
+    pub fn meta_storage_put(
+        &self,
+        request: crate::proto::meta_storagepb::PutRequest,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<crate::proto::meta_storagepb::PutResponse>> + Send + 'static
+    {
+        let client = self.meta_storage_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = request.into_request();
+            req.set_timeout(timeout);
+            Ok(client.put(req).await?.into_inner())
+        }
+    }
+
+    /// pd-client meta storage `Watch`: the opened response stream.
+    pub fn meta_storage_watch(
+        &self,
+        request: crate::proto::meta_storagepb::WatchRequest,
+    ) -> impl Future<
+        Output = Result<tonic::codec::Streaming<crate::proto::meta_storagepb::WatchResponse>>,
+    > + Send
+           + 'static {
+        let client = self.meta_storage_client();
+        async move {
+            let mut client = client.await?;
+            Ok(client.watch(request).await?.into_inner())
+        }
+    }
+}
+
+/// grpc-go's `status.Error` text, `rpc error: code = <Code> desc = <message>`.
+pub(crate) fn grpc_error_text(status: &tonic::Status) -> String {
+    let code = match status.code() {
+        tonic::Code::Ok => "OK",
+        tonic::Code::Cancelled => "Canceled",
+        tonic::Code::Unknown => "Unknown",
+        tonic::Code::InvalidArgument => "InvalidArgument",
+        tonic::Code::DeadlineExceeded => "DeadlineExceeded",
+        tonic::Code::NotFound => "NotFound",
+        tonic::Code::AlreadyExists => "AlreadyExists",
+        tonic::Code::PermissionDenied => "PermissionDenied",
+        tonic::Code::ResourceExhausted => "ResourceExhausted",
+        tonic::Code::FailedPrecondition => "FailedPrecondition",
+        tonic::Code::Aborted => "Aborted",
+        tonic::Code::OutOfRange => "OutOfRange",
+        tonic::Code::Unimplemented => "Unimplemented",
+        tonic::Code::Internal => "Internal",
+        tonic::Code::Unavailable => "Unavailable",
+        tonic::Code::DataLoss => "DataLoss",
+        tonic::Code::Unauthenticated => "Unauthenticated",
+    };
+    format!("rpc error: code = {code} desc = {}", status.message())
 }
 
 /// The resource manager's keyspace field: Go's client always sets it, the

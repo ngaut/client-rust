@@ -1924,6 +1924,111 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
             .await
     }
 
+    /// pd-client `GetResourceGroup` within this client's keyspace; `None`
+    /// when PD answers without a group.
+    pub async fn get_resource_group(
+        &self,
+        name: &str,
+        with_ru_stats: bool,
+    ) -> Result<Option<crate::proto::resource_manager::ResourceGroup>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .get_resource_group(keyspace_id, name.to_owned(), with_ru_stats)
+            .await
+    }
+
+    /// pd-client `AcquireTokenBuckets` over the resource manager token stream.
+    pub async fn acquire_token_buckets(
+        &self,
+        request: crate::proto::resource_manager::TokenBucketsRequest,
+    ) -> Result<Vec<crate::proto::resource_manager::TokenBucketResponse>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd.clone().acquire_token_buckets(request).await
+    }
+
+    /// pd-client `LoadResourceGroups`: every resource group stored under this
+    /// client's keyspace settings prefix, and the meta storage revision.
+    /// Values that do not decode are skipped.
+    pub async fn load_resource_groups(
+        &self,
+    ) -> Result<(Vec<crate::proto::resource_manager::ResourceGroup>, i64)>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        use prost::Message as _;
+        let prefix = super::resource_manager_client::group_settings_path_prefix_bytes(
+            self.gc_keyspace_id()?,
+        );
+        let resp = self
+            .meta_storage_get(&prefix, &[super::opt::with_prefix()])
+            .await?;
+        let header = resp.header.clone().unwrap_or_default();
+        if let Some(error) = header.error {
+            return Err(crate::Error::StringError(error.message));
+        }
+        let groups = resp
+            .kvs
+            .iter()
+            .filter_map(|item| {
+                crate::proto::resource_manager::ResourceGroup::decode(item.value.as_slice()).ok()
+            })
+            .collect();
+        Ok((groups, header.revision))
+    }
+
+    /// pd-client meta storage `Get`.
+    pub async fn meta_storage_get(
+        &self,
+        key: &[u8],
+        opts: &[super::opt::MetaStorageOption],
+    ) -> Result<crate::proto::meta_storagepb::GetResponse>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd
+            .clone()
+            .meta_storage_get(super::meta_storage_client::get_request(key, opts))
+            .await
+    }
+
+    /// pd-client meta storage `Put`.
+    pub async fn meta_storage_put(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        opts: &[super::opt::MetaStorageOption],
+    ) -> Result<crate::proto::meta_storagepb::PutResponse>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd
+            .clone()
+            .meta_storage_put(super::meta_storage_client::put_request(key, value, opts))
+            .await
+    }
+
+    /// pd-client meta storage `Watch`; the channel closes when the watch
+    /// stream ends or the receiver is dropped.
+    pub async fn meta_storage_watch(
+        &self,
+        key: &[u8],
+        opts: &[super::opt::MetaStorageOption],
+    ) -> Result<tokio::sync::mpsc::Receiver<super::metastorage::WatchResponse>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd
+            .clone()
+            .meta_storage_watch(super::meta_storage_client::watch_request(key, opts))
+            .await
+    }
+
     /// The PD client's options (pd-client `UpdateOption`): TSO follower
     /// proxy, batch wait, RPC concurrency, follower handle.
     pub fn pd_options(&self) -> Option<std::sync::Arc<super::opt::Options>>
