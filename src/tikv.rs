@@ -73,8 +73,9 @@ pub use crate::retry::{
     BO_TIFLASH_RPC, BO_TIKV_RPC, BO_TXN_LOCK,
 };
 pub use crate::store::{
-    ClientEventListener, EndpointType, KvClient as Client, KvConnect, RegionStore, Request, Store,
-    TikvConnect,
+    BatchCoprocessorStreamRequest, BatchCoprocessorStreamResponse, ClientEventListener,
+    EndpointType, KvClient as Client, KvConnect, MppStreamRequest, MppStreamResponse, RegionStore,
+    Request, Store, TikvConnect,
 };
 pub use crate::transaction::unionstore::{
     KvIterator as Iterator, MemDb as MemDB, MemDbSnapshot as MemBufferSnapshot,
