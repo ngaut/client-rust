@@ -465,6 +465,17 @@ pub trait PdClient: Send + Sync + 'static {
     /// cache retain the source-compatible no-op default.
     async fn update_buckets(&self, _ver_id: RegionVerId, _version: u64, _keys: Vec<Vec<u8>>) {}
 
+    /// client-go `RegionCache.UpdateBucketsIfNeeded`: a response advertised
+    /// buckets newer than the request's, so the region is reloaded in the
+    /// background. Clients without a region cache ignore it.
+    fn update_buckets_if_needed(
+        &self,
+        _ver_id: RegionVerId,
+        _request_version: u64,
+        _latest_version: u64,
+    ) {
+    }
+
     /// Records TiKV's estimated server queue delay. Custom PD clients that
     /// do not own a region/store cache retain a no-op default.
     fn record_server_load(&self, _store_id: StoreId, _estimated_wait_ms: u32) {}
@@ -1572,6 +1583,16 @@ where
         self.region_cache
             .update_buckets(ver_id, version, keys)
             .await;
+    }
+
+    fn update_buckets_if_needed(
+        &self,
+        ver_id: RegionVerId,
+        request_version: u64,
+        latest_version: u64,
+    ) {
+        self.region_cache
+            .update_buckets_if_needed(ver_id, request_version, latest_version);
     }
 
     fn record_server_load(&self, store_id: StoreId, estimated_wait_ms: u32) {
