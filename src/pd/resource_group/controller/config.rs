@@ -125,7 +125,8 @@ impl Config {
             params.wait_retry_interval = new_duration(DEFAULT_WAIT_RETRY_INTERVAL);
         }
         // Adjust the client settings: calculate the retry times.
-        let max_delay = super::util::duration_nanos(self.base_config.ltb_token_rpc_max_delay.duration);
+        let max_delay =
+            super::util::duration_nanos(self.base_config.ltb_token_rpc_max_delay.duration);
         let interval = super::util::duration_nanos(params.wait_retry_interval.duration);
         if max_delay != interval.wrapping_mul(params.wait_retry_times) {
             params.wait_retry_times = max_delay / interval;
@@ -189,16 +190,16 @@ impl Config {
                 "request-unit" => base.request_unit.unmarshal_value(value)?,
                 "enable-controller-trace-log" => match value {
                     Value::Null => {}
-                    Value::String(text) if text == "true" => base.enable_controller_trace_log = true,
+                    Value::String(text) if text == "true" => {
+                        base.enable_controller_trace_log = true
+                    }
                     Value::String(text) if text == "false" => {
                         base.enable_controller_trace_log = false
                     }
-                    other => {
-                        return Err(format!(
-                            "json: invalid use of ,string struct tag, trying to unmarshal {} into bool",
-                            other
-                        ))
-                    }
+                    other => return Err(format!(
+                        "json: invalid use of ,string struct tag, trying to unmarshal {} into bool",
+                        other
+                    )),
                 },
                 "ru-version-policy" => match value {
                     Value::Null => base.ru_version_policy = None,
@@ -217,10 +218,8 @@ impl Config {
                                 "wait-retry-interval" => {
                                     decode_duration(value, &mut current.wait_retry_interval)?
                                 }
-                                "wait-retry-times" => {
-                                    if !value.is_null() {
-                                        current.wait_retry_times = decode_i64(value)?;
-                                    }
+                                "wait-retry-times" if !value.is_null() => {
+                                    current.wait_retry_times = decode_i64(value)?;
                                 }
                                 _ => {}
                             }
@@ -314,9 +313,7 @@ fn decode_duration(value: &Value, target: &mut Duration) -> Result<(), String> {
 }
 
 fn decode_f64(value: &Value) -> Result<f64, String> {
-    value
-        .as_f64()
-        .ok_or_else(|| type_error("float64", value))
+    value.as_f64().ok_or_else(|| type_error("float64", value))
 }
 
 fn decode_i64(value: &Value) -> Result<i64, String> {
@@ -456,7 +453,11 @@ pub fn generate_ru_config(config: &Config) -> RUConfig {
         cpu_ms_cost: unit.cpu_ms_cost,
         is_single_group_by_keyspace: false,
         ltb_max_wait_duration: config.base_config.ltb_max_wait_duration.duration,
-        wait_retry_interval: config.local_bucket_config.token_rpc_params.wait_retry_interval.duration,
+        wait_retry_interval: config
+            .local_bucket_config
+            .token_rpc_params
+            .wait_retry_interval
+            .duration,
         wait_retry_times: config.local_bucket_config.token_rpc_params.wait_retry_times,
         degraded_mode_wait_duration: config.base_config.degraded_mode_wait_duration.duration,
     }

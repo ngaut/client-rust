@@ -249,7 +249,8 @@ fn source_go_resource_group_controller_model_test_TestUpdateDeltaConsumption() {
 
 #[test]
 #[allow(non_snake_case)]
-fn source_go_resource_group_controller_model_test_TestUpdateDeltaConsumptionReportsEmptyConsumption() {
+fn source_go_resource_group_controller_model_test_TestUpdateDeltaConsumptionReportsEmptyConsumption(
+) {
     let mut last = Consumption {
         r_r_u: 10.0,
         w_r_u: 20.0,
@@ -375,7 +376,8 @@ fn source_go_resource_group_controller_model_test_TestReportedConsumptionStripsP
 
 #[test]
 #[allow(non_snake_case)]
-fn source_go_resource_group_controller_model_test_TestReportedConsumptionRestoresPagingActualUsage() {
+fn source_go_resource_group_controller_model_test_TestReportedConsumptionRestoresPagingActualUsage()
+{
     let cfg = Arc::new(default_ru_config());
     let calculators: Vec<Box<dyn ResourceCalculator>> =
         vec![Box::new(new_kv_calculator(cfg.clone()))];
@@ -392,7 +394,11 @@ fn source_go_resource_group_controller_model_test_TestReportedConsumptionRestore
         ..Consumption::default()
     };
     let reported = reported_response_consumption(&calculators, &req, &token_delta);
-    assert_in_delta(cfg.read_bytes_cost * actual_read_bytes as f64, reported.r_r_u, 1e-6);
+    assert_in_delta(
+        cfg.read_bytes_cost * actual_read_bytes as f64,
+        reported.r_r_u,
+        1e-6,
+    );
     assert_eq!(reported.read_bytes, actual_read_bytes as f64);
     assert!(token_delta.r_r_u < 0.0);
     assert!(reported.r_r_u >= 0.0);
@@ -417,8 +423,12 @@ fn source_go_resource_group_controller_model_test_TestReportedConsumptionReusesD
     };
     let reported_request = reported_request_consumption(&calculators, &req, &token_delta);
     let reported_response = reported_response_consumption(&calculators, &req, &token_delta);
-    assert!(matches!(reported_request, Cow::Borrowed(reported) if std::ptr::eq(reported, &token_delta)));
-    assert!(matches!(reported_response, Cow::Borrowed(reported) if std::ptr::eq(reported, &token_delta)));
+    assert!(
+        matches!(reported_request, Cow::Borrowed(reported) if std::ptr::eq(reported, &token_delta))
+    );
+    assert!(
+        matches!(reported_response, Cow::Borrowed(reported) if std::ptr::eq(reported, &token_delta))
+    );
 }
 
 #[test]

@@ -76,7 +76,11 @@ pub struct TestResponseInfo {
 }
 
 /// Go `NewTestResponseInfo`.
-pub fn new_test_response_info(read_bytes: u64, kv_cpu: Duration, succeed: bool) -> TestResponseInfo {
+pub fn new_test_response_info(
+    read_bytes: u64,
+    kv_cpu: Duration,
+    succeed: bool,
+) -> TestResponseInfo {
     TestResponseInfo {
         read_bytes,
         kv_cpu,

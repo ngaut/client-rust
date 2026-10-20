@@ -244,7 +244,11 @@ impl ResourceCalculator for KVCalculator {
 }
 
 impl KVCalculator {
-    pub(crate) fn calculate_write_cost(&self, consumption: &mut Consumption, req: &dyn RequestInfo) {
+    pub(crate) fn calculate_write_cost(
+        &self,
+        consumption: &mut Consumption,
+        req: &dyn RequestInfo,
+    ) {
         let cfg = &self.ru_config;
         let write_bytes = req.write_bytes() as f64;
         consumption.write_bytes += write_bytes;
@@ -267,7 +271,11 @@ impl KVCalculator {
         }
     }
 
-    pub(crate) fn calculate_read_cost(&self, consumption: &mut Consumption, res: &dyn ResponseInfo) {
+    pub(crate) fn calculate_read_cost(
+        &self,
+        consumption: &mut Consumption,
+        res: &dyn ResponseInfo,
+    ) {
         let read_bytes = res.read_bytes() as f64;
         consumption.read_bytes += read_bytes;
         consumption.r_r_u += self.ru_config.read_bytes_cost * read_bytes;

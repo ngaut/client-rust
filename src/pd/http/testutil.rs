@@ -8,9 +8,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use reqwest::header::HeaderMap;
 
-use super::client::{
-    Client, ClientOption, HttpClient, HttpRequest, HttpResponse, RoundTripper,
-};
+use super::client::{Client, ClientOption, HttpClient, HttpRequest, HttpResponse, RoundTripper};
 use super::service_discovery::{ServiceClient, ServiceDiscovery};
 use crate::Result;
 

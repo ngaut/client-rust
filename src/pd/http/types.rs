@@ -686,11 +686,17 @@ pub struct RegionStats {
     pub store_peer_size: HashMap<u64, i64>,
     #[serde(rename = "store_peer_keys", skip_serializing_if = "HashMap::is_empty")]
     pub store_peer_keys: HashMap<u64, i64>,
-    #[serde(rename = "store_write_bytes", skip_serializing_if = "HashMap::is_empty")]
+    #[serde(
+        rename = "store_write_bytes",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
     pub store_write_bytes: HashMap<u64, u64>,
     #[serde(rename = "store_write_keys", skip_serializing_if = "HashMap::is_empty")]
     pub store_write_keys: HashMap<u64, u64>,
-    #[serde(rename = "store_write_query", skip_serializing_if = "HashMap::is_empty")]
+    #[serde(
+        rename = "store_write_query",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
     pub store_write_query: HashMap<u64, u64>,
     #[serde(
         rename = "store_leader_read_bytes",
@@ -1140,7 +1146,10 @@ pub struct MicroserviceMember {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeyspaceGCManagementType {
-    #[serde(rename = "gc_management_type", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "gc_management_type",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub gc_management_type: String,
 }
 
@@ -1559,8 +1568,7 @@ mod pb_json {
         pub fn deserialize<'de, D: serde::Deserializer<'de>>(
             deserializer: D,
         ) -> Result<Vec<pdpb::Member>, D::Error> {
-            let value =
-                <Option<Vec<MemberJson>> as serde::Deserialize>::deserialize(deserializer)?;
+            let value = <Option<Vec<MemberJson>> as serde::Deserialize>::deserialize(deserializer)?;
             Ok(value
                 .unwrap_or_default()
                 .into_iter()
@@ -1615,8 +1623,8 @@ mod pb_json {
                 .map(|json| {
                     let mut meta = encryptionpb::EncryptionMeta::default();
                     meta.key_id = json.key_id;
-                    meta.iv = base64_decode(&json.iv)
-                        .map_err(<D::Error as serde::de::Error>::custom)?;
+                    meta.iv =
+                        base64_decode(&json.iv).map_err(<D::Error as serde::de::Error>::custom)?;
                     Ok(meta)
                 })
                 .transpose()

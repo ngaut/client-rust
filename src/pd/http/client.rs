@@ -157,8 +157,8 @@ struct JsonTarget<T> {
 
 impl<T: DeserializeOwned> ResponseTarget for JsonTarget<T> {
     fn unmarshal(&mut self, body: &[u8]) -> Result<()> {
-        let value: Option<T> = serde_json::from_slice(body)
-            .map_err(|error| Error::StringError(error.to_string()))?;
+        let value: Option<T> =
+            serde_json::from_slice(body).map_err(|error| Error::StringError(error.to_string()))?;
         if value.is_some() {
             self.value = value;
         }
@@ -371,7 +371,9 @@ impl ClientInner {
             let error = match result {
                 Ok(value) => {
                     leader_change.store(false, Ordering::SeqCst);
-                    *output.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(value);
+                    *output
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(value);
                     return (Ok(()), server_url, is_leader);
                 }
                 Err(error) => error,
@@ -540,10 +542,7 @@ pub fn with_tls_config(tls_conf: Arc<SecurityManager>) -> ClientOption {
 
 /// Go `WithMetrics`: configures the client with metrics. The counter is
 /// labeled `(name, status)` and the histogram `(name)`.
-pub fn with_metrics(
-    request_counter: CounterVec,
-    execution_duration: HistogramVec,
-) -> ClientOption {
+pub fn with_metrics(request_counter: CounterVec, execution_duration: HistogramVec) -> ClientOption {
     ClientOption(Box::new(move |options: &mut ClientOptions| {
         options.request_counter = Some(request_counter);
         options.execution_duration = Some(execution_duration);

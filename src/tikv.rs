@@ -74,8 +74,8 @@ pub use crate::retry::{
 };
 pub use crate::store::{
     BatchCoprocessorStreamRequest, BatchCoprocessorStreamResponse, ClientEventListener,
-    EndpointType, KvClient as Client, KvConnect, MppStreamRequest, MppStreamResponse, RegionStore,
-    KvRpcClient, Request, Store, TikvConnect,
+    EndpointType, KvClient as Client, KvConnect, KvRpcClient, MppStreamRequest, MppStreamResponse,
+    RegionStore, Request, Store, TikvConnect,
 };
 pub use crate::transaction::unionstore::{
     KvIterator as Iterator, MemDb as MemDB, MemDbSnapshot as MemBufferSnapshot,

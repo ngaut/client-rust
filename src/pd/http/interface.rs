@@ -779,7 +779,9 @@ impl Client {
         self.request_no_resp(
             new_request_info()
                 .with_name(CANCEL_SCHEDULER_JOB_NAME)
-                .with_uri(get_cancel_scheduler_job_uri_by_name_and_job_id(name, job_id))
+                .with_uri(get_cancel_scheduler_job_uri_by_name_and_job_id(
+                    name, job_id,
+                ))
                 .with_method(Method::DELETE),
             &[],
         )
@@ -874,10 +876,7 @@ impl Client {
             .collect();
         let input: Vec<KeyRangeInput<'_>> = escaped
             .iter()
-            .map(|(start_key, end_key)| KeyRangeInput {
-                end_key,
-                start_key,
-            })
+            .map(|(start_key, end_key)| KeyRangeInput { end_key, start_key })
             .collect();
         let input_json = marshal(&input)?;
         self.request_no_resp(

@@ -191,9 +191,11 @@ pub(crate) fn init_metrics(
         failed_request_counter_with_others: metrics
             .failed_request_counter
             .with_label_values(&[old_name, name, OTHER_TYPE]),
-        failed_request_counter_with_throttled: metrics
-            .failed_request_counter
-            .with_label_values(&[old_name, name, THROTTLED_TYPE]),
+        failed_request_counter_with_throttled: metrics.failed_request_counter.with_label_values(&[
+            old_name,
+            name,
+            THROTTLED_TYPE,
+        ]),
         request_retry_counter: metrics
             .request_retry_counter
             .with_label_values(&[old_name, name]),
@@ -205,11 +207,15 @@ pub(crate) fn init_metrics(
             .with_label_values(&[name]),
         consume_token_histogram: metrics.token_consumed_histogram.with_label_values(&[name]),
         source_state,
-        precharge_counter: metrics.cop_read_precharge_counter.with_label_values(&[name]),
+        precharge_counter: metrics
+            .cop_read_precharge_counter
+            .with_label_values(&[name]),
         precharge_bytes_counter: metrics
             .paging_precharge_bytes_counter
             .with_label_values(&[name]),
-        actual_bytes_counter: metrics.paging_actual_bytes_counter.with_label_values(&[name]),
+        actual_bytes_counter: metrics
+            .paging_actual_bytes_counter
+            .with_label_values(&[name]),
         prediction_residual_bytes: metrics
             .paging_prediction_residual_bytes
             .with_label_values(&[name]),
@@ -301,14 +307,18 @@ impl GroupMetricsCollection {
     /// Keep this list in sync with `init_metrics`.
     pub(crate) fn delete_paging_labels(&self, name: &str) {
         let metrics = super::metrics::global_metrics();
-        let _ = metrics.cop_read_precharge_counter.remove_label_values(&[name]);
+        let _ = metrics
+            .cop_read_precharge_counter
+            .remove_label_values(&[name]);
         let _ = metrics
             .cop_read_no_precharge_counter
             .remove_label_values(&[name]);
         let _ = metrics
             .paging_precharge_bytes_counter
             .remove_label_values(&[name]);
-        let _ = metrics.paging_actual_bytes_counter.remove_label_values(&[name]);
+        let _ = metrics
+            .paging_actual_bytes_counter
+            .remove_label_values(&[name]);
         let _ = metrics
             .paging_prediction_residual_bytes
             .remove_label_values(&[name]);
@@ -475,7 +485,8 @@ fn init_run_state(
         is_burstable = false;
     }
 
-    let limiter = Limiter::new_limiter_with_cfg(&meta.name, now, cfg, Some(low_ru_notify_chan.clone()));
+    let limiter =
+        Limiter::new_limiter_with_cfg(&meta.name, now, cfg, Some(low_ru_notify_chan.clone()));
     let counter = Arc::new(TokenCounter {
         fill_rate: settings.fill_rate,
         state: Mutex::new(TokenCounterState {
@@ -520,7 +531,9 @@ impl GroupCostController {
         if fail::eval("degradedModeRU", |_| ()).is_some() {
             cfg.new_fill_rate = 99999999.0;
         }
-        counter.limiter.reconfigure(now, cfg, &[reset_low_process()]);
+        counter
+            .limiter
+            .reconfigure(now, cfg, &[reset_low_process()]);
         log::info!(
             "[resource group controller] resource token bucket enter degraded mode, name: {}",
             self.name
@@ -553,7 +566,11 @@ impl GroupCostController {
         let is_burstable = counter.limiter.get_burst() < 0;
         self.burstable.store(is_burstable, Ordering::SeqCst);
         let run = lock(&self.run);
-        if !self.calc_avg(&run, counter, get_ru_value_from_consumption(Some(&run.consumption))) {
+        if !self.calc_avg(
+            &run,
+            counter,
+            get_ru_value_from_consumption(Some(&run.consumption)),
+        ) {
             return;
         }
         log_controller_trace(|| {
@@ -644,7 +661,9 @@ impl GroupCostController {
         // `last_request_time` is updated late in this logic, so the measured
         // period is slightly shorter than the tick; half a tick of slack keeps
         // the actual report period at the target period.
-        if time_since_last_request + DEFAULT_GROUP_STATE_UPDATE_INTERVAL / 2 >= DEFAULT_TARGET_PERIOD {
+        if time_since_last_request + DEFAULT_GROUP_STATE_UPDATE_INTERVAL / 2
+            >= DEFAULT_TARGET_PERIOD
+        {
             if time_since_last_request >= EXTENDED_REPORTING_PERIOD_FACTOR * DEFAULT_TARGET_PERIOD {
                 return true;
             }
@@ -667,7 +686,11 @@ impl GroupCostController {
     fn handle_ru_token_response(&self, resp: &TokenBucketResponse) {
         for granted_tb in &resp.granted_r_u_tokens {
             let bucket = granted_tb.granted_tokens.clone().unwrap_or_default();
-            self.modify_token_counter(&self.request_unit_tokens, &bucket, granted_tb.trickle_time_ms);
+            self.modify_token_counter(
+                &self.request_unit_tokens,
+                &bucket,
+                granted_tb.trickle_time_ms,
+            );
         }
     }
 
@@ -712,7 +735,8 @@ impl GroupCostController {
             cfg.new_tokens = 0.0;
             let trickle_duration = Duration::from_millis(trickle_time_ms.max(0) as u64);
             let deadline = now + trickle_duration;
-            cfg.new_fill_rate = settings.fill_rate as f64 + granted / trickle_duration.as_secs_f64();
+            cfg.new_fill_rate =
+                settings.fill_rate as f64 + granted / trickle_duration.as_secs_f64();
 
             let timer_duration = if trickle_duration > TRICKLE_RESERVE_DURATION {
                 trickle_duration - TRICKLE_RESERVE_DURATION
@@ -884,7 +908,8 @@ impl GroupCostController {
         for calc in &self.calculators {
             calc.before_kv_request(&mut delta, info);
         }
-        let reported_delta = reported_request_consumption(&self.calculators, info, &delta).into_owned();
+        let reported_delta =
+            reported_request_consumption(&self.calculators, info, &delta).into_owned();
 
         add(Some(&mut lock(&self.mu).consumption), Some(&reported_delta));
 
@@ -899,7 +924,10 @@ impl GroupCostController {
             fn drop(&mut self) {
                 if self.pending {
                     self.gc.metrics.failed_request_counter_with_others.inc();
-                    sub(Some(&mut lock(&self.gc.mu).consumption), Some(self.reported_delta));
+                    sub(
+                        Some(&mut lock(&self.gc.mu).consumption),
+                        Some(self.reported_delta),
+                    );
                 }
             }
         }
@@ -911,12 +939,16 @@ impl GroupCostController {
 
         let mut wait_duration = Duration::ZERO;
         if !self.burstable.load(Ordering::SeqCst) {
-            let (d, result) = self.acquire_tokens(ctx, &delta, &mut wait_duration, false).await;
+            let (d, result) = self
+                .acquire_tokens(ctx, &delta, &mut wait_duration, false)
+                .await;
             if let Err(error) = result {
                 admission.pending = false;
                 if is_throttled_error(&error) {
                     self.metrics.failed_request_counter_with_throttled.inc();
-                    self.metrics.failed_limit_reserve_duration.observe(d.as_secs_f64());
+                    self.metrics
+                        .failed_limit_reserve_duration
+                        .observe(d.as_secs_f64());
                 } else {
                     self.metrics.failed_request_counter_with_others.inc();
                 }
@@ -926,7 +958,9 @@ impl GroupCostController {
                 }
                 return Err(error);
             }
-            self.metrics.successful_request_duration.observe(d.as_secs_f64());
+            self.metrics
+                .successful_request_duration
+                .observe(d.as_secs_f64());
             wait_duration += d;
         }
         admission.pending = false;
@@ -972,7 +1006,8 @@ impl GroupCostController {
         for calc in &self.calculators {
             calc.after_kv_request(&mut delta, req, resp);
         }
-        let reported_delta = reported_response_consumption(&self.calculators, req, &delta).into_owned();
+        let reported_delta =
+            reported_response_consumption(&self.calculators, req, &delta).into_owned();
         // `count` is the full per-request consumption (before + after).
         let mut count = delta.clone();
         for calc in &self.calculators {
@@ -1012,7 +1047,8 @@ impl GroupCostController {
         for calc in &self.calculators {
             calc.after_kv_request(&mut delta, req, resp);
         }
-        let reported_delta = reported_response_consumption(&self.calculators, req, &delta).into_owned();
+        let reported_delta =
+            reported_response_consumption(&self.calculators, req, &delta).into_owned();
         // `count` is the full per-request consumption (before + after).
         let mut count = delta.clone();
         for calc in &self.calculators {
@@ -1077,7 +1113,12 @@ impl GroupCostController {
     /// The `mu` updates shared by both response paths. Go adds to the store
     /// counter only when the request path created it (a nil map entry is
     /// skipped by `add`).
-    fn account_response(&self, req: &dyn RequestInfo, reported_delta: &Consumption, count: &Consumption) {
+    fn account_response(
+        &self,
+        req: &dyn RequestInfo,
+        reported_delta: &Consumption,
+        count: &Consumption,
+    ) {
         let mut mu = lock(&self.mu);
         let mu = &mut *mu;
         add(Some(&mut mu.consumption), Some(reported_delta));
@@ -1115,7 +1156,9 @@ pub(crate) fn init_counter_notify(counter: &TokenCounter) {
     }
 }
 
-pub(crate) fn reset_counter_notify_locked(notify: &mut TokenCounterNotify) -> Option<Arc<Cancellation>> {
+pub(crate) fn reset_counter_notify_locked(
+    notify: &mut TokenCounterNotify,
+) -> Option<Arc<Cancellation>> {
     let cancel_ch = notify.cancel_ch.take();
     notify.setup_notification_deadline = None;
     cancel_ch

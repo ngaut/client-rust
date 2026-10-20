@@ -94,7 +94,10 @@ async fn source_go_resource_group_controller_global_controller_test_TestControll
 
     let default_resource_group = ru_group(DEFAULT_RESOURCE_GROUP_NAME, 1000000, 0);
     let test_resource_group = ru_group("test-group", 1000000, 0);
-    mock_provider.on_get_resource_group(DEFAULT_RESOURCE_GROUP_NAME, Some(default_resource_group.clone()));
+    mock_provider.on_get_resource_group(
+        DEFAULT_RESOURCE_GROUP_NAME,
+        Some(default_resource_group.clone()),
+    );
     mock_provider.on_get_resource_group("test-group", Some(test_resource_group.clone()));
 
     let c1 = controller
@@ -162,7 +165,9 @@ async fn source_go_resource_group_controller_global_controller_test_TestControll
                 });
             }
             // The test-group request arrived.
-            if request.requests.len() == 1 && request.requests[0].resource_group_name == "test-group" {
+            if request.requests.len() == 1
+                && request.requests[0].resource_group_name == "test-group"
+            {
                 let _ = rec.send(true).await;
             }
             // Go's mock returns the nil response captured at registration.
@@ -191,7 +196,10 @@ async fn source_go_resource_group_controller_global_controller_test_TestTryGetCo
 
     let default_resource_group = ru_group(DEFAULT_RESOURCE_GROUP_NAME, 1000000, 0);
     let test_resource_group = ru_group("test-group", 1000000, 0);
-    mock_provider.on_get_resource_group(DEFAULT_RESOURCE_GROUP_NAME, Some(default_resource_group.clone()));
+    mock_provider.on_get_resource_group(
+        DEFAULT_RESOURCE_GROUP_NAME,
+        Some(default_resource_group.clone()),
+    );
     mock_provider.on_get_resource_group("test-group", Some(test_resource_group.clone()));
     mock_provider.on_get_resource_group("test-group-non-existent", None);
 
@@ -224,7 +232,9 @@ async fn source_go_resource_group_controller_global_controller_test_TestTryGetCo
         .try_get_resource_group_controller("test-group", false)
         .await;
     assert!(gc.is_ok());
-    controller.tombstone_group_cost_controller("test-group").await;
+    controller
+        .tombstone_group_cost_controller("test-group")
+        .await;
     let gc = controller
         .try_get_resource_group_controller("test-group", false)
         .await;
@@ -308,7 +318,8 @@ async fn source_go_resource_group_controller_global_controller_test_TestGetResou
     });
     {
         let real_group = real_group.clone();
-        mock_provider.on_get_resource_group_once("test-group", move || Ok(Some(real_group.clone())));
+        mock_provider
+            .on_get_resource_group_once("test-group", move || Ok(Some(real_group.clone())));
     }
 
     let gc = controller
@@ -437,7 +448,10 @@ async fn source_go_resource_group_controller_global_controller_test_TestGetResou
         let wrapped_err = move || {
             wrap_get_resource_group_err(
                 "test-group",
-                grpc_error(tonic::Status::new(code, "resource manager returned an error")),
+                grpc_error(tonic::Status::new(
+                    code,
+                    "resource manager returned an error",
+                )),
             )
         };
         let expected = wrapped_err().to_string();
@@ -450,11 +464,7 @@ async fn source_go_resource_group_controller_global_controller_test_TestGetResou
             .unwrap();
         assert!(matches!(error, crate::Error::PdResourceGroup(_)), "{name}");
         assert_eq!(error.to_string(), expected, "{name}");
-        assert_eq!(
-            super::global_controller::grpc_code(&error),
-            code,
-            "{name}"
-        );
+        assert_eq!(super::global_controller::grpc_code(&error), code, "{name}");
         assert_eq!(mock_provider.get_resource_group_calls(), 1, "{name}");
     }
 }
@@ -665,16 +675,21 @@ async fn source_go_resource_group_controller_global_controller_test_TestTokenBuc
             async move {
                 let check = (|| {
                     if request.requests.len() != 1 {
-                        return Err(format!("expected 1 request, got {}", request.requests.len()));
+                        return Err(format!(
+                            "expected 1 request, got {}",
+                            request.requests.len()
+                        ));
                     }
                     let keyspace = request.requests[0]
                         .keyspace_id
                         .as_ref()
                         .ok_or("missing keyspace id")?;
                     match keyspace.keyspace {
-                        Some(crate::proto::resource_manager::keyspace_id_value::Keyspace::Value(
-                            value,
-                        )) if value == keyspace_id => Ok(()),
+                        Some(
+                            crate::proto::resource_manager::keyspace_id_value::Keyspace::Value(
+                                value,
+                            ),
+                        ) if value == keyspace_id => Ok(()),
                         ref other => Err(format!("unexpected keyspace {other:?}")),
                     }
                 })();
@@ -740,7 +755,8 @@ fn policy(default: i32, overrides: &[(u32, i32)]) -> Option<RUVersionPolicy> {
 #[tokio::test]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_global_controller_test_TestRUVersionFromControllerConfig() {
+async fn source_go_resource_group_controller_global_controller_test_TestRUVersionFromControllerConfig(
+) {
     let mock_provider = new_mock_resource_group_provider();
     let gc = new_controller(&mock_provider, 42, vec![]).await;
 
@@ -835,7 +851,8 @@ async fn source_go_resource_group_controller_global_controller_test_TestRUVersio
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_global_controller_test_TestRUVersionWatchViaControllerConfig() {
+async fn source_go_resource_group_controller_global_controller_test_TestRUVersionWatchViaControllerConfig(
+) {
     let mock_provider = new_mock_resource_group_provider();
     mock_provider.set_get_response(meta_storagepb::GetResponse {
         header: Some(meta_storagepb::ResponseHeader {
@@ -927,7 +944,11 @@ async fn interceptor_settles_through_go_on_response() {
     .unwrap();
     assert_eq!(settled.wait_duration, Duration::ZERO);
     let settled = controller
-        .on_response_wait_async("test-group", request, crate::resource_control::ResponseInfo::default())
+        .on_response_wait_async(
+            "test-group",
+            request,
+            crate::resource_control::ResponseInfo::default(),
+        )
         .await
         .unwrap();
     assert_eq!(settled.wait_duration, Duration::ZERO);

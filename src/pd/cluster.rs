@@ -813,9 +813,9 @@ impl Cluster {
                 None => group.keyspace_id = Some(resource_keyspace(keyspace_id)),
                 Some(value) => {
                     let inner = match value.keyspace {
-                        Some(crate::proto::resource_manager::keyspace_id_value::Keyspace::Value(
-                            id,
-                        )) => id,
+                        Some(
+                            crate::proto::resource_manager::keyspace_id_value::Keyspace::Value(id),
+                        ) => id,
                         _ => crate::request::NULL_KEYSPACE_ID,
                     };
                     if inner != keyspace_id {
@@ -828,10 +828,9 @@ impl Cluster {
                 }
             }
             let mut client = client.await?;
-            let mut req = crate::proto::resource_manager::PutResourceGroupRequest {
-                group: Some(group),
-            }
-            .into_request();
+            let mut req =
+                crate::proto::resource_manager::PutResourceGroupRequest { group: Some(group) }
+                    .into_request();
             req.set_timeout(timeout);
             let response = if add {
                 client.add_resource_group(req).await?
@@ -947,14 +946,17 @@ impl Cluster {
     fn meta_storage_client(
         &self,
     ) -> impl Future<
-        Output = Result<crate::proto::meta_storagepb::meta_storage_client::MetaStorageClient<Channel>>,
+        Output = Result<
+            crate::proto::meta_storagepb::meta_storage_client::MetaStorageClient<Channel>,
+        >,
     > + Send
            + 'static {
         let connection = self.connection.clone();
         let leader = self.leader_url();
         async move {
-            let leader = leader
-                .ok_or_else(|| Error::Pd(super::errs::ERR_CLIENT_GET_META_STORAGE_CLIENT.error()))?;
+            let leader = leader.ok_or_else(|| {
+                Error::Pd(super::errs::ERR_CLIENT_GET_META_STORAGE_CLIENT.error())
+            })?;
             Ok(
                 crate::proto::meta_storagepb::meta_storage_client::MetaStorageClient::new(
                     connection.channel(&leader).await?,
@@ -1039,9 +1041,9 @@ pub(crate) fn grpc_error_text(status: &tonic::Status) -> String {
 /// null keyspace as `uint32.Max`.
 fn resource_keyspace(keyspace_id: u32) -> crate::proto::resource_manager::KeyspaceIdValue {
     crate::proto::resource_manager::KeyspaceIdValue {
-        keyspace: Some(crate::proto::resource_manager::keyspace_id_value::Keyspace::Value(
-            keyspace_id,
-        )),
+        keyspace: Some(
+            crate::proto::resource_manager::keyspace_id_value::Keyspace::Value(keyspace_id),
+        ),
     }
 }
 

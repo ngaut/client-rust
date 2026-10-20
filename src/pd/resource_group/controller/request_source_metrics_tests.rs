@@ -24,7 +24,9 @@ use super::testutil::{TestRequestInfo, TestResponseInfo};
 use crate::proto::resource_manager::Consumption;
 
 fn request_source_counter() -> prometheus::CounterVec {
-    super::metrics::global_metrics().request_source_ru_counter.clone()
+    super::metrics::global_metrics()
+        .request_source_ru_counter
+        .clone()
 }
 
 #[derive(Default)]
@@ -49,10 +51,18 @@ fn request_source_state_snapshot(
             continue;
         }
         let slot = match (key.ru_type, key.direction) {
-            (REQUEST_SOURCE_RU_TYPE_RRU, REQUEST_SOURCE_DIRECTION_CONSUME) => &mut snapshot.rru_consume,
-            (REQUEST_SOURCE_RU_TYPE_RRU, REQUEST_SOURCE_DIRECTION_REFUND) => &mut snapshot.rru_refund,
-            (REQUEST_SOURCE_RU_TYPE_WRU, REQUEST_SOURCE_DIRECTION_CONSUME) => &mut snapshot.wru_consume,
-            (REQUEST_SOURCE_RU_TYPE_WRU, REQUEST_SOURCE_DIRECTION_REFUND) => &mut snapshot.wru_refund,
+            (REQUEST_SOURCE_RU_TYPE_RRU, REQUEST_SOURCE_DIRECTION_CONSUME) => {
+                &mut snapshot.rru_consume
+            }
+            (REQUEST_SOURCE_RU_TYPE_RRU, REQUEST_SOURCE_DIRECTION_REFUND) => {
+                &mut snapshot.rru_refund
+            }
+            (REQUEST_SOURCE_RU_TYPE_WRU, REQUEST_SOURCE_DIRECTION_CONSUME) => {
+                &mut snapshot.wru_consume
+            }
+            (REQUEST_SOURCE_RU_TYPE_WRU, REQUEST_SOURCE_DIRECTION_REFUND) => {
+                &mut snapshot.wru_refund
+            }
             _ => continue,
         };
         *slot = Some(metric.clone());
@@ -112,7 +122,10 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestReq
 
     let before_count = collector_metric_count(&request_source_counter());
 
-    let (req_consumption, _, _, _) = gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    let (req_consumption, _, _, _) = gc
+        .on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     assert_ne!(req_consumption.w_r_u, 0.0);
 
     let (source_metrics, cache_size) = request_source_state_snapshot(&gc, &req.request_source);
@@ -120,19 +133,36 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestReq
     assert!(source_metrics.wru_consume.is_some());
     assert!(source_metrics.wru_refund.is_none());
     assert!(source_metrics.rru_consume.is_none());
-    assert_eq!(req_consumption.w_r_u, source_metrics.wru_consume.as_ref().unwrap().get());
-    assert_eq!(before_count + 1, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        req_consumption.w_r_u,
+        source_metrics.wru_consume.as_ref().unwrap().get()
+    );
+    assert_eq!(
+        before_count + 1,
+        collector_metric_count(&request_source_counter())
+    );
 
     let resp_consumption = gc.on_response_impl(&req, &resp).unwrap();
     assert_ne!(resp_consumption.r_r_u, 0.0);
 
     let (source_metrics, cache_size) = request_source_state_snapshot(&gc, &req.request_source);
     assert_eq!(cache_size, 2);
-    assert_eq!(req_consumption.w_r_u, source_metrics.wru_consume.as_ref().unwrap().get());
-    assert_eq!(resp_consumption.r_r_u, source_metrics.rru_consume.as_ref().unwrap().get());
-    assert_eq!(before_count + 2, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        req_consumption.w_r_u,
+        source_metrics.wru_consume.as_ref().unwrap().get()
+    );
+    assert_eq!(
+        resp_consumption.r_r_u,
+        source_metrics.rru_consume.as_ref().unwrap().get()
+    );
+    assert_eq!(
+        before_count + 2,
+        collector_metric_count(&request_source_counter())
+    );
 
-    gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     let (cached_metrics, cache_size) = request_source_state_snapshot(&gc, &req.request_source);
     assert_eq!(cache_size, 2);
     assert!(same_counter(
@@ -168,13 +198,19 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestReq
     assert!(is_throttled_error(&error));
     let (_, cache_size) = request_source_state_snapshot(&gc, &req.request_source);
     assert_eq!(cache_size, 0);
-    assert_eq!(before_count, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count,
+        collector_metric_count(&request_source_counter())
+    );
 
     gc.metrics
         .add_request_source_ru_delta(&req.request_source, Some(&Consumption::default()));
     let (_, cache_size) = request_source_state_snapshot(&gc, &req.request_source);
     assert_eq!(cache_size, 0);
-    assert_eq!(before_count, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count,
+        collector_metric_count(&request_source_counter())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -205,8 +241,14 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestReq
 
     let (source_metrics, cache_size) = request_source_state_snapshot(&gc, request_source);
     assert_eq!(cache_size, 2);
-    assert_eq!(WORKERS as f64, source_metrics.rru_consume.as_ref().unwrap().get());
-    assert_eq!(WORKERS as f64, source_metrics.wru_refund.as_ref().unwrap().get());
+    assert_eq!(
+        WORKERS as f64,
+        source_metrics.rru_consume.as_ref().unwrap().get()
+    );
+    assert_eq!(
+        WORKERS as f64,
+        source_metrics.wru_refund.as_ref().unwrap().get()
+    );
 
     gc.metrics.source_state.as_ref().unwrap().cleanup();
 }
@@ -233,7 +275,9 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestCle
     let resp = read_response(64);
     let before_count = collector_metric_count(&request_source_counter());
 
-    gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     gc.on_response_impl(&req, &resp).unwrap();
 
     mark_inactive(&gc);
@@ -245,7 +289,10 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestCle
     assert!(controller.load_group_controller(&group.name).is_none());
     let (_, cache_size) = request_source_state_snapshot(&gc, &req.request_source);
     assert_eq!(cache_size, 0);
-    assert_eq!(before_count, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count,
+        collector_metric_count(&request_source_counter())
+    );
 }
 
 #[tokio::test]
@@ -270,23 +317,34 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestCle
     let resp = read_response(64);
     let before_count = collector_metric_count(&request_source_counter());
 
-    gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     gc.on_response_impl(&req, &resp).unwrap();
 
     let (source_metrics, cache_size) = request_source_state_snapshot(&gc, &req.request_source);
     assert_eq!(cache_size, 2);
-    assert_eq!(before_count + 2, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count + 2,
+        collector_metric_count(&request_source_counter())
+    );
 
     mark_inactive(&gc);
     controller.clean_up_resource_group();
 
     assert!(controller.load_group_controller(&group.name).is_none());
-    assert_eq!(before_count, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count,
+        collector_metric_count(&request_source_counter())
+    );
 
     source_metrics.rru_consume.as_ref().unwrap().inc_by(1.0);
     source_metrics.wru_consume.as_ref().unwrap().inc_by(1.0);
 
-    assert_eq!(before_count, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count,
+        collector_metric_count(&request_source_counter())
+    );
 }
 
 #[tokio::test]
@@ -311,9 +369,14 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestCle
     let resp = read_response(64);
     let before_count = collector_metric_count(&request_source_counter());
 
-    gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     gc.on_response_impl(&req, &resp).unwrap();
-    assert_eq!(before_count + 2, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count + 2,
+        collector_metric_count(&request_source_counter())
+    );
 
     mark_inactive(&gc);
     controller.clean_up_resource_group();
@@ -321,7 +384,10 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestCle
     assert!(controller.load_group_controller(&group.name).is_none());
     let (_, cache_size) = request_source_state_snapshot(&gc, &req.request_source);
     assert_eq!(cache_size, 0);
-    assert_eq!(before_count, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count,
+        collector_metric_count(&request_source_counter())
+    );
 
     gc.metrics.add_request_source_ru_delta(
         &req.request_source,
@@ -334,7 +400,10 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestCle
 
     let (_, cache_size) = request_source_state_snapshot(&gc, &req.request_source);
     assert_eq!(cache_size, 0);
-    assert_eq!(before_count, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count,
+        collector_metric_count(&request_source_counter())
+    );
 }
 
 #[tokio::test]
@@ -361,21 +430,33 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestTom
     let resp = read_response(64);
     let before_count = collector_metric_count(&request_source_counter());
 
-    gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     gc.on_response_impl(&req, &resp).unwrap();
-    assert_eq!(before_count + 2, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count + 2,
+        collector_metric_count(&request_source_counter())
+    );
 
-    controller.tombstone_group_cost_controller(&group.name).await;
+    controller
+        .tombstone_group_cost_controller(&group.name)
+        .await;
     let tombstone_gc = controller
         .try_get_resource_group_controller(&group.name, true)
         .await
         .unwrap();
-    assert!(tombstone_gc.tombstone.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(tombstone_gc
+        .tombstone
+        .load(std::sync::atomic::Ordering::SeqCst));
 
     controller.clean_up_resource_group();
 
     assert!(controller.load_group_controller(&group.name).is_none());
-    assert_eq!(before_count, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count,
+        collector_metric_count(&request_source_counter())
+    );
 }
 
 #[tokio::test]
@@ -402,16 +483,25 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestRev
     let resp = read_response(64);
     let before_count = collector_metric_count(&request_source_counter());
 
-    gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     gc.on_response_impl(&req, &resp).unwrap();
-    assert_eq!(before_count + 2, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count + 2,
+        collector_metric_count(&request_source_counter())
+    );
 
-    controller.tombstone_group_cost_controller(&group.name).await;
+    controller
+        .tombstone_group_cost_controller(&group.name)
+        .await;
     let tombstone_gc = controller
         .try_get_resource_group_controller(&group.name, true)
         .await
         .unwrap();
-    assert!(tombstone_gc.tombstone.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(tombstone_gc
+        .tombstone
+        .load(std::sync::atomic::Ordering::SeqCst));
 
     let revived_gc = new_group_cost_controller(
         Arc::new(group.clone()),
@@ -432,7 +522,10 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestRev
     controller.clean_up_resource_group();
 
     assert!(controller.load_group_controller(&group.name).is_none());
-    assert_eq!(before_count, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count,
+        collector_metric_count(&request_source_counter())
+    );
 }
 
 /// After the request source state is cleaned up, getting it again answers a
@@ -459,7 +552,9 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestGet
     let req = write_request("internal_create_after_cleanup");
     let resp = read_response(64);
 
-    gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     gc.on_response_impl(&req, &resp).unwrap();
 
     mark_inactive(&gc);
@@ -481,14 +576,20 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestGet
     .unwrap();
 
     let before_count = collector_metric_count(&request_source_counter());
-    new_gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    new_gc
+        .on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     new_gc.on_response_impl(&req, &resp).unwrap();
 
     let (source_metrics, cache_size) = request_source_state_snapshot(&new_gc, &req.request_source);
     assert_eq!(cache_size, 2);
     assert!(source_metrics.wru_consume.as_ref().unwrap().get() > 0.0);
     assert!(source_metrics.rru_consume.as_ref().unwrap().get() > 0.0);
-    assert_eq!(before_count + 2, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count + 2,
+        collector_metric_count(&request_source_counter())
+    );
 
     state.cleanup();
 }
@@ -498,7 +599,8 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestGet
 #[tokio::test]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_request_source_metrics_test_TestCleanupThenRecreateViaFullPath() {
+async fn source_go_resource_group_controller_request_source_metrics_test_TestCleanupThenRecreateViaFullPath(
+) {
     let mock_provider = new_mock_resource_group_provider();
     let controller = new_resource_group_controller(1, mock_provider.clone(), None, 0, vec![])
         .await
@@ -515,7 +617,9 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestCle
         .try_get_resource_group_controller(&group.name, false)
         .await
         .unwrap();
-    gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     gc.on_response_impl(&req, &resp).unwrap();
 
     mark_inactive(&gc);
@@ -529,14 +633,19 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestCle
         .unwrap();
 
     let before_count = collector_metric_count(&request_source_counter());
-    gc2.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc2.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     gc2.on_response_impl(&req, &resp).unwrap();
 
     let (source_metrics, cache_size) = request_source_state_snapshot(&gc2, &req.request_source);
     assert_eq!(cache_size, 2);
     assert!(source_metrics.wru_consume.as_ref().unwrap().get() > 0.0);
     assert!(source_metrics.rru_consume.as_ref().unwrap().get() > 0.0);
-    assert_eq!(before_count + 2, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count + 2,
+        collector_metric_count(&request_source_counter())
+    );
 
     gc2.metrics.source_state.as_ref().unwrap().cleanup();
 }
@@ -566,7 +675,9 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestSto
 
     let req = write_request("internal_stop_cleanup");
     let resp = read_response(64);
-    gc.on_request_wait_impl(&Context::background(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::background(), &req)
+        .await
+        .unwrap();
     gc.on_response_impl(&req, &resp).unwrap();
 
     let ms = c
@@ -594,7 +705,10 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestSto
     );
 
     // The request registered one consume series each for RRU and WRU.
-    assert_eq!(before_count - 2, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count - 2,
+        collector_metric_count(&request_source_counter())
+    );
 
     // Accounting after the stop registers no series.
     gc.metrics.add_request_source_ru_delta(
@@ -606,7 +720,10 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestSto
         }),
     );
     assert!(ms.mu.read().unwrap().items.is_empty());
-    assert_eq!(before_count - 2, collector_metric_count(&request_source_counter()));
+    assert_eq!(
+        before_count - 2,
+        collector_metric_count(&request_source_counter())
+    );
 }
 
 /// Consume minus refund mirrors the controller's own consumption when a
@@ -638,9 +755,15 @@ async fn source_go_resource_group_controller_request_source_metrics_test_TestFai
         ..TestResponseInfo::default()
     };
 
-    for (i, resp) in [&success_resp, &failed_resp, &failed_resp, &success_resp, &failed_resp]
-        .into_iter()
-        .enumerate()
+    for (i, resp) in [
+        &success_resp,
+        &failed_resp,
+        &failed_resp,
+        &success_resp,
+        &failed_resp,
+    ]
+    .into_iter()
+    .enumerate()
     {
         gc.on_request_wait_impl(&Context::background(), &req)
             .await

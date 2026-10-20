@@ -61,7 +61,9 @@ pub fn with_ru_stats(op: &mut GetResourceGroupOp) {
     op.with_ru_stats = true;
 }
 
-pub(crate) fn apply_get_resource_group_options(opts: &[GetResourceGroupOption]) -> GetResourceGroupOp {
+pub(crate) fn apply_get_resource_group_options(
+    opts: &[GetResourceGroupOption],
+) -> GetResourceGroupOp {
     let mut op = GetResourceGroupOp::default();
     for opt in opts {
         opt(&mut op);
@@ -100,7 +102,7 @@ enum TokenResponses {
             >,
         >,
     ),
-    Ready(tonic::codec::Streaming<TokenBucketsResponse>),
+    Ready(Box<tonic::codec::Streaming<TokenBucketsResponse>>),
 }
 
 /// Go `resourceManagerConnectionContext`.
@@ -222,7 +224,9 @@ async fn process_token_requests(stream: &mut TokenStream, t: TokenRequest) -> Re
     }
     if let TokenResponses::Pending(call) = &mut stream.responses {
         match call.await {
-            Ok(response) => stream.responses = TokenResponses::Ready(response.into_inner()),
+            Ok(response) => {
+                stream.responses = TokenResponses::Ready(Box::new(response.into_inner()))
+            }
             Err(status) => {
                 let _ = t.done.send(Err(Error::GrpcAPI(status.clone())));
                 return Err(Error::GrpcAPI(status));
@@ -268,7 +272,8 @@ async fn try_resource_manager_connect(
         match connect().await {
             Ok((mut client, leader)) => {
                 let (requests, request_stream) = futures::channel::mpsc::unbounded();
-                let call = Box::pin(async move { client.acquire_token_buckets(request_stream).await });
+                let call =
+                    Box::pin(async move { client.acquire_token_buckets(request_stream).await });
                 return Ok(TokenStream {
                     leader,
                     requests,
@@ -278,9 +283,8 @@ async fn try_resource_manager_connect(
             Err(error) => last_error = Some(error),
         }
     }
-    Err(last_error.unwrap_or_else(|| {
-        Error::StringError("failed to get the stream connection".to_owned())
-    }))
+    Err(last_error
+        .unwrap_or_else(|| Error::StringError("failed to get the stream connection".to_owned())))
 }
 
 #[async_trait]

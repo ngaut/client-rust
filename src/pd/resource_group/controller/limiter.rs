@@ -296,7 +296,12 @@ impl Limiter {
     }
 
     /// Modifies all settings of the limiter.
-    pub fn reconfigure(&self, now: Instant, args: TokenBucketReconfigureArgs, opts: &[LimiterOption]) {
+    pub fn reconfigure(
+        &self,
+        now: Instant,
+        args: TokenBucketReconfigureArgs,
+        opts: &[LimiterOption],
+    ) {
         let mut state = self.lock();
         log_controller_trace(|| {
             format!(
@@ -316,7 +321,7 @@ impl Limiter {
         state.burst = args.new_burst;
         state.notify_threshold = args.new_notify_threshold;
         for opt in opts {
-            (opt.0)(&mut *state);
+            (opt.0)(&mut state);
         }
         self.maybe_notify(&mut state);
         // Wake every acquirer waiting in a retry loop.

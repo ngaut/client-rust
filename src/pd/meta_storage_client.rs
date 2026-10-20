@@ -76,7 +76,10 @@ pub(crate) fn put_request(
     }
 }
 
-pub(crate) fn watch_request(key: &[u8], opts: &[MetaStorageOption]) -> meta_storagepb::WatchRequest {
+pub(crate) fn watch_request(
+    key: &[u8],
+    opts: &[MetaStorageOption],
+) -> meta_storagepb::WatchRequest {
     let options = apply_meta_storage_options(opts);
     meta_storagepb::WatchRequest {
         header: None,

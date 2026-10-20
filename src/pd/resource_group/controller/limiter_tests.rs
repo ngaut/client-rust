@@ -71,7 +71,12 @@ fn run_reserve_max(times: &Times, lim: &Arc<Limiter>, req: Request) -> Reservati
     run_reserve(times, lim, req, INF_DURATION)
 }
 
-fn run_reserve(times: &Times, lim: &Arc<Limiter>, req: Request, max_reserve: Duration) -> Reservation {
+fn run_reserve(
+    times: &Times,
+    lim: &Arc<Limiter>,
+    req: Request,
+    max_reserve: Duration,
+) -> Reservation {
     let r = lim.reserve_n(req.t, req.n, max_reserve);
     let act = r.time_to_act.map(|t| times.d_since(t)).unwrap_or(0);
     if (r.reserved && act != times.d_since(req.act)) || r.reserved != req.ok {
@@ -106,21 +111,87 @@ fn source_go_resource_group_controller_limiter_test_TestSimpleReserve() {
     let (nc, _rx) = notify_channel();
     let lim = new_limiter(t(0), 1.0, 0, 2.0, &nc);
 
-    run_reserve_max(&times, &lim, Request { t: t(0), n: 3.0, act: t(1), ok: true });
-    run_reserve_max(&times, &lim, Request { t: t(0), n: 3.0, act: t(4), ok: true });
-    run_reserve_max(&times, &lim, Request { t: t(3), n: 2.0, act: t(6), ok: true });
+    run_reserve_max(
+        &times,
+        &lim,
+        Request {
+            t: t(0),
+            n: 3.0,
+            act: t(1),
+            ok: true,
+        },
+    );
+    run_reserve_max(
+        &times,
+        &lim,
+        Request {
+            t: t(0),
+            n: 3.0,
+            act: t(4),
+            ok: true,
+        },
+    );
+    run_reserve_max(
+        &times,
+        &lim,
+        Request {
+            t: t(3),
+            n: 2.0,
+            act: t(6),
+            ok: true,
+        },
+    );
 
-    run_reserve(&times, &lim, Request { t: t(3), n: 2.0, act: t(7), ok: false }, D * 4);
-    run_reserve(&times, &lim, Request { t: t(5), n: 2000.0, act: t(6), ok: false }, D * 100);
+    run_reserve(
+        &times,
+        &lim,
+        Request {
+            t: t(3),
+            n: 2.0,
+            act: t(7),
+            ok: false,
+        },
+        D * 4,
+    );
+    run_reserve(
+        &times,
+        &lim,
+        Request {
+            t: t(5),
+            n: 2000.0,
+            act: t(6),
+            ok: false,
+        },
+        D * 100,
+    );
 
-    run_reserve(&times, &lim, Request { t: t(3), n: 2.0, act: t(8), ok: true }, D * 8);
+    run_reserve(
+        &times,
+        &lim,
+        Request {
+            t: t(3),
+            n: 2.0,
+            act: t(8),
+            ok: true,
+        },
+        D * 8,
+    );
     // Unlimited.
     let args = TokenBucketReconfigureArgs {
         new_burst: -1,
         ..TokenBucketReconfigureArgs::default()
     };
     lim.reconfigure(t(1), args, &[]);
-    run_reserve_max(&times, &lim, Request { t: t(5), n: 2000.0, act: t(5), ok: true });
+    run_reserve_max(
+        &times,
+        &lim,
+        Request {
+            t: t(5),
+            n: 2000.0,
+            act: t(5),
+            ok: true,
+        },
+    );
 }
 
 #[test]
@@ -132,7 +203,16 @@ fn source_go_resource_group_controller_limiter_test_TestReconfig() {
     let (nc, _rx) = notify_channel();
     let lim = new_limiter(t(0), 1.0, 0, 2.0, &nc);
 
-    run_reserve_max(&times, &lim, Request { t: t(0), n: 4.0, act: t(2), ok: true });
+    run_reserve_max(
+        &times,
+        &lim,
+        Request {
+            t: t(0),
+            n: 4.0,
+            act: t(2),
+            ok: true,
+        },
+    );
     let args = TokenBucketReconfigureArgs {
         new_tokens: 6.0,
         new_fill_rate: 2.0,
@@ -303,7 +383,16 @@ async fn source_go_resource_group_controller_limiter_test_TestCancel() {
     let lim1 = new_limiter(t(0), 1.0, 0, 10.0, &nc);
     let lim2 = new_limiter(t(0), 1.0, 0, 0.0, &nc);
 
-    let r1 = run_reserve_max(&times, &lim1, Request { t: t(0), n: 5.0, act: t(0), ok: true });
+    let r1 = run_reserve_max(
+        &times,
+        &lim1,
+        Request {
+            t: t(0),
+            n: 5.0,
+            act: t(0),
+            ok: true,
+        },
+    );
     check_tokens(&lim1, t(0), 5.0);
     r1.cancel_at(t(1));
     check_tokens(&lim1, t(1), 11.0);
@@ -383,7 +472,10 @@ fn source_go_resource_group_controller_limiter_test_TestReconfiguredCh() {
 
     // The channel blocks initially.
     let ch = lim.get_reconfigured_ch();
-    assert!(!ch.is_cancelled(), "reconfiguredCh should not be closed before Reconfigure");
+    assert!(
+        !ch.is_cancelled(),
+        "reconfiguredCh should not be closed before Reconfigure"
+    );
 
     // After reconfiguring, the old channel is closed.
     let args = TokenBucketReconfigureArgs {
@@ -392,12 +484,18 @@ fn source_go_resource_group_controller_limiter_test_TestReconfiguredCh() {
         ..TokenBucketReconfigureArgs::default()
     };
     lim.reconfigure(times.t(1), args, &[]);
-    assert!(ch.is_cancelled(), "reconfiguredCh should be closed after Reconfigure");
+    assert!(
+        ch.is_cancelled(),
+        "reconfiguredCh should be closed after Reconfigure"
+    );
 
     // A new channel is created and blocks again.
     let ch2 = lim.get_reconfigured_ch();
     assert!(!Arc::ptr_eq(&ch, &ch2));
-    assert!(!ch2.is_cancelled(), "new reconfiguredCh should not be closed yet");
+    assert!(
+        !ch2.is_cancelled(),
+        "new reconfiguredCh should not be closed yet"
+    );
 
     // Each reconfiguration closes the current channel.
     lim.reconfigure(times.t(2), args, &[]);
@@ -505,7 +603,12 @@ async fn test_qps_case(concurrency: usize, reserve_n: i64, limit: i64) -> (f64, 
                 }
                 let window_requests = total_requests.swap(0, Ordering::SeqCst);
                 *v_qps.lock().unwrap() = window_requests as f64;
-                let r = lim.reserve(&ctx, Duration::from_secs(30), Instant::now(), reserve_n as f64);
+                let r = lim.reserve(
+                    &ctx,
+                    Duration::from_secs(30),
+                    Instant::now(),
+                    reserve_n as f64,
+                );
                 *wait.lock().unwrap() = r.delay();
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }

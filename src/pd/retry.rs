@@ -1030,7 +1030,9 @@ impl RetryClientTrait for RetryClient<Cluster> {
         }
         let request = {
             let cluster = self.cluster.read().await;
-            cluster.0.store_global_config(config_path, changes, self.timeout)
+            cluster
+                .0
+                .store_global_config(config_path, changes, self.timeout)
         };
         request.await
     }
@@ -1076,7 +1078,9 @@ impl RetryClientTrait for RetryClient<Cluster> {
         // schedules a membership check.
         let request = {
             let cluster = self.cluster.read().await;
-            cluster.0.get_resource_group(keyspace_id, name, with_ru_stats)
+            cluster
+                .0
+                .get_resource_group(keyspace_id, name, with_ru_stats)
         };
         let result = request.await;
         if let Err(error) = &result {
@@ -1115,7 +1119,12 @@ impl RetryClientTrait for RetryClient<Cluster> {
         metrics
             .cmd_duration_get
             .observe(start.elapsed().as_secs_f64());
-        self.meta_storage_result(result, start, |response| response.header.as_ref(), &metrics.cmd_failed_duration_get)
+        self.meta_storage_result(
+            result,
+            start,
+            |response| response.header.as_ref(),
+            &metrics.cmd_failed_duration_get,
+        )
     }
 
     async fn meta_storage_put(
@@ -1132,7 +1141,12 @@ impl RetryClientTrait for RetryClient<Cluster> {
         metrics
             .cmd_duration_put
             .observe(start.elapsed().as_secs_f64());
-        self.meta_storage_result(result, start, |response| response.header.as_ref(), &metrics.cmd_failed_duration_put)
+        self.meta_storage_result(
+            result,
+            start,
+            |response| response.header.as_ref(),
+            &metrics.cmd_failed_duration_put,
+        )
     }
 
     async fn meta_storage_watch(
@@ -1168,8 +1182,13 @@ impl RetryClientTrait for RetryClient<Cluster> {
                 // A compacted watch revision requires watching again from
                 // the higher compact revision.
                 let mut compact_revision = 0;
-                if let Some(error) = resp.header.as_ref().and_then(|header| header.error.as_ref()) {
-                    if error.r#type == crate::proto::meta_storagepb::ErrorType::DataCompacted as i32 {
+                if let Some(error) = resp
+                    .header
+                    .as_ref()
+                    .and_then(|header| header.error.as_ref())
+                {
+                    if error.r#type == crate::proto::meta_storagepb::ErrorType::DataCompacted as i32
+                    {
                         compact_revision = resp.compact_revision;
                         log::info!(
                             "watch stream closed due to data compacted, required watch revision: {compact_revision}, err: {}",

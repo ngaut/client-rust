@@ -35,14 +35,8 @@ fn test_merge_regions_info() {
         (regions(vec![region(1, "", "a")]), None),
         (None, regions(vec![region(2, "a", "")])),
         (None, None),
-        (
-            regions(vec![region(1, "", "a")]),
-            Some(new_regions_info(0)),
-        ),
-        (
-            Some(new_regions_info(0)),
-            regions(vec![region(2, "a", "")]),
-        ),
+        (regions(vec![region(1, "", "a")]), Some(new_regions_info(0))),
+        (Some(new_regions_info(0)), regions(vec![region(2, "a", "")])),
         (Some(new_regions_info(0)), Some(new_regions_info(0))),
     ];
     for (idx, (source, target)) in test_cases.into_iter().enumerate() {

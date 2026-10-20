@@ -73,8 +73,14 @@ pub async fn discovery_ms_addrs(service_key: &str, client: &dyn Client) -> Resul
     let resp = client
         .get(service_key.as_bytes(), &[with_prefix()])
         .await
-        .map_err(|error| wrap_by_cause(errs::ERR_CLIENT_GET_META_STORAGE_CLIENT, error.to_string()))?;
-    if let Some(error) = resp.header.as_ref().and_then(|header| header.error.as_ref()) {
+        .map_err(|error| {
+            wrap_by_cause(errs::ERR_CLIENT_GET_META_STORAGE_CLIENT, error.to_string())
+        })?;
+    if let Some(error) = resp
+        .header
+        .as_ref()
+        .and_then(|header| header.error.as_ref())
+    {
         return Err(wrap_by_cause(
             errs::ERR_CLIENT_GET_PROTO_CLIENT,
             error.message.clone(),

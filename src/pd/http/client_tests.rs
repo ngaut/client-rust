@@ -152,7 +152,10 @@ async fn test_with_target_url() {
         .await
         .unwrap_err();
     assert!(
-        error.to_string().to_lowercase().contains("connection refused"),
+        error
+            .to_string()
+            .to_lowercase()
+            .contains("connection refused"),
         "{error}"
     );
     c.close().await;
@@ -189,6 +192,9 @@ async fn test_request_with_retry_member_order() {
     );
     assert!(no_need_retry(404) && no_need_retry(403) && no_need_retry(400));
     assert!(!no_need_retry(500));
-    assert!(no_need_retry_for_request_name(UPDATE_KEYSPACE_CONFIG_NAME, 409));
+    assert!(no_need_retry_for_request_name(
+        UPDATE_KEYSPACE_CONFIG_NAME,
+        409
+    ));
     assert!(!no_need_retry_for_request_name("GetRegions", 409));
 }

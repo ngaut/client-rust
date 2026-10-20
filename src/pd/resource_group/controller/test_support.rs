@@ -15,15 +15,17 @@ use prometheus::{Counter, CounterVec, Histogram};
 use tokio::sync::mpsc;
 
 use super::config::{default_ru_config, RUConfig};
+use super::global_controller::ResourceGroupProvider;
 use super::group_controller::{
     new_group_cost_controller, new_request_source_metrics_state, GroupCostController,
 };
-use super::global_controller::ResourceGroupProvider;
 use super::limiter::NotifyMsg;
 use crate::pd::errs::ClientGetResourceGroupError;
 use crate::pd::metastorage::{self, WatchResponse};
 use crate::pd::opt::MetaStorageOption;
-use crate::pd::resource_manager_client::{GetResourceGroupOption, CONTROLLER_CONFIG_PATH_PREFIX_BYTES};
+use crate::pd::resource_manager_client::{
+    GetResourceGroupOption, CONTROLLER_CONFIG_PATH_PREFIX_BYTES,
+};
 use crate::proto::meta_storagepb;
 use crate::proto::resource_manager::{
     BackgroundSettings, GroupMode, GroupRequestUnitSettings, ResourceGroup, TokenBucket,
@@ -161,7 +163,7 @@ impl ResourceGroupProvider for MockResourceGroupProvider {
             return Err(crate::Error::PdResourceGroup(ClientGetResourceGroupError {
                 resource_group_name: resource_group_name.to_owned(),
                 cause: cause.clone(),
-                error: Some(Arc::new(std::io::Error::new(std::io::ErrorKind::Other, cause))),
+                error: Some(Arc::new(std::io::Error::other(cause))),
             }));
         }
         self.get_resource_group_calls.fetch_add(1, Ordering::SeqCst);

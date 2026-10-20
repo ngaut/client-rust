@@ -89,10 +89,7 @@ pub(crate) fn duration_nanos(duration: std::time::Duration) -> i64 {
 pub(crate) fn parse_duration(text: &str) -> Result<std::time::Duration, String> {
     let nanos = parse_go_duration(text)?;
     if nanos < 0 {
-        return Err(format!(
-            "negative duration {:?} is not representable",
-            text
-        ));
+        return Err(format!("negative duration {:?} is not representable", text));
     }
     Ok(std::time::Duration::from_nanos(nanos as u64))
 }

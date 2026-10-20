@@ -1864,7 +1864,10 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
     where
         P: RetryClientTrait + Send + Sync + 'static,
     {
-        self.pd.clone().store_global_config(config_path, changes).await
+        self.pd
+            .clone()
+            .store_global_config(config_path, changes)
+            .await
     }
 
     /// pd-client `ListResourceGroups` within this client's keyspace.

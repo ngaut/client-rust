@@ -16,8 +16,8 @@ use super::config::{
 use super::context::Context;
 use super::global_controller::{SelectType, BIG_REQUEST_THRESHOLD};
 use super::group_controller::{
-    init_counter_notify, init_metrics, new_group_cost_controller,
-    new_request_source_metrics_state, GroupCostController,
+    init_counter_notify, init_metrics, new_group_cost_controller, new_request_source_metrics_state,
+    GroupCostController,
 };
 use super::limiter::{is_throttled_error, NotifyMsg, TokenBucketReconfigureArgs};
 use super::model::{
@@ -84,12 +84,16 @@ fn source_go_resource_group_controller_group_controller_test_TestGroupControlBur
 #[test]
 #[serial]
 #[allow(non_snake_case)]
-fn source_go_resource_group_controller_group_controller_test_TestCalcAvgSkipsNonPositiveDeltaDuration() {
+fn source_go_resource_group_controller_group_controller_test_TestCalcAvgSkipsNonPositiveDeltaDuration(
+) {
     let gc = create_test_group_cost_controller();
     let counter = gc.request_unit_tokens.clone();
     // A controller published between the two passes of one tick still has
     // `run.now == avg_last_time`: the sample must be skipped, not 0/0.
-    assert_eq!(gc.run.lock().unwrap().now, counter.state.lock().unwrap().avg_last_time);
+    assert_eq!(
+        gc.run.lock().unwrap().now,
+        counter.state.lock().unwrap().avg_last_time
+    );
     gc.update_avg_request_resource_per_sec();
     {
         let state = counter.state.lock().unwrap();
@@ -157,7 +161,8 @@ fn source_go_resource_group_controller_group_controller_test_TestDirectReportCon
 #[tokio::test]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_group_controller_test_TestRequestAndResponseConsumption() {
+async fn source_go_resource_group_controller_group_controller_test_TestRequestAndResponseConsumption(
+) {
     let gc = create_test_group_cost_controller();
     let write = |access_type| TestRequestInfo {
         is_write: true,
@@ -187,9 +192,15 @@ async fn source_go_resource_group_controller_group_controller_test_TestRequestAn
         // Write request.
         (write(AccessLocationType::AccessUnknown), write_resp.clone()),
         // Write request local AZ.
-        (write(AccessLocationType::AccessLocalZone), write_resp.clone()),
+        (
+            write(AccessLocationType::AccessLocalZone),
+            write_resp.clone(),
+        ),
         // Write request cross AZ.
-        (write(AccessLocationType::AccessCrossZone), write_resp.clone()),
+        (
+            write(AccessLocationType::AccessCrossZone),
+            write_resp.clone(),
+        ),
         // Read request.
         (read(AccessLocationType::AccessLocalZone), read_resp.clone()),
         // Read request cross AZ.
@@ -208,7 +219,10 @@ async fn source_go_resource_group_controller_group_controller_test_TestRequestAn
             kv_calculator.calculate_write_cost(&mut expected_consumption, req);
             assert_eq!(expected_consumption.w_r_u, consumption.w_r_u);
             if req.access_location_type() != AccessLocationType::AccessUnknown {
-                assert!(expected_consumption.write_cross_az_traffic_bytes > 0, "{case_num}");
+                assert!(
+                    expected_consumption.write_cross_az_traffic_bytes > 0,
+                    "{case_num}"
+                );
             }
         }
         let consumption = gc.on_response_impl(req, resp).expect(&case_num);
@@ -221,12 +235,26 @@ async fn source_go_resource_group_controller_group_controller_test_TestRequestAn
             "{case_num}"
         );
         if req.is_write() && req.access_location_type() != AccessLocationType::AccessUnknown {
-            assert!(expected_consumption.write_cross_az_traffic_bytes > 0, "{case_num}");
-        } else if !req.is_write() && req.access_location_type() == AccessLocationType::AccessCrossZone {
-            assert!(expected_consumption.read_cross_az_traffic_bytes > 0, "{case_num}");
+            assert!(
+                expected_consumption.write_cross_az_traffic_bytes > 0,
+                "{case_num}"
+            );
+        } else if !req.is_write()
+            && req.access_location_type() == AccessLocationType::AccessCrossZone
+        {
+            assert!(
+                expected_consumption.read_cross_az_traffic_bytes > 0,
+                "{case_num}"
+            );
         } else {
-            assert_eq!(expected_consumption.read_cross_az_traffic_bytes, 0, "{case_num}");
-            assert_eq!(expected_consumption.write_cross_az_traffic_bytes, 0, "{case_num}");
+            assert_eq!(
+                expected_consumption.read_cross_az_traffic_bytes, 0,
+                "{case_num}"
+            );
+            assert_eq!(
+                expected_consumption.write_cross_az_traffic_bytes, 0,
+                "{case_num}"
+            );
         }
     }
 }
@@ -386,7 +414,10 @@ async fn source_go_resource_group_controller_group_controller_test_TestPagingPre
         ..TestRequestInfo::default()
     };
 
-    let (token_delta, _, _, _) = gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    let (token_delta, _, _, _) = gc
+        .on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
 
     let base_cost = base_read_cost();
     let precharge_cost = cfg.read_bytes_cost * predicted_read_bytes as f64;
@@ -431,7 +462,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestPagingPre
         ..TestResponseInfo::default()
     };
 
-    gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
     gc.update_run_state();
     let request_report = gc.collect_request_and_consumption(SelectType::PeriodicReport);
     assert!(request_report.is_some());
@@ -457,7 +490,10 @@ async fn source_go_resource_group_controller_group_controller_test_TestPagingPre
     let response_report = gc
         .collect_request_and_consumption(SelectType::PeriodicReport)
         .unwrap();
-    let reported_rru = response_report.consumption_since_last_request.unwrap().r_r_u;
+    let reported_rru = response_report
+        .consumption_since_last_request
+        .unwrap()
+        .r_r_u;
     let expected_reported_response_ru = cfg.read_bytes_cost * actual_read_bytes as f64;
     assert_in_delta(
         expected_reported_response_ru,
@@ -471,7 +507,8 @@ async fn source_go_resource_group_controller_group_controller_test_TestPagingPre
 #[test]
 #[serial]
 #[allow(non_snake_case)]
-fn source_go_resource_group_controller_group_controller_test_TestPredictedReadBytesRequiresCopRead() {
+fn source_go_resource_group_controller_group_controller_test_TestPredictedReadBytesRequiresCopRead()
+{
     let cfg = Arc::new(default_ru_config());
     let kv_calc = new_kv_calculator(cfg.clone());
 
@@ -513,7 +550,8 @@ fn source_go_resource_group_controller_group_controller_test_TestPredictedReadBy
 #[tokio::test]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_group_controller_test_TestPagingPreChargeTokenRefund() {
+async fn source_go_resource_group_controller_group_controller_test_TestPagingPreChargeTokenRefund()
+{
     let gc = create_test_group_cost_controller();
     reconfigure_tokens(&gc, 100000.0);
 
@@ -533,7 +571,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestPagingPre
         ..TestResponseInfo::default()
     };
 
-    gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
     let tokens_after_pre_charge = available_tokens(&gc);
 
     let samples_before = histogram_sample_count(&gc.metrics.successful_request_duration);
@@ -552,7 +592,10 @@ async fn source_go_resource_group_controller_group_controller_test_TestPagingPre
     let pre_charge_cost = cfg.read_bytes_cost * predicted_read_bytes as f64;
     let actual_cost = cfg.read_bytes_cost * actual_read_bytes as f64;
     let expected_refund = pre_charge_cost - actual_cost;
-    assert!(expected_refund > 0.0, "sanity: pre-charge should exceed actual cost");
+    assert!(
+        expected_refund > 0.0,
+        "sanity: pre-charge should exceed actual cost"
+    );
     assert_in_delta(
         tokens_after_pre_charge + expected_refund,
         tokens_after_settlement,
@@ -590,7 +633,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestPagingPre
         ..TestResponseInfo::default()
     };
 
-    gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
     let tokens_after_pre_charge = available_tokens(&gc);
 
     gc.on_response_wait_impl(&Context::todo(), &req, &resp)
@@ -663,7 +708,8 @@ async fn source_go_resource_group_controller_group_controller_test_TestOnRespons
 #[tokio::test]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_group_controller_test_TestOnResponseImplPagingRefund() {
+async fn source_go_resource_group_controller_group_controller_test_TestOnResponseImplPagingRefund()
+{
     let gc = create_test_group_cost_controller();
     reconfigure_tokens(&gc, 100000.0);
 
@@ -680,7 +726,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestOnRespons
         ..TestResponseInfo::default()
     };
 
-    gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
     let tokens_after_pre_charge = available_tokens(&gc);
 
     gc.on_response_impl(&req, &resp).unwrap();
@@ -714,7 +762,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestNegativeP
         ..TestResponseInfo::default()
     };
 
-    gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
     gc.update_run_state();
     let precharge_report = gc.collect_request_and_consumption(SelectType::PeriodicReport);
     assert!(precharge_report.is_some());
@@ -729,7 +779,8 @@ async fn source_go_resource_group_controller_group_controller_test_TestNegativeP
     let report = gc.collect_request_and_consumption(SelectType::PeriodicReport);
 
     let cfg = default_ru_config();
-    let expected_rru = cfg.read_bytes_cost * (actual_read_bytes as f64 - predicted_read_bytes as f64);
+    let expected_rru =
+        cfg.read_bytes_cost * (actual_read_bytes as f64 - predicted_read_bytes as f64);
     assert_in_delta(expected_rru, settlement_delta.r_r_u, 1e-6, "settlement");
     assert!(
         report.is_none(),
@@ -760,7 +811,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestPagingPre
         succeed: false,
     };
 
-    gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
     let tokens_after_pre_charge = available_tokens(&gc);
 
     gc.on_response_wait_impl(&Context::todo(), &req, &resp)
@@ -801,7 +854,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestFailedWri
         ..TestResponseInfo::default()
     };
 
-    gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
     let tokens_after_reservation = available_tokens(&gc);
 
     let (refund_delta, _) = gc
@@ -839,7 +894,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestFailedWri
         ..TestResponseInfo::default()
     };
 
-    gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
     let tokens_after_reservation = available_tokens(&gc);
 
     let refund_delta = gc.on_response_impl(&req, &resp).unwrap();
@@ -878,7 +935,10 @@ async fn source_go_resource_group_controller_group_controller_test_TestNonCopPre
     let precharge_before = counter_value(&gc.metrics.precharge_counter);
     let actual_before = counter_value(&gc.metrics.actual_bytes_counter);
     let no_precharge_before = counter_value(&gc.metrics.no_precharge_counter);
-    let (delta, _, _, _) = gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    let (delta, _, _, _) = gc
+        .on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
     let cfg = default_ru_config();
     assert_in_delta(
         base_read_cost(),
@@ -896,8 +956,18 @@ async fn source_go_resource_group_controller_group_controller_test_TestNonCopPre
         1e-6,
         "non-cop response settlement must bill actual read bytes and CPU",
     );
-    assert_in_delta(precharge_before, counter_value(&gc.metrics.precharge_counter), 1e-9, "precharge");
-    assert_in_delta(actual_before, counter_value(&gc.metrics.actual_bytes_counter), 1e-9, "actual");
+    assert_in_delta(
+        precharge_before,
+        counter_value(&gc.metrics.precharge_counter),
+        1e-9,
+        "precharge",
+    );
+    assert_in_delta(
+        actual_before,
+        counter_value(&gc.metrics.actual_bytes_counter),
+        1e-9,
+        "actual",
+    );
     assert_in_delta(
         no_precharge_before,
         counter_value(&gc.metrics.no_precharge_counter),
@@ -944,19 +1014,22 @@ fn source_go_resource_group_controller_group_controller_test_TestDeletePagingLab
             "paging counter series for {name:?} should be cleared by deletePagingLabels"
         );
     }
-    for vec in [&metrics.paging_prediction_residual_bytes] {
-        assert_eq!(
-            histogram_sample_count(&vec.with_label_values(&[name])),
-            0,
-            "paging histogram series for {name:?} should be cleared by deletePagingLabels"
-        );
-    }
+    assert_eq!(
+        histogram_sample_count(
+            &metrics
+                .paging_prediction_residual_bytes
+                .with_label_values(&[name])
+        ),
+        0,
+        "paging histogram series for {name:?} should be cleared by deletePagingLabels"
+    );
 }
 
 #[tokio::test]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_group_controller_test_TestCopReadNoPrechargeGatedByIsCop() {
+async fn source_go_resource_group_controller_group_controller_test_TestCopReadNoPrechargeGatedByIsCop(
+) {
     let gc = create_test_group_cost_controller();
 
     // Reads without a pre-charge hint reach the interceptor whatever their
@@ -996,7 +1069,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestCopReadNo
         "non-cop reads must not be included in paging prediction residuals"
     );
 
-    gc.on_request_wait_impl(&Context::todo(), &cop).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &cop)
+        .await
+        .unwrap();
     assert_in_delta(
         counter_before + 1.0,
         counter_value(&gc.metrics.no_precharge_counter),
@@ -1038,7 +1113,9 @@ async fn source_go_resource_group_controller_group_controller_test_TestCopReadNo
     let counter_before = counter_value(&gc.metrics.no_precharge_counter);
     let residual_samples_before = histogram_sample_count(&gc.metrics.prediction_residual_bytes);
 
-    gc.on_request_wait_impl(&Context::todo(), &req).await.unwrap();
+    gc.on_request_wait_impl(&Context::todo(), &req)
+        .await
+        .unwrap();
 
     assert_in_delta(
         counter_before + 1.0,
@@ -1056,7 +1133,8 @@ async fn source_go_resource_group_controller_group_controller_test_TestCopReadNo
 #[test]
 #[serial]
 #[allow(non_snake_case)]
-fn source_go_resource_group_controller_group_controller_test_TestNoPreChargeWithoutPredictedReadBytes() {
+fn source_go_resource_group_controller_group_controller_test_TestNoPreChargeWithoutPredictedReadBytes(
+) {
     let cfg = Arc::new(default_ru_config());
     let kv_calc = new_kv_calculator(cfg.clone());
 
@@ -1118,7 +1196,12 @@ async fn source_go_resource_group_controller_group_controller_test_TestHandleTok
 
     init_counter_notify(&counter);
     assert!(
-        eventually(|| done.is_finished(), Duration::from_secs(1), Duration::from_millis(10)).await
+        eventually(
+            || done.is_finished(),
+            Duration::from_secs(1),
+            Duration::from_millis(10)
+        )
+        .await
     );
     init_counter_notify(&counter);
     cancel.cancel();
@@ -1145,7 +1228,12 @@ async fn source_go_resource_group_controller_group_controller_test_TestHandleTok
     };
 
     assert!(
-        eventually(|| done.is_finished(), Duration::from_secs(1), Duration::from_millis(10)).await
+        eventually(
+            || done.is_finished(),
+            Duration::from_secs(1),
+            Duration::from_millis(10)
+        )
+        .await
     );
 
     {
@@ -1153,7 +1241,10 @@ async fn source_go_resource_group_controller_group_controller_test_TestHandleTok
         assert!(notify.setup_notification_deadline.is_none());
         assert!(notify.cancel_ch.is_none());
     }
-    assert_eq!(threshold, counter.limiter.mu.lock().unwrap().notify_threshold);
+    assert_eq!(
+        threshold,
+        counter.limiter.mu.lock().unwrap().notify_threshold
+    );
     init_counter_notify(&counter);
     cancel.cancel();
 }
@@ -1161,7 +1252,8 @@ async fn source_go_resource_group_controller_group_controller_test_TestHandleTok
 #[tokio::test]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_group_controller_test_TestResourceGroupThrottledError() {
+async fn source_go_resource_group_controller_group_controller_test_TestResourceGroupThrottledError()
+{
     let gc = create_test_group_cost_controller();
     let req = TestRequestInfo {
         is_write: true,
@@ -1179,7 +1271,8 @@ async fn source_go_resource_group_controller_group_controller_test_TestResourceG
 #[tokio::test]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_group_controller_test_TestPagingPrechargeNotObservedOnThrottle() {
+async fn source_go_resource_group_controller_group_controller_test_TestPagingPrechargeNotObservedOnThrottle(
+) {
     let gc = create_test_group_cost_controller();
 
     // 4 GiB predicted is about 65536 RU at the default read cost, beyond the
@@ -1209,7 +1302,8 @@ async fn source_go_resource_group_controller_group_controller_test_TestPagingPre
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_group_controller_test_TestAcquireTokensSignalAwareWait() {
+async fn source_go_resource_group_controller_group_controller_test_TestAcquireTokensSignalAwareWait(
+) {
     // A buffered low-RU channel observes the notification inside reserve_n
     // as a synchronization point.
     let group = ru_group("test", 1000, 0);
@@ -1287,7 +1381,8 @@ async fn source_go_resource_group_controller_group_controller_test_TestAcquireTo
 #[tokio::test]
 #[serial]
 #[allow(non_snake_case)]
-async fn source_go_resource_group_controller_group_controller_test_TestAcquireTokensFallbackToTimer() {
+async fn source_go_resource_group_controller_group_controller_test_TestAcquireTokensFallbackToTimer(
+) {
     // A short retry interval keeps the test fast.
     let mut cfg = default_ru_config();
     cfg.wait_retry_interval = Duration::from_millis(50);

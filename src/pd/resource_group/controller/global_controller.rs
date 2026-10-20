@@ -27,12 +27,11 @@ use super::group_controller::{
 };
 use super::limiter::NotifyMsg;
 use super::model::{
-    equal_ru, new_kv_calculator, new_sql_calculator, RequestInfo, ResourceCalculator,
-    ResponseInfo,
+    equal_ru, new_kv_calculator, new_sql_calculator, RequestInfo, ResourceCalculator, ResponseInfo,
 };
 use super::util::{duration_nanos, go_duration_string};
 use crate::pd::errs::{self, ClientGetResourceGroupError};
-use crate::pd::metastorage::{self, Client as _, WatchResponse};
+use crate::pd::metastorage::{self, WatchResponse};
 use crate::pd::opt::{with_prefix, with_prev_kv, with_rev};
 use crate::pd::resource_manager_client::{
     group_settings_path_prefix_bytes, GetResourceGroupOption, CONTROLLER_CONFIG_PATH_PREFIX_BYTES,
@@ -103,8 +102,11 @@ pub trait ResourceGroupKVInterceptor: Send + Sync {
         resp: &dyn ResponseInfo,
     ) -> crate::Result<(Consumption, Duration)>;
     /// Background jobs of the group are neither recorded nor waited for.
-    async fn is_background_request(&self, resource_group_name: &str, request_resource: &str)
-        -> bool;
+    async fn is_background_request(
+        &self,
+        resource_group_name: &str,
+        request_resource: &str,
+    ) -> bool;
     /// The current RU calculation version for this keyspace.
     fn get_ru_version(&self) -> RUVersion;
 }
@@ -259,7 +261,10 @@ pub async fn new_resource_group_controller(
         controller.ru_config.load_full(),
         keyspace_id
     );
-    ENABLE_CONTROLLER_TRACE_LOG.store(config.base_config.enable_controller_trace_log, Ordering::SeqCst);
+    ENABLE_CONTROLLER_TRACE_LOG.store(
+        config.base_config.enable_controller_trace_log,
+        Ordering::SeqCst,
+    );
     // The initial RU version comes from the controller config's policy.
     controller.update_ru_version_from_config(&config);
     Ok(controller)
@@ -489,7 +494,10 @@ impl ResourceGroupsController {
         }
         match self
             .provider
-            .watch(CONTROLLER_CONFIG_PATH_PREFIX_BYTES, &[with_rev(cfg_revision)])
+            .watch(
+                CONTROLLER_CONFIG_PATH_PREFIX_BYTES,
+                &[with_rev(cfg_revision)],
+            )
             .await
         {
             Ok(channel) => watch_config_channel = Some(channel),
@@ -547,7 +555,10 @@ impl ResourceGroupsController {
                     if watch_config_channel.is_none() {
                         match self
                             .provider
-                            .watch(CONTROLLER_CONFIG_PATH_PREFIX_BYTES, &[with_rev(cfg_revision)])
+                            .watch(
+                                CONTROLLER_CONFIG_PATH_PREFIX_BYTES,
+                                &[with_rev(cfg_revision)],
+                            )
                             .await
                         {
                             Ok(channel) => watch_config_channel = Some(channel),
@@ -594,7 +605,12 @@ impl ResourceGroupsController {
                     self.execute_on_all_groups(|gc| gc.update_run_state());
                     self.execute_on_all_groups(|gc| gc.update_avg_request_resource_per_sec());
                     // Groups low on tokens.
-                    self.collect_token_bucket_requests(&ctx, FROM_LOW_RU, SelectType::LowToken, msg);
+                    self.collect_token_bucket_requests(
+                        &ctx,
+                        FROM_LOW_RU,
+                        SelectType::LowToken,
+                        msg,
+                    );
                     if self.is_degraded() {
                         self.execute_on_all_groups(|gc| gc.apply_degraded_mode());
                     }
@@ -667,7 +683,10 @@ impl ResourceGroupsController {
             .write()
             .unwrap_or_else(|e| e.into_inner()) = options.degraded_ru_settings;
         if enable_controller_trace_log() != config.base_config.enable_controller_trace_log {
-            ENABLE_CONTROLLER_TRACE_LOG.store(config.base_config.enable_controller_trace_log, Ordering::SeqCst);
+            ENABLE_CONTROLLER_TRACE_LOG.store(
+                config.base_config.enable_controller_trace_log,
+                Ordering::SeqCst,
+            );
         }
         self.update_ru_version_from_config(config);
     }
@@ -739,7 +758,9 @@ impl ResourceGroupsController {
 
     /// Stops the controller's main loop and waits for it to exit.
     pub async fn stop(&self) -> crate::Result<()> {
-        let cancel = lock(&self.loop_ctx).as_ref().map(|(_, cancel)| cancel.clone());
+        let cancel = lock(&self.loop_ctx)
+            .as_ref()
+            .map(|(_, cancel)| cancel.clone());
         let Some(cancel) = cancel else {
             return Err(crate::Error::StringError(
                 "resource groups controller does not start".to_owned(),
@@ -863,7 +884,7 @@ impl ResourceGroupsController {
             return true;
         }
         match grpc_code(cause) {
-            tonic::Code::Canceled => false,
+            tonic::Code::Cancelled => false,
             tonic::Code::Unavailable | tonic::Code::DeadlineExceeded => true,
             _ => false,
         }
@@ -1115,7 +1136,9 @@ impl ResourceGroupsController {
                     // Errors caused by the stopper cancelling the context are
                     // not logged.
                     if !matches!(error, crate::Error::ContextCanceled) {
-                        log::warn!("[resource group controller] token bucket rpc error, error: {error}");
+                        log::warn!(
+                            "[resource group controller] token bucket rpc error, error: {error}"
+                        );
                     }
                     metrics
                         .failed_token_request_duration
@@ -1244,7 +1267,10 @@ impl ResourceGroupsController {
         };
         let meta = gc.get_meta();
         if meta.background_settings.is_some() {
-            return background_job_types_contain(meta.background_settings.as_ref(), request_resource);
+            return background_job_types_contain(
+                meta.background_settings.as_ref(),
+                request_resource,
+            );
         }
         let Some(default_gc) = self.cached_untombstoned(DEFAULT_RESOURCE_GROUP_NAME) else {
             return false;
@@ -1265,8 +1291,10 @@ impl ResourceGroupsController {
     }
 
     fn prefetch_resource_group(&self, name: &str) {
-        let (Some(this), Ok(runtime)) = (self.self_ref.upgrade(), tokio::runtime::Handle::try_current())
-        else {
+        let (Some(this), Ok(runtime)) = (
+            self.self_ref.upgrade(),
+            tokio::runtime::Handle::try_current(),
+        ) else {
             return;
         };
         let name = name.to_owned();
@@ -1293,7 +1321,8 @@ impl ResourceGroupsController {
         resource_group_name: &str,
     ) -> Option<ResourceGroupRuntimeState> {
         let gc = self.load_group_controller(resource_group_name)?;
-        if gc.tombstone.load(Ordering::SeqCst) || !gc.initial_request_completed.load(Ordering::SeqCst)
+        if gc.tombstone.load(Ordering::SeqCst)
+            || !gc.initial_request_completed.load(Ordering::SeqCst)
         {
             return None;
         }
@@ -1338,7 +1367,10 @@ impl ResourceGroupsController {
     }
 
     /// The active (not tombstoned) resource group. Used by tests.
-    pub fn get_active_resource_group(&self, resource_group_name: &str) -> Option<Arc<ResourceGroup>> {
+    pub fn get_active_resource_group(
+        &self,
+        resource_group_name: &str,
+    ) -> Option<Arc<ResourceGroup>> {
         let gc = self.load_group_controller(resource_group_name)?;
         if gc.tombstone.load(Ordering::SeqCst) {
             return None;

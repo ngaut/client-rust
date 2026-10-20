@@ -263,9 +263,8 @@ fn base64_value(c: u8) -> Option<u32> {
 /// `[]byte`: padding is required and `\r`/`\n` are ignored.
 pub(super) fn base64_decode(s: &str) -> Result<Vec<u8>> {
     let src: Vec<u8> = s.bytes().filter(|&c| c != b'\r' && c != b'\n').collect();
-    let corrupt = |offset: usize| {
-        Error::StringError(format!("illegal base64 data at input byte {offset}"))
-    };
+    let corrupt =
+        |offset: usize| Error::StringError(format!("illegal base64 data at input byte {offset}"));
     if src.len() % 4 != 0 {
         return Err(corrupt(src.len() - src.len() % 4));
     }
