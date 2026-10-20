@@ -1136,6 +1136,10 @@ where
 {
     use crate::request::Plan;
 
+    #[cfg(any(test, feature = "failpoints"))]
+    if let Some(injected) = failpoint_send_req_result(crate::store::Request::label(&request)) {
+        return injected;
+    }
     let mut responses = crate::request::PlanBuilder::new(pd_client, keyspace, request)
         .retry_region_request(backoffer)
         .plan()
@@ -1146,6 +1150,31 @@ where
         _ => Err(Error::StringError(
             "a region request answered other than once".to_owned(),
         )),
+    }
+}
+
+/// client-go `failpointSendReqResult`, failpoint `tikvStoreSendReqResult`,
+/// for a TiKV request: an answer in place of the send, before the sender
+/// retries anything. A region error comes back as the sender returns one.
+#[cfg(any(test, feature = "failpoints"))]
+fn failpoint_send_req_result<T>(label: &str) -> Option<crate::Result<T>> {
+    let value = fail::eval("tikvStoreSendReqResult", |value| value).flatten()?;
+    let region_error = |error: errorpb::Error| Some(Err(Error::RegionError(Box::new(error))));
+    let not_leader = || errorpb::Error {
+        not_leader: Some(errorpb::NotLeader::default()),
+        ..Default::default()
+    };
+    let server_is_busy = || errorpb::Error {
+        server_is_busy: Some(errorpb::ServerIsBusy::default()),
+        ..Default::default()
+    };
+    match value.as_str() {
+        "timeout" => Some(Err(Error::StringError("timeout".to_owned()))),
+        "GCNotLeader" if label == "kv_gc" => region_error(not_leader()),
+        "PessimisticLockNotLeader" if label == "kv_pessimistic_lock" => region_error(not_leader()),
+        "GCServerIsBusy" if label == "kv_gc" => region_error(server_is_busy()),
+        "busy" => region_error(server_is_busy()),
+        _ => None,
     }
 }
 
@@ -1244,6 +1273,61 @@ mod send_req_tests {
             "{error:?}"
         );
         assert_eq!(sent.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    /// client-go's `tikvStoreSendReqResult` answers in place of the send: a
+    /// GC request gets the injected region error, any request the timeout,
+    /// and nothing reaches the store.
+    #[tokio::test]
+    async fn the_send_failpoint_answers_before_the_sender() {
+        let scenario = fail::FailScenario::setup();
+        let gc_request = || kvrpcpb::GcRequest {
+            context: request_to_region1(0).context,
+            safe_point: 10,
+        };
+        let sent = Arc::new(AtomicUsize::new(0));
+        let counter = sent.clone();
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |_: &dyn Any| {
+                counter.fetch_add(1, AtomicOrdering::SeqCst);
+                Ok(Box::<kvrpcpb::GcResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let backoffer =
+            || crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000);
+
+        fail::cfg("tikvStoreSendReqResult", "return(GCNotLeader)").unwrap();
+        let error = send_req(pd.clone(), Keyspace::Disable, gc_request(), backoffer())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, Error::RegionError(e) if e.not_leader.is_some()),
+            "{error:?}"
+        );
+        fail::cfg("tikvStoreSendReqResult", "return(GCServerIsBusy)").unwrap();
+        let error = send_req(pd.clone(), Keyspace::Disable, gc_request(), backoffer())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, Error::RegionError(e) if e.server_is_busy.is_some()),
+            "{error:?}"
+        );
+        fail::cfg("tikvStoreSendReqResult", "return(timeout)").unwrap();
+        let error = send_req(pd.clone(), Keyspace::Disable, gc_request(), backoffer())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            Error::StringError("timeout".to_owned()).to_string()
+        );
+        assert_eq!(sent.load(AtomicOrdering::SeqCst), 0);
+
+        fail::remove("tikvStoreSendReqResult");
+        send_req(pd, Keyspace::Disable, gc_request(), backoffer())
+            .await
+            .unwrap();
+        assert_eq!(sent.load(AtomicOrdering::SeqCst), 1);
+        scenario.teardown();
     }
 
     /// An epoch mismatch from the store is the caller's to handle: it comes
