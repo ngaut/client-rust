@@ -3,10 +3,12 @@
 //! Client-side tracing hooks and TiKV trace-control flags.
 
 use std::any::{Any, TypeId};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::ops::{BitOr, BitOrAssign};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -83,6 +85,37 @@ impl ExecutionDetailSpan {
         }
     }
 
+    /// client-go `spanInfo.addTo`: report this normalized tree as historical
+    /// client spans starting at `start`, returning where a following sibling
+    /// starts.
+    fn add_client_spans(&self, parent: &ClientSpanContext, start: Instant) -> Instant {
+        if self.duration.is_zero() {
+            return start;
+        }
+        let end = start + self.duration;
+        let id = NEXT_CLIENT_SPAN_ID.fetch_add(1, AtomicOrdering::Relaxed);
+        (parent.handler)(ClientSpanEvent::Start {
+            id,
+            parent: parent.parent,
+            name: Cow::Borrowed(self.name),
+            at: start,
+        });
+        let context = ClientSpanContext {
+            handler: parent.handler.clone(),
+            parent: Some(id),
+        };
+        let mut child_start = start;
+        for child in &self.children {
+            child_start = child.add_client_spans(&context, child_start);
+        }
+        (parent.handler)(ClientSpanEvent::Finish { id, at: end });
+        if self.asynchronous {
+            start
+        } else {
+            end
+        }
+    }
+
     /// Return child-before-parent span timings, matching the finish order of
     /// client-go's recursive `spanInfo.addTo` implementation.
     pub fn timeline(&self) -> Vec<ExecutionDetailTiming> {
@@ -155,6 +188,258 @@ pub(crate) fn current_execution_details_trace_handler() -> Option<ExecutionDetai
 /// Return whether the current asynchronous scope requests TiKV execution details.
 pub fn trace_exec_details_enabled() -> bool {
     EXECUTION_DETAILS_TRACE_HANDLER.try_with(|_| ()).is_ok()
+}
+
+/// One event of a client-go opentracing span, reported to the handler of
+/// [`with_client_spans`].
+///
+/// client-go opens its spans as children of the span in the request's
+/// `context.Context` (`opentracing.SpanFromContext(ctx)`), which is how
+/// TiDB's `TRACE` statement shows them. The Rust counterpart of that ctx span
+/// is the innermost client span open in the current asynchronous task:
+/// `parent` names it, and `None` means the caller's own span, the one that
+/// was current when [`with_client_spans`] was entered. `Log` events are
+/// client-go's `logutil.Event`/`Eventf` on the ctx span, with the same `id`
+/// convention.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClientSpanEvent {
+    Start {
+        id: u64,
+        parent: Option<u64>,
+        name: Cow<'static, str>,
+        at: Instant,
+    },
+    Finish {
+        id: u64,
+        at: Instant,
+    },
+    Log {
+        id: Option<u64>,
+        at: Instant,
+        event: String,
+    },
+}
+
+/// Sink for [`ClientSpanEvent`]s. It is called synchronously on the task
+/// that produced the event, so it should only record.
+pub type ClientSpanHandler = Arc<dyn Fn(ClientSpanEvent) + Send + Sync>;
+
+/// The client span scope of one asynchronous task: the handler and the
+/// innermost open client span, the counterpart of client-go's ctx span.
+///
+/// Tokio task locals do not follow `tokio::spawn`; capture this with
+/// [`current_client_span_context`] before spawning and re-enter it with
+/// [`with_client_span_context`] inside the spawned task.
+#[derive(Clone)]
+pub struct ClientSpanContext {
+    handler: ClientSpanHandler,
+    parent: Option<u64>,
+}
+
+impl fmt::Debug for ClientSpanContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ClientSpanContext")
+            .field("parent", &self.parent)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ClientSpanContext {
+    /// client-go `logutil.Event` on this context's span.
+    pub(crate) fn log(&self, event: String) {
+        (self.handler)(ClientSpanEvent::Log {
+            id: self.parent,
+            at: Instant::now(),
+            event,
+        });
+    }
+}
+
+tokio::task_local! {
+    static CLIENT_SPAN_CONTEXT: ClientSpanContext;
+}
+
+/// Span ids are unique per process; zero is never allocated.
+static NEXT_CLIENT_SPAN_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Report client-go's opentracing spans for one asynchronous operation.
+///
+/// Every client span opened while `future` runs (`regionRequest.SendReqCtx`,
+/// `tikvSnapshot.get`, `twoPhaseCommitter.prewriteMutations`, ...) and every
+/// span log event reaches `handler`. Spans the client opens in tasks it
+/// spawns for this operation inherit the scope. Outside such a scope nothing
+/// is recorded; each would-be span costs one task-local lookup.
+pub async fn with_client_spans<F>(handler: ClientSpanHandler, future: F) -> F::Output
+where
+    F: Future,
+{
+    CLIENT_SPAN_CONTEXT
+        .scope(
+            ClientSpanContext {
+                handler,
+                parent: None,
+            },
+            future,
+        )
+        .await
+}
+
+/// The client span scope of the current task, if any.
+pub fn current_client_span_context() -> Option<ClientSpanContext> {
+    CLIENT_SPAN_CONTEXT.try_with(ClientSpanContext::clone).ok()
+}
+
+/// Run `future` in a scope captured by [`current_client_span_context`],
+/// typically in a task spawned for the operation that owned it. `None` runs
+/// `future` unchanged.
+pub async fn with_client_span_context<F>(context: Option<ClientSpanContext>, future: F) -> F::Output
+where
+    F: Future,
+{
+    match context {
+        Some(context) => CLIENT_SPAN_CONTEXT.scope(context, future).await,
+        None => future.await,
+    }
+}
+
+/// Whether the current task reports client spans.
+pub fn client_spans_enabled() -> bool {
+    CLIENT_SPAN_CONTEXT.try_with(|_| ()).is_ok()
+}
+
+/// Capture the current client span scope for a future about to be spawned.
+pub(crate) fn inherit_client_spans<F>(future: F) -> impl Future<Output = F::Output>
+where
+    F: Future,
+{
+    with_client_span_context(current_client_span_context(), future)
+}
+
+/// One open client span. Dropping it finishes the span, as client-go's
+/// `defer span1.Finish()`, including when the owning future is cancelled.
+pub(crate) struct ClientSpan {
+    handler: ClientSpanHandler,
+    id: u64,
+}
+
+impl ClientSpan {
+    /// client-go `span.Tracer().StartSpan(name, opentracing.ChildOf(...))`
+    /// under `context`'s span.
+    pub(crate) fn start(context: &ClientSpanContext, name: Cow<'static, str>) -> Self {
+        let id = NEXT_CLIENT_SPAN_ID.fetch_add(1, AtomicOrdering::Relaxed);
+        (context.handler)(ClientSpanEvent::Start {
+            id,
+            parent: context.parent,
+            name,
+            at: Instant::now(),
+        });
+        Self {
+            handler: context.handler.clone(),
+            id,
+        }
+    }
+
+    /// The scope whose ctx span is this span
+    /// (`opentracing.ContextWithSpan(ctx, span1)`).
+    pub(crate) fn context(&self) -> ClientSpanContext {
+        ClientSpanContext {
+            handler: self.handler.clone(),
+            parent: Some(self.id),
+        }
+    }
+
+    /// Run `future` with this span as its ctx span.
+    pub(crate) async fn scope<F: Future>(&self, future: F) -> F::Output {
+        CLIENT_SPAN_CONTEXT.scope(self.context(), future).await
+    }
+}
+
+impl Drop for ClientSpan {
+    fn drop(&mut self) {
+        (self.handler)(ClientSpanEvent::Finish {
+            id: self.id,
+            at: Instant::now(),
+        });
+    }
+}
+
+/// Run `future` with `span`, when open, as its ctx span.
+pub(crate) async fn in_client_span<F: Future>(span: Option<&ClientSpan>, future: F) -> F::Output {
+    match span {
+        Some(span) => span.scope(future).await,
+        None => future.await,
+    }
+}
+
+/// Open `name` under the current task's ctx span, if any.
+pub(crate) fn start_client_span(name: &'static str) -> Option<ClientSpan> {
+    CLIENT_SPAN_CONTEXT
+        .try_with(|context| ClientSpan::start(context, Cow::Borrowed(name)))
+        .ok()
+}
+
+/// A client-go span that becomes the ctx span of the work it encloses:
+/// `span1 := StartSpan(name, ChildOf(ctx span)); ctx = ContextWithSpan(ctx, span1)`.
+pub(crate) async fn client_span<F: Future>(name: &'static str, future: F) -> F::Output {
+    client_span_in(current_client_span_context(), name, future).await
+}
+
+/// [`client_span`] under an explicitly captured scope.
+pub(crate) async fn client_span_in<F: Future>(
+    context: Option<ClientSpanContext>,
+    name: &'static str,
+    future: F,
+) -> F::Output {
+    let Some(context) = context else {
+        return future.await;
+    };
+    let span = ClientSpan::start(&context, Cow::Borrowed(name));
+    let output = span.scope(future).await;
+    drop(span);
+    output
+}
+
+/// [`client_span`] with a name built only when spans are reported.
+pub(crate) async fn client_span_named<F: Future>(
+    name: impl FnOnce() -> Cow<'static, str>,
+    future: F,
+) -> F::Output {
+    let Some(span) = CLIENT_SPAN_CONTEXT
+        .try_with(|context| ClientSpan::start(context, name()))
+        .ok()
+    else {
+        return future.await;
+    };
+    let output = span.scope(future).await;
+    drop(span);
+    output
+}
+
+/// A client-go span whose derived ctx is discarded, so work it encloses still
+/// reports to the enclosing ctx span (`tikvSnapshot.get`, `tikv.backoff.*`,
+/// and the region-cache loads whose PD calls open no spans).
+pub(crate) async fn detached_client_span<F: Future>(name: &'static str, future: F) -> F::Output {
+    detached_client_span_named(|| Cow::Borrowed(name), future).await
+}
+
+/// [`detached_client_span`] with a name built only when spans are reported.
+pub(crate) async fn detached_client_span_named<F: Future>(
+    name: impl FnOnce() -> Cow<'static, str>,
+    future: F,
+) -> F::Output {
+    let span = CLIENT_SPAN_CONTEXT
+        .try_with(|context| ClientSpan::start(context, name()))
+        .ok();
+    let output = future.await;
+    drop(span);
+    output
+}
+
+/// client-go `logutil.Eventf(ctx, ...)`: a log event on the current ctx span.
+/// `event` runs only when the task reports client spans.
+pub(crate) fn client_span_event(event: impl FnOnce() -> String) {
+    let _ = CLIENT_SPAN_CONTEXT.try_with(|context| context.log(event()));
 }
 
 /// Build client-go's exact execution-detail span tree.
@@ -257,6 +542,13 @@ pub(crate) fn trace_exec_details_response(started_at: Instant, response: &dyn An
         return;
     };
     handler(started_at, &span);
+    // client-go `spanInfo.addTo(spanRPC, start)`: with execution details
+    // enabled, the reconstructed tree also hangs under the RPC's span.
+    if let Ok(context) = CLIENT_SPAN_CONTEXT.try_with(ClientSpanContext::clone) {
+        let mut normalized = span;
+        normalized.calculate_timeline_durations();
+        normalized.add_client_spans(&context, started_at);
+    }
 }
 
 fn format_go_duration(duration: Duration) -> String {
@@ -1076,5 +1368,290 @@ mod tests {
                 "tikv.RPC[1ms]{ tikv.Wait tikv.Process tikv.Suspend }".to_owned()
             )]
         );
+    }
+}
+
+/// Recording and rendering of [`ClientSpanEvent`]s for tests across the crate.
+#[cfg(test)]
+pub(crate) mod client_span_testing {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use super::{ClientSpanEvent, ClientSpanHandler};
+
+    pub(crate) type Recorded = Arc<Mutex<Vec<ClientSpanEvent>>>;
+
+    pub(crate) fn recorder() -> (ClientSpanHandler, Recorded) {
+        let recorded = Recorded::default();
+        let sink = recorded.clone();
+        (
+            Arc::new(move |event| sink.lock().unwrap().push(event)),
+            recorded,
+        )
+    }
+
+    /// One line per span start (indented two spaces per ancestor) and per
+    /// log event (`- event`, one level below its span), in event order.
+    /// Panics when a span is not finished or finishes before a child does.
+    pub(crate) fn render(recorded: &Recorded) -> Vec<String> {
+        let events = recorded.lock().unwrap().clone();
+        let mut depth = HashMap::new();
+        let mut open = HashMap::new();
+        let mut lines = Vec::new();
+        for event in events {
+            match event {
+                ClientSpanEvent::Start {
+                    id, parent, name, ..
+                } => {
+                    let level = parent.map_or(0, |parent| {
+                        assert!(
+                            open.contains_key(&parent),
+                            "{name} starts under a closed span"
+                        );
+                        depth[&parent] + 1
+                    });
+                    depth.insert(id, level);
+                    open.insert(id, parent);
+                    lines.push(format!("{}{name}", "  ".repeat(level)));
+                }
+                ClientSpanEvent::Finish { id, .. } => {
+                    assert!(open.remove(&id).is_some(), "span {id} finished twice");
+                    assert!(
+                        !open.values().any(|parent| *parent == Some(id)),
+                        "span {id} finished before its children"
+                    );
+                }
+                ClientSpanEvent::Log { id, event, .. } => {
+                    let level = id.map_or(0, |id| {
+                        assert!(open.contains_key(&id), "{event} logged on a closed span");
+                        depth[&id] + 1
+                    });
+                    lines.push(format!("{}- {event}", "  ".repeat(level)));
+                }
+            }
+        }
+        assert!(open.is_empty(), "unfinished spans: {open:?}");
+        lines
+    }
+}
+
+#[cfg(test)]
+mod client_span_tests {
+    use std::borrow::Cow;
+
+    use super::client_span_testing::{recorder, render};
+    use super::*;
+    use crate::TimestampExt;
+
+    #[tokio::test]
+    async fn nothing_is_built_or_recorded_outside_a_scope() {
+        assert!(!client_spans_enabled());
+        assert!(current_client_span_context().is_none());
+        assert!(start_client_span("unused").is_none());
+        detached_client_span_named(
+            || -> Cow<'static, str> { panic!("a span name was built without a scope") },
+            async {},
+        )
+        .await;
+        client_span_event(|| panic!("an event was formatted without a scope"));
+        assert_eq!(client_span("unused", async { 7 }).await, 7);
+
+        // A scope in one task does not reach another task.
+        let (handler, recorded) = recorder();
+        with_client_spans(handler, async {
+            tokio::spawn(client_span("detached task", async {}))
+                .await
+                .unwrap();
+        })
+        .await;
+        assert!(recorded.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn spans_nest_like_go_ctx_spans_and_follow_inherited_spawns() {
+        let (handler, recorded) = recorder();
+        with_client_spans(handler, async {
+            client_span("outer", async {
+                detached_client_span("leaf", async {
+                    client_span_event(|| "inside leaf".to_owned());
+                })
+                .await;
+                tokio::spawn(inherit_client_spans(client_span("spawned", async {
+                    client_span_event(|| "inside spawned".to_owned());
+                })))
+                .await
+                .unwrap();
+            })
+            .await;
+            client_span_event(|| "at root".to_owned());
+        })
+        .await;
+        assert_eq!(
+            render(&recorded),
+            vec![
+                "outer",
+                "  leaf",
+                "  - inside leaf",
+                "  spawned",
+                "    - inside spawned",
+                "- at root",
+            ]
+        );
+    }
+
+    fn mock_transaction(
+        rpc: Arc<crate::mock::MockPdClient>,
+    ) -> crate::Transaction<crate::mock::MockPdClient> {
+        crate::Transaction::new(
+            crate::Timestamp::from_version(1),
+            rpc,
+            crate::TransactionOptions::new_optimistic()
+                .heartbeat_option(crate::transaction::HeartbeatOption::NoHeartbeat)
+                .drop_check(crate::CheckLevel::None),
+            crate::request::Keyspace::Disable,
+        )
+    }
+
+    fn mock_pd(
+        answer: impl Fn(&dyn Any) -> Box<dyn Any> + Send + Sync + 'static,
+    ) -> Arc<crate::mock::MockPdClient> {
+        let rpc = Arc::new(crate::mock::MockPdClient::new(
+            crate::mock::MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+                Ok(answer(request))
+            }),
+        ));
+        rpc.set_timestamp(crate::Timestamp::from_version(10));
+        rpc
+    }
+
+    fn default_response(request: &dyn Any) -> Box<dyn Any> {
+        if request.downcast_ref::<kvrpcpb::GetRequest>().is_some() {
+            return Box::new(kvrpcpb::GetResponse {
+                value: b"v".to_vec(),
+                ..Default::default()
+            });
+        }
+        if request.downcast_ref::<kvrpcpb::BatchGetRequest>().is_some() {
+            return Box::<kvrpcpb::BatchGetResponse>::default();
+        }
+        if request.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
+            return Box::<kvrpcpb::PrewriteResponse>::default();
+        }
+        if request.downcast_ref::<kvrpcpb::CommitRequest>().is_some() {
+            return Box::<kvrpcpb::CommitResponse>::default();
+        }
+        panic!("unexpected request");
+    }
+
+    #[tokio::test]
+    async fn point_get_reports_a_snapshot_get_beside_its_region_request() {
+        let mut transaction = mock_transaction(mock_pd(default_response));
+        let (handler, recorded) = recorder();
+        let value = with_client_spans(handler, transaction.get(vec![5_u8])).await;
+        assert_eq!(value.unwrap(), Some(b"v".to_vec()));
+        // client-go `KVSnapshot.get` discards the ctx carrying its span, so
+        // the region request is its sibling.
+        let lines = render(&recorded);
+        assert_eq!(lines[..2], ["tikvSnapshot.get", "regionRequest.SendReqCtx"]);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(
+            lines[2].starts_with("  - send Get request to region 1 at "),
+            "{lines:?}"
+        );
+
+        // A cached read opens no span.
+        let (handler, recorded) = recorder();
+        with_client_spans(handler, transaction.get(vec![5_u8]))
+            .await
+            .unwrap();
+        assert!(recorded.lock().unwrap().is_empty());
+
+        // Without a scope nothing reaches a handler.
+        let (_handler, recorded) = recorder();
+        transaction.get(vec![6_u8]).await.unwrap();
+        assert!(recorded.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn batch_get_reports_one_region_request_per_region_task() {
+        let mut transaction = mock_transaction(mock_pd(default_response));
+        let (handler, recorded) = recorder();
+        let pairs = with_client_spans(handler, transaction.batch_get(vec![vec![5_u8], vec![11]]))
+            .await
+            .unwrap();
+        assert_eq!(pairs.count(), 0);
+        let mut lines = render(&recorded);
+        lines.sort();
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[0].starts_with("  - send BatchGet request to region 1 at "));
+        assert!(lines[1].starts_with("  - send BatchGet request to region 2 at "));
+        assert_eq!(
+            lines[2..],
+            ["regionRequest.SendReqCtx", "regionRequest.SendReqCtx"]
+        );
+    }
+
+    #[tokio::test]
+    async fn two_phase_commit_reports_client_go_committer_spans() {
+        let mut transaction = mock_transaction(mock_pd(default_response));
+        transaction.put(vec![5_u8], b"a".to_vec()).await.unwrap();
+        transaction.put(vec![11_u8], b"b".to_vec()).await.unwrap();
+        let (handler, recorded) = recorder();
+        let commit_ts = with_client_spans(handler, transaction.commit())
+            .await
+            .unwrap();
+        assert_eq!(commit_ts.unwrap().version(), 10);
+        let lines = render(&recorded)
+            .into_iter()
+            .map(|line| match line.find(" request to region ") {
+                Some(at) => line[..at + " request to region N".len()].to_owned(),
+                None => line,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 12, "{lines:#?}");
+        assert_eq!(
+            lines[..2],
+            ["tikvTxn.Commit", "  twoPhaseCommitter.prewriteMutations"]
+        );
+        // The two prewrite batches run concurrently.
+        let mut batches = lines[2..6].to_vec();
+        batches.sort();
+        assert_eq!(
+            batches,
+            [
+                "      - send Prewrite request to region 1",
+                "      - send Prewrite request to region 2",
+                "    regionRequest.SendReqCtx",
+                "    regionRequest.SendReqCtx",
+            ]
+        );
+        // Secondaries commit in the background on the store's context, outside
+        // the caller's trace, as in client-go.
+        assert_eq!(
+            lines[6..],
+            [
+                "  - start get commit ts",
+                "  TiKVStore.getTimestampWithRetry",
+                "  - finish get commit ts",
+                "  twoPhaseCommitter.commitMutations",
+                "    regionRequest.SendReqCtx",
+                "      - send Commit request to region 1",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_span_still_finishes() {
+        let (handler, recorded) = recorder();
+        with_client_spans(handler, async {
+            let pending = client_span("cancelled", std::future::pending::<()>());
+            tokio::select! {
+                biased;
+                _ = pending => unreachable!(),
+                _ = async {} => {}
+            }
+        })
+        .await;
+        assert_eq!(render(&recorded), vec!["cancelled"]);
     }
 }

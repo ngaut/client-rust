@@ -1293,6 +1293,54 @@ mod send_req_tests {
     /// client-go's sender retries a busy server itself; the caller sees the
     /// answer.
     #[tokio::test]
+    async fn a_coprocessor_send_reports_its_sender_spans() {
+        let (pd, _) = client(|attempt| {
+            if attempt == 0 {
+                region_error(errorpb::Error {
+                    server_is_busy: Some(errorpb::ServerIsBusy::default()),
+                    ..Default::default()
+                })
+            } else {
+                coprocessor::Response::default()
+            }
+        });
+        let backoffer = Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+            crate::async_util::Cancellation::default(),
+            1_000,
+        )));
+        let (handler, recorded) = crate::trace::client_span_testing::recorder();
+        crate::trace::with_client_spans(
+            handler,
+            send_req(
+                pd,
+                Keyspace::Disable,
+                request_to_region1(0),
+                backoffer,
+                std::time::Duration::from_secs(1),
+            ),
+        )
+        .await
+        .unwrap();
+        let lines = crate::trace::client_span_testing::render(&recorded)
+            .into_iter()
+            .map(|line| match line.find(" at ") {
+                Some(at) => line[..at].to_owned(),
+                None => line,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            [
+                "regionRequest.SendReqCtx",
+                "  - send Cop request to region 1",
+                "  tikv.onRegionError",
+                "    tikv.backoff.tikvServerBusy",
+                "  - send Cop request to region 1",
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn the_sender_retries_the_region_errors_it_owns() {
         let (pd, sent) = client(|attempt| {
             if attempt == 0 {

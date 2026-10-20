@@ -2087,63 +2087,67 @@ impl<PdC: PdClient> Transaction<PdC> {
         let max_timestamp_point_get = timestamp.version() == u64::MAX;
 
         self.buffer
-            .get_or_else_with_cache(key, cache_snapshot_read, |key| async move {
-                let mut request = new_get_request(key, timestamp.clone());
-                let resource_group_tag = apply_snapshot_resource_group_tag(
-                    &mut request,
-                    resource_group_tag.as_ref(),
-                    transaction_resource_group_tagger.as_ref(),
-                    resource_group_tagger.as_ref(),
-                    SnapshotRequestType::Get,
-                );
-                let plan = plan_with_keyspace_name(
-                    rpc,
-                    keyspace,
-                    keyspace_name.as_deref(),
-                    rpc_interceptor,
-                    resource_group_name.as_deref(),
-                    resource_control,
-                    ru_details,
-                    replica_read_config.clone(),
-                    request,
-                )
-                .request_source(request_source)
-                .priority(priority)
-                .not_fill_cache(not_fill_cache)
-                .isolation_level(isolation_level)
-                .task_id(task_id)
-                .resource_group_tag(resource_group_tag)
-                .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_SHORT)
-                .validate_read_timestamp(
-                    read_timestamp_validator,
-                    timestamp.version(),
-                    replica_read_config.stale_read,
-                    read_replica_scope,
-                )
-                .resolve_lock_for_read(
-                    timestamp,
-                    retry_options.lock_backoff,
-                    keyspace,
-                    read_lock_context,
-                    lock_resolver_context,
-                    snapshot_runtime_stats.clone(),
-                    snapshot_variables.clone(),
-                )
-                .force_lite_lock_resolution()
-                .max_timestamp_point_get(max_timestamp_point_get)
-                .retry_multi_region_with_snapshot_stats(
-                    DEFAULT_REGION_BACKOFF,
-                    snapshot_runtime_stats.clone(),
-                    snapshot_variables,
-                )
-                .merge(CollectSingle)
-                .post_process_default()
-                .plan();
-                let value = plan.execute().await?;
-                if let Some(validator) = snapshot_visibility_validator {
-                    validator.check_visibility(snapshot_version).await?;
-                }
-                Ok(value)
+            .get_or_else_with_cache(key, cache_snapshot_read, |key| {
+                // client-go `KVSnapshot.get` opens its span after the
+                // snapshot cache misses and discards the derived ctx.
+                crate::trace::detached_client_span("tikvSnapshot.get", async move {
+                    let mut request = new_get_request(key, timestamp.clone());
+                    let resource_group_tag = apply_snapshot_resource_group_tag(
+                        &mut request,
+                        resource_group_tag.as_ref(),
+                        transaction_resource_group_tagger.as_ref(),
+                        resource_group_tagger.as_ref(),
+                        SnapshotRequestType::Get,
+                    );
+                    let plan = plan_with_keyspace_name(
+                        rpc,
+                        keyspace,
+                        keyspace_name.as_deref(),
+                        rpc_interceptor,
+                        resource_group_name.as_deref(),
+                        resource_control,
+                        ru_details,
+                        replica_read_config.clone(),
+                        request,
+                    )
+                    .request_source(request_source)
+                    .priority(priority)
+                    .not_fill_cache(not_fill_cache)
+                    .isolation_level(isolation_level)
+                    .task_id(task_id)
+                    .resource_group_tag(resource_group_tag)
+                    .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_SHORT)
+                    .validate_read_timestamp(
+                        read_timestamp_validator,
+                        timestamp.version(),
+                        replica_read_config.stale_read,
+                        read_replica_scope,
+                    )
+                    .resolve_lock_for_read(
+                        timestamp,
+                        retry_options.lock_backoff,
+                        keyspace,
+                        read_lock_context,
+                        lock_resolver_context,
+                        snapshot_runtime_stats.clone(),
+                        snapshot_variables.clone(),
+                    )
+                    .force_lite_lock_resolution()
+                    .max_timestamp_point_get(max_timestamp_point_get)
+                    .retry_multi_region_with_snapshot_stats(
+                        DEFAULT_REGION_BACKOFF,
+                        snapshot_runtime_stats.clone(),
+                        snapshot_variables,
+                    )
+                    .merge(CollectSingle)
+                    .post_process_default()
+                    .plan();
+                    let value = plan.execute().await?;
+                    if let Some(validator) = snapshot_visibility_validator {
+                        validator.check_visibility(snapshot_version).await?;
+                    }
+                    Ok(value)
+                })
             })
             .await
     }
@@ -2210,11 +2214,8 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         let entry = self
             .buffer
-            .get_snapshot_entry_or_else(
-                key,
-                return_commit_ts,
-                cache_snapshot_read,
-                |key| async move {
+            .get_snapshot_entry_or_else(key, return_commit_ts, cache_snapshot_read, |key| {
+                crate::trace::detached_client_span("tikvSnapshot.get", async move {
                     let mut request = new_get_request(key, timestamp.clone());
                     request.need_commit_ts = return_commit_ts;
                     let resource_group_tag = apply_snapshot_resource_group_tag(
@@ -2273,8 +2274,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                     let entry = (!response.not_found && !response.value.is_empty())
                         .then(|| ValueEntry::new(response.value, response.commit_ts));
                     Ok(entry)
-                },
-            )
+                })
+            })
             .await?;
         // client-go inserts a successful point-read result into the snapshot
         // cache before enforcing the ReturnCommitTS assertion. BatchGet keeps
@@ -3734,6 +3735,12 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
+        crate::trace::client_span("tikvTxn.Commit", self.commit_txn()).await
+    }
+
+    /// The body of client-go `KVTxn.Commit` inside its `tikvTxn.Commit`
+    /// span (Go's `trace.StartRegion(ctx, "CommitTxn")` region).
+    async fn commit_txn(&mut self) -> Result<Option<Timestamp>> {
         debug!(
             "committing transaction, start_ts: {}",
             self.timestamp.version()
@@ -6644,10 +6651,13 @@ impl<PdC: PdClient> Committer<PdC> {
     /// client-go `c.store.getTimestampWithRetry`: a timestamp from the
     /// store's oracle.
     async fn store_timestamp(&self) -> Result<Timestamp> {
-        self.lock_resolver_context
-            .store_oracle
-            .get_timestamp(&self.rpc)
-            .await
+        crate::trace::client_span(
+            "TiKVStore.getTimestampWithRetry",
+            self.lock_resolver_context
+                .store_oracle
+                .get_timestamp(&self.rpc),
+        )
+        .await
     }
 
     fn attach_resource_group_name<R: StoreRequest>(&self, request: &mut R) {
@@ -8725,7 +8735,11 @@ impl<PdC: PdClient> Committer<PdC> {
     async fn prewrite(&mut self) -> Result<Option<Timestamp>> {
         let source_retry_owner =
             self.source_retry_owner(PREWRITE_MAX_BACKOFF.load(atomic::Ordering::Relaxed));
-        self.prewrite_with_retry_owner(source_retry_owner).await
+        crate::trace::client_span(
+            "twoPhaseCommitter.prewriteMutations",
+            self.prewrite_with_retry_owner(source_retry_owner),
+        )
+        .await
     }
 
     async fn prewrite_with_retry_owner(
@@ -9081,7 +9095,9 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn prepare_primary_commit_timestamp(&self) -> Result<Timestamp> {
+        crate::trace::client_span_event(|| "start get commit ts".to_owned());
         let commit_version = self.get_timestamp_for_commit().await?;
+        crate::trace::client_span_event(|| "finish get commit ts".to_owned());
         // Standard 2PC validates schema before transaction lifetime and the
         // optional commit-TS upper bound. This ordering is observable when
         // more than one check would reject the same timestamp.
@@ -9091,7 +9107,9 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn prepare_txn_file_commit_timestamp(&self) -> Result<Timestamp> {
+        crate::trace::client_span_event(|| "start get commit ts".to_owned());
         let commit_version = self.get_timestamp_for_commit().await?;
+        crate::trace::client_span_event(|| "finish get commit ts".to_owned());
         // Txn-file source order is observable: schema rejection prevents both
         // lifetime and upper-bound checks from running.
         self.check_schema_valid(commit_version.version())?;
@@ -9283,9 +9301,29 @@ impl<PdC: PdClient> Committer<PdC> {
     where
         F: FnOnce() + Send,
     {
-        let mut commit_version = self.prepare_primary_commit_timestamp().await?;
+        let commit_version = self.prepare_primary_commit_timestamp().await?;
         let source_retry_owner =
             self.source_retry_owner(COMMIT_MAX_BACKOFF.load(atomic::Ordering::Relaxed));
+        crate::trace::client_span(
+            "twoPhaseCommitter.commitMutations",
+            self.commit_mutations(commit_version, discard_values, source_retry_owner),
+        )
+        .await
+    }
+
+    /// client-go `twoPhaseCommitter.commitMutations` on the caller's ctx:
+    /// the primary batch, retried with a fresh commit timestamp on
+    /// `CommitTsExpired`. Secondaries are committed in the background on the
+    /// store's context, outside this span, as client-go does.
+    async fn commit_mutations<F>(
+        &mut self,
+        mut commit_version: Timestamp,
+        discard_values: &mut Option<F>,
+        source_retry_owner: Option<Arc<tokio::sync::Mutex<RetryBackoffer>>>,
+    ) -> Result<Timestamp>
+    where
+        F: FnOnce() + Send,
+    {
         let mut retained_request = None;
         loop {
             match self

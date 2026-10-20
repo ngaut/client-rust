@@ -517,8 +517,13 @@ impl RetryBackoffer {
         config: RetryConfig,
         reason: impl Into<String>,
     ) -> Result<(), RetryError> {
-        self.backoff_with_config_and_max_sleep(config, None, reason)
-            .await
+        // client-go `Backoffer.Backoff` opens `tikv.backoff.<cfg>` and
+        // discards the derived ctx; the other entry points open no span.
+        crate::trace::detached_client_span_named(
+            || format!("tikv.backoff.{config}").into(),
+            self.backoff_with_config_and_max_sleep(config, None, reason),
+        )
+        .await
     }
 
     /// Source `BackoffWithMaxSleepTxnLockFast`: preserves the class's
