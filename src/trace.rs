@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::ops::{BitOr, BitOrAssign};
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -108,6 +108,9 @@ impl ExecutionDetailSpan {
         for child in &self.children {
             child_start = child.add_client_spans(&context, child_start);
         }
+        if self.asynchronous {
+            context.tag("async", "true".to_owned());
+        }
         (parent.handler)(ClientSpanEvent::Finish { id, at: end });
         if self.asynchronous {
             start
@@ -193,14 +196,22 @@ pub fn trace_exec_details_enabled() -> bool {
 /// One event of a client-go opentracing span, reported to the handler of
 /// [`with_client_spans`].
 ///
-/// client-go opens its spans as children of the span in the request's
-/// `context.Context` (`opentracing.SpanFromContext(ctx)`), which is how
-/// TiDB's `TRACE` statement shows them. The Rust counterpart of that ctx span
-/// is the innermost client span open in the current asynchronous task:
-/// `parent` names it, and `None` means the caller's own span, the one that
-/// was current when [`with_client_spans`] was entered. `Log` events are
-/// client-go's `logutil.Event`/`Eventf` on the ctx span, with the same `id`
-/// convention.
+/// client-go opens its spans as children of the span in a `context.Context`
+/// (`opentracing.SpanFromContext(ctx)`), which is how TiDB's `TRACE`
+/// statement shows them. Two contexts matter, exactly as in client-go:
+///
+/// - the caller's `ctx`, which a span replaces only for the work it encloses
+///   (`ctx = opentracing.ContextWithSpan(ctx, span)`), and
+/// - a Backoffer's `bo.ctx`, which `bo.SetCtx` replaces for every later use
+///   of that Backoffer and is never restored. A retry after a region error
+///   therefore reports under the finished `tikv.onRegionError` span, and a
+///   second `regionRequest.SendReqCtx` on one Backoffer nests under the
+///   first.
+///
+/// `parent` and `id` name a span by its `Start` id; `None` is the caller's
+/// own span, the one current when [`with_client_spans`] was entered. A
+/// `Log` is client-go's `logutil.Event`/`Eventf` and a `Tag` its
+/// `span.SetTag`; either may name a span that has already finished.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientSpanEvent {
     Start {
@@ -218,14 +229,21 @@ pub enum ClientSpanEvent {
         at: Instant,
         event: String,
     },
+    /// `value` is Go's `%v` of the tagged value, which is how TiDB's TRACE
+    /// prints span tags.
+    Tag {
+        id: Option<u64>,
+        key: Cow<'static, str>,
+        value: String,
+    },
 }
 
 /// Sink for [`ClientSpanEvent`]s. It is called synchronously on the task
 /// that produced the event, so it should only record.
 pub type ClientSpanHandler = Arc<dyn Fn(ClientSpanEvent) + Send + Sync>;
 
-/// The client span scope of one asynchronous task: the handler and the
-/// innermost open client span, the counterpart of client-go's ctx span.
+/// A client-go context's span: the handler plus the span work started from
+/// this context reports under (`None` is the caller's span).
 ///
 /// Tokio task locals do not follow `tokio::spawn`; capture this with
 /// [`current_client_span_context`] before spawning and re-enter it with
@@ -254,10 +272,96 @@ impl ClientSpanContext {
             event,
         });
     }
+
+    /// client-go `logutil.SetTag` on this context's span.
+    pub(crate) fn tag(&self, key: &'static str, value: String) {
+        (self.handler)(ClientSpanEvent::Tag {
+            id: self.parent,
+            key: Cow::Borrowed(key),
+            value,
+        });
+    }
+}
+
+/// The span of a client-go Backoffer's `bo.ctx`.
+///
+/// Cloning shares the slot, as passing `bo` by pointer does; [`Self::copied`]
+/// is Go's `bo.Clone()`/`bo.Fork()`, which copy the ctx. An untraced slot
+/// (the Backoffer was built outside any [`with_client_spans`] scope, Go's
+/// `NewBackoffer(ctx)` on a ctx without a span) never reports anything.
+#[derive(Clone, Default)]
+pub(crate) struct BoSpanSlot(Option<Arc<std::sync::Mutex<ClientSpanContext>>>);
+
+impl BoSpanSlot {
+    pub(crate) fn new(context: Option<ClientSpanContext>) -> Self {
+        Self(context.map(|context| Arc::new(std::sync::Mutex::new(context))))
+    }
+
+    /// Go `retry.NewBackoffer(ctx, ...)` in the current task.
+    pub(crate) fn from_current() -> Self {
+        Self::new(current_client_span_context())
+    }
+
+    /// Go `bo.Clone()` / `bo.Fork()`.
+    pub(crate) fn copied(&self) -> Self {
+        Self::new(self.get())
+    }
+
+    pub(crate) fn is_traced(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// Go `bo.GetCtx()`'s span.
+    pub(crate) fn get(&self) -> Option<ClientSpanContext> {
+        self.0.as_ref().map(|slot| {
+            slot.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        })
+    }
+
+    /// Go `bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span))`.
+    fn set(&self, context: ClientSpanContext) {
+        if let Some(slot) = &self.0 {
+            *slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = context;
+        }
+    }
+
+    /// client-go's `span1 := StartSpan(name, ChildOf(bo.ctx's span));
+    /// bo.SetCtx(ContextWithSpan(bo.GetCtx(), span1))`: the span becomes the
+    /// Backoffer's ctx and stays so after it finishes.
+    pub(crate) fn start_span(&self, name: &'static str) -> Option<ClientSpan> {
+        let span = ClientSpan::start(&self.get()?, Cow::Borrowed(name));
+        self.set(span.context());
+        Some(span)
+    }
+}
+
+/// What the current task's client-go code reports under: a plain ctx, or a
+/// Backoffer's mutable ctx while code that client-go runs with
+/// `bo.GetCtx()` is executing.
+#[derive(Clone)]
+enum ClientSpanScope {
+    Ctx(ClientSpanContext),
+    Bo(BoSpanSlot),
+}
+
+impl ClientSpanScope {
+    fn context(&self) -> Option<ClientSpanContext> {
+        match self {
+            Self::Ctx(context) => Some(context.clone()),
+            Self::Bo(slot) => slot.get(),
+        }
+    }
 }
 
 tokio::task_local! {
-    static CLIENT_SPAN_CONTEXT: ClientSpanContext;
+    static CLIENT_SPAN_SCOPE: ClientSpanScope;
+    static SEND_REQ_SPAN: SendReqSpan;
+    static ASYNC_FIRST_SEND: Arc<AtomicBool>;
+    static RPC_SEND_ASYNC: bool;
 }
 
 /// Span ids are unique per process; zero is never allocated.
@@ -267,30 +371,36 @@ static NEXT_CLIENT_SPAN_ID: AtomicU64 = AtomicU64::new(1);
 ///
 /// Every client span opened while `future` runs (`regionRequest.SendReqCtx`,
 /// `tikvSnapshot.get`, `twoPhaseCommitter.prewriteMutations`, ...) and every
-/// span log event reaches `handler`. Spans the client opens in tasks it
-/// spawns for this operation inherit the scope. Outside such a scope nothing
-/// is recorded; each would-be span costs one task-local lookup.
+/// span log event and tag reaches `handler`. A [`crate::retry::RetryBackoffer`]
+/// takes the scope it is created in as its `bo.ctx`, as Go's
+/// `NewBackoffer(ctx)` does, so create the Backoffers you pass to the client
+/// inside the scope. Spans the client opens in tasks it spawns for this
+/// operation inherit the scope. Outside a scope nothing is recorded; each
+/// would-be span costs one task-local lookup.
 pub async fn with_client_spans<F>(handler: ClientSpanHandler, future: F) -> F::Output
 where
     F: Future,
 {
-    CLIENT_SPAN_CONTEXT
+    CLIENT_SPAN_SCOPE
         .scope(
-            ClientSpanContext {
+            ClientSpanScope::Ctx(ClientSpanContext {
                 handler,
                 parent: None,
-            },
+            }),
             future,
         )
         .await
 }
 
-/// The client span scope of the current task, if any.
+/// The context the current task's client-go code reports under, if any.
 pub fn current_client_span_context() -> Option<ClientSpanContext> {
-    CLIENT_SPAN_CONTEXT.try_with(ClientSpanContext::clone).ok()
+    CLIENT_SPAN_SCOPE
+        .try_with(ClientSpanScope::context)
+        .ok()
+        .flatten()
 }
 
-/// Run `future` in a scope captured by [`current_client_span_context`],
+/// Run `future` under a context captured by [`current_client_span_context`],
 /// typically in a task spawned for the operation that owned it. `None` runs
 /// `future` unchanged.
 pub async fn with_client_span_context<F>(context: Option<ClientSpanContext>, future: F) -> F::Output
@@ -298,22 +408,67 @@ where
     F: Future,
 {
     match context {
-        Some(context) => CLIENT_SPAN_CONTEXT.scope(context, future).await,
+        Some(context) => {
+            CLIENT_SPAN_SCOPE
+                .scope(ClientSpanScope::Ctx(context), future)
+                .await
+        }
         None => future.await,
     }
 }
 
 /// Whether the current task reports client spans.
 pub fn client_spans_enabled() -> bool {
-    CLIENT_SPAN_CONTEXT.try_with(|_| ()).is_ok()
+    current_client_span_context().is_some()
 }
 
-/// Capture the current client span scope for a future about to be spawned.
+/// The Backoffer ctx installed by [`with_bo_span_slot`], if the current task
+/// runs Backoffer-scoped client-go code.
+pub(crate) fn current_bo_slot() -> Option<BoSpanSlot> {
+    CLIENT_SPAN_SCOPE
+        .try_with(|scope| match scope {
+            ClientSpanScope::Bo(slot) => Some(slot.clone()),
+            ClientSpanScope::Ctx(_) => None,
+        })
+        .ok()
+        .flatten()
+}
+
+/// Whether any client span scope, traced or not, is installed.
+pub(crate) fn client_span_scope_present() -> bool {
+    CLIENT_SPAN_SCOPE.try_with(|_| ()).is_ok()
+}
+
+/// Run `future` as client-go code that uses `bo.GetCtx()`: everything it
+/// reports goes under the Backoffer's current ctx, which can change while
+/// it runs. Without any scope in the task an untraced slot changes nothing.
+pub(crate) async fn with_bo_span_slot<F: Future>(slot: BoSpanSlot, future: F) -> F::Output {
+    if !slot.is_traced() && !client_span_scope_present() {
+        return future.await;
+    }
+    CLIENT_SPAN_SCOPE
+        .scope(ClientSpanScope::Bo(slot), future)
+        .await
+}
+
+/// Capture the current scope for a future about to be spawned. A Backoffer
+/// ctx is copied, as client-go forks its Backoffer for a goroutine.
 pub(crate) fn inherit_client_spans<F>(future: F) -> impl Future<Output = F::Output>
 where
     F: Future,
 {
-    with_client_span_context(current_client_span_context(), future)
+    let scope = CLIENT_SPAN_SCOPE
+        .try_with(|scope| match scope {
+            ClientSpanScope::Bo(slot) => ClientSpanScope::Bo(slot.copied()),
+            ClientSpanScope::Ctx(context) => ClientSpanScope::Ctx(context.clone()),
+        })
+        .ok();
+    async move {
+        match scope {
+            Some(scope) => CLIENT_SPAN_SCOPE.scope(scope, future).await,
+            None => future.await,
+        }
+    }
 }
 
 /// One open client span. Dropping it finishes the span, as client-go's
@@ -340,7 +495,7 @@ impl ClientSpan {
         }
     }
 
-    /// The scope whose ctx span is this span
+    /// The context whose span is this span
     /// (`opentracing.ContextWithSpan(ctx, span1)`).
     pub(crate) fn context(&self) -> ClientSpanContext {
         ClientSpanContext {
@@ -351,7 +506,9 @@ impl ClientSpan {
 
     /// Run `future` with this span as its ctx span.
     pub(crate) async fn scope<F: Future>(&self, future: F) -> F::Output {
-        CLIENT_SPAN_CONTEXT.scope(self.context(), future).await
+        CLIENT_SPAN_SCOPE
+            .scope(ClientSpanScope::Ctx(self.context()), future)
+            .await
     }
 }
 
@@ -364,40 +521,21 @@ impl Drop for ClientSpan {
     }
 }
 
-/// Run `future` with `span`, when open, as its ctx span.
-pub(crate) async fn in_client_span<F: Future>(span: Option<&ClientSpan>, future: F) -> F::Output {
-    match span {
-        Some(span) => span.scope(future).await,
-        None => future.await,
+/// A client-go span opened from `bo.GetCtx()` that `bo.SetCtx`s itself and
+/// is never restored (`regionRequest.onSendFail`, `tikv.onRegionError`).
+/// Outside Backoffer-scoped code it is a plain child of the current ctx.
+pub(crate) fn start_bo_client_span(name: &'static str) -> Option<ClientSpan> {
+    match current_bo_slot() {
+        Some(slot) => slot.start_span(name),
+        None => current_client_span_context()
+            .map(|context| ClientSpan::start(&context, Cow::Borrowed(name))),
     }
-}
-
-/// Open `name` under the current task's ctx span, if any.
-pub(crate) fn start_client_span(name: &'static str) -> Option<ClientSpan> {
-    CLIENT_SPAN_CONTEXT
-        .try_with(|context| ClientSpan::start(context, Cow::Borrowed(name)))
-        .ok()
 }
 
 /// A client-go span that becomes the ctx span of the work it encloses:
 /// `span1 := StartSpan(name, ChildOf(ctx span)); ctx = ContextWithSpan(ctx, span1)`.
 pub(crate) async fn client_span<F: Future>(name: &'static str, future: F) -> F::Output {
-    client_span_in(current_client_span_context(), name, future).await
-}
-
-/// [`client_span`] under an explicitly captured scope.
-pub(crate) async fn client_span_in<F: Future>(
-    context: Option<ClientSpanContext>,
-    name: &'static str,
-    future: F,
-) -> F::Output {
-    let Some(context) = context else {
-        return future.await;
-    };
-    let span = ClientSpan::start(&context, Cow::Borrowed(name));
-    let output = span.scope(future).await;
-    drop(span);
-    output
+    client_span_named(|| Cow::Borrowed(name), future).await
 }
 
 /// [`client_span`] with a name built only when spans are reported.
@@ -405,32 +543,21 @@ pub(crate) async fn client_span_named<F: Future>(
     name: impl FnOnce() -> Cow<'static, str>,
     future: F,
 ) -> F::Output {
-    let Some(span) = CLIENT_SPAN_CONTEXT
-        .try_with(|context| ClientSpan::start(context, name()))
-        .ok()
-    else {
+    let Some(context) = current_client_span_context() else {
         return future.await;
     };
+    let span = ClientSpan::start(&context, name());
     let output = span.scope(future).await;
     drop(span);
     output
 }
 
 /// A client-go span whose derived ctx is discarded, so work it encloses still
-/// reports to the enclosing ctx span (`tikvSnapshot.get`, `tikv.backoff.*`,
-/// and the region-cache loads whose PD calls open no spans).
+/// reports to the enclosing ctx (`tikvSnapshot.get`, `pdclient.GetTSAsync`,
+/// and the region-cache loads whose derived ctx reaches only PD calls).
 pub(crate) async fn detached_client_span<F: Future>(name: &'static str, future: F) -> F::Output {
-    detached_client_span_named(|| Cow::Borrowed(name), future).await
-}
-
-/// [`detached_client_span`] with a name built only when spans are reported.
-pub(crate) async fn detached_client_span_named<F: Future>(
-    name: impl FnOnce() -> Cow<'static, str>,
-    future: F,
-) -> F::Output {
-    let span = CLIENT_SPAN_CONTEXT
-        .try_with(|context| ClientSpan::start(context, name()))
-        .ok();
+    let span = current_client_span_context()
+        .map(|context| ClientSpan::start(&context, Cow::Borrowed(name)));
     let output = future.await;
     drop(span);
     output
@@ -439,7 +566,110 @@ pub(crate) async fn detached_client_span_named<F: Future>(
 /// client-go `logutil.Eventf(ctx, ...)`: a log event on the current ctx span.
 /// `event` runs only when the task reports client spans.
 pub(crate) fn client_span_event(event: impl FnOnce() -> String) {
-    let _ = CLIENT_SPAN_CONTEXT.try_with(|context| context.log(event()));
+    if let Some(context) = current_client_span_context() {
+        context.log(event());
+    }
+}
+
+/// client-go `logutil.SetTag(ctx, key, value)` on the current ctx span.
+pub(crate) fn client_span_tag(key: &'static str, value: impl FnOnce() -> String) {
+    if let Some(context) = current_client_span_context() {
+        context.tag(key, value());
+    }
+}
+
+/// The `regionRequest.SendReqCtx` span of the region request running in
+/// this task, kept where a lock-resolving plan inside the request can reach
+/// it: client-go's caller loop resolves locks and re-sends after
+/// `SendReqCtx` has returned, under the same Backoffer.
+#[derive(Clone)]
+struct SendReqSpan(Arc<std::sync::Mutex<(BoSpanSlot, Option<ClientSpan>)>>);
+
+impl SendReqSpan {
+    fn finish(&self) {
+        let span = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .1
+            .take();
+        drop(span);
+    }
+
+    fn restart(&self) {
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(state.1.take());
+        state.1 = state.0.start_span("regionRequest.SendReqCtx");
+    }
+}
+
+/// client-go `RegionRequestSender.SendReqCtx(bo, ...)`: `future` is one
+/// region request on the Backoffer `slot`, reporting under a
+/// `regionRequest.SendReqCtx` span that `bo.SetCtx`s itself. When `open` is
+/// false no span opens until a re-send (client-go's callback `SendReqAsync`
+/// opens none).
+pub(crate) async fn send_req_ctx<F: Future>(slot: BoSpanSlot, open: bool, future: F) -> F::Output {
+    if !slot.is_traced() {
+        return with_bo_span_slot(slot, future).await;
+    }
+    let span = if open {
+        slot.start_span("regionRequest.SendReqCtx")
+    } else {
+        None
+    };
+    let cell = SendReqSpan(Arc::new(std::sync::Mutex::new((slot.clone(), span))));
+    let output = SEND_REQ_SPAN
+        .scope(cell.clone(), with_bo_span_slot(slot, future))
+        .await;
+    cell.finish();
+    output
+}
+
+/// The region request's `SendReqCtx` returned to its caller loop, which is
+/// about to resolve locks.
+pub(crate) fn finish_send_req_span() {
+    let _ = SEND_REQ_SPAN.try_with(SendReqSpan::finish);
+}
+
+/// The caller loop sends the request again with a new `SendReqCtx` on the
+/// same Backoffer.
+pub(crate) fn restart_send_req_span() {
+    let _ = SEND_REQ_SPAN.try_with(SendReqSpan::restart);
+}
+
+/// client-go's callback BatchGet sends a region's first attempt with
+/// `SendReqAsync`, which opens no `SendReqCtx` and logs no send event, over
+/// `rpcClient.SendRequestAsync`; its retries go through `sendReqState.next`.
+pub(crate) async fn with_async_first_send<F: Future>(future: F) -> F::Output {
+    if !client_spans_enabled() {
+        return future.await;
+    }
+    ASYNC_FIRST_SEND
+        .scope(Arc::new(AtomicBool::new(true)), future)
+        .await
+}
+
+/// Whether this physical send is the first attempt of a callback BatchGet
+/// region; it consumes that state.
+pub(crate) fn take_async_first_send() -> bool {
+    ASYNC_FIRST_SEND
+        .try_with(|first| first.swap(false, AtomicOrdering::Relaxed))
+        .unwrap_or(false)
+}
+
+/// Run one physical RPC as `RPCClient.SendRequestAsync` when `asynchronous`.
+pub(crate) async fn with_rpc_send_async<F: Future>(asynchronous: bool, future: F) -> F::Output {
+    if !asynchronous {
+        return future.await;
+    }
+    RPC_SEND_ASYNC.scope(true, future).await
+}
+
+pub(crate) fn rpc_send_async() -> bool {
+    RPC_SEND_ASYNC.try_with(|value| *value).unwrap_or(false)
 }
 
 /// Build client-go's exact execution-detail span tree.
@@ -544,7 +774,7 @@ pub(crate) fn trace_exec_details_response(started_at: Instant, response: &dyn An
     handler(started_at, &span);
     // client-go `spanInfo.addTo(spanRPC, start)`: with execution details
     // enabled, the reconstructed tree also hangs under the RPC's span.
-    if let Ok(context) = CLIENT_SPAN_CONTEXT.try_with(ClientSpanContext::clone) {
+    if let Some(context) = current_client_span_context() {
         let mut normalized = span;
         normalized.calculate_timeline_durations();
         normalized.add_client_spans(&context, started_at);
@@ -1390,48 +1620,58 @@ pub(crate) mod client_span_testing {
         )
     }
 
-    /// One line per span start (indented two spaces per ancestor) and per
-    /// log event (`- event`, one level below its span), in event order.
-    /// Panics when a span is not finished or finishes before a child does.
+    /// One line per span start (indented two spaces per ancestor), per log
+    /// event (`- event`) and per tag (`- tag key=value`), the latter two one
+    /// level below their span, in event order. Like an opentracing recorder,
+    /// a child or log may name a span that has finished (client-go's
+    /// Backoffer ctx outlives its spans). Panics on a span that never
+    /// finishes, finishes twice, or a parent that was never started.
     pub(crate) fn render(recorded: &Recorded) -> Vec<String> {
         let events = recorded.lock().unwrap().clone();
         let mut depth = HashMap::new();
-        let mut open = HashMap::new();
+        let mut open = std::collections::HashSet::new();
         let mut lines = Vec::new();
+        let level_below = |depth: &HashMap<u64, usize>, id: Option<u64>| {
+            id.map_or(0, |id| {
+                depth.get(&id).expect("event names an unknown span") + 1
+            })
+        };
         for event in events {
             match event {
                 ClientSpanEvent::Start {
                     id, parent, name, ..
                 } => {
-                    let level = parent.map_or(0, |parent| {
-                        assert!(
-                            open.contains_key(&parent),
-                            "{name} starts under a closed span"
-                        );
-                        depth[&parent] + 1
-                    });
+                    let level = level_below(&depth, parent);
                     depth.insert(id, level);
-                    open.insert(id, parent);
+                    open.insert(id);
                     lines.push(format!("{}{name}", "  ".repeat(level)));
                 }
                 ClientSpanEvent::Finish { id, .. } => {
-                    assert!(open.remove(&id).is_some(), "span {id} finished twice");
-                    assert!(
-                        !open.values().any(|parent| *parent == Some(id)),
-                        "span {id} finished before its children"
-                    );
+                    assert!(open.remove(&id), "span {id} finished twice");
                 }
                 ClientSpanEvent::Log { id, event, .. } => {
-                    let level = id.map_or(0, |id| {
-                        assert!(open.contains_key(&id), "{event} logged on a closed span");
-                        depth[&id] + 1
-                    });
+                    let level = level_below(&depth, id);
                     lines.push(format!("{}- {event}", "  ".repeat(level)));
+                }
+                ClientSpanEvent::Tag { id, key, value } => {
+                    let level = level_below(&depth, id);
+                    lines.push(format!("{}- tag {key}={value}", "  ".repeat(level)));
                 }
             }
         }
         assert!(open.is_empty(), "unfinished spans: {open:?}");
         lines
+    }
+
+    /// [`render`] with the store address cut from send events.
+    pub(crate) fn render_without_addresses(recorded: &Recorded) -> Vec<String> {
+        render(recorded)
+            .into_iter()
+            .map(|line| match line.find(" at ") {
+                Some(at) if line.contains("- send ") => line[..at].to_owned(),
+                _ => line,
+            })
+            .collect()
     }
 }
 
@@ -1447,12 +1687,14 @@ mod client_span_tests {
     async fn nothing_is_built_or_recorded_outside_a_scope() {
         assert!(!client_spans_enabled());
         assert!(current_client_span_context().is_none());
-        assert!(start_client_span("unused").is_none());
-        detached_client_span_named(
+        assert!(start_bo_client_span("unused").is_none());
+        assert!(!BoSpanSlot::from_current().is_traced());
+        client_span_named(
             || -> Cow<'static, str> { panic!("a span name was built without a scope") },
             async {},
         )
         .await;
+        client_span_tag("unused", || panic!("a tag was formatted without a scope"));
         client_span_event(|| panic!("an event was formatted without a scope"));
         assert_eq!(client_span("unused", async { 7 }).await, 7);
 
@@ -1608,7 +1850,7 @@ mod client_span_tests {
                 None => line,
             })
             .collect::<Vec<_>>();
-        assert_eq!(lines.len(), 12, "{lines:#?}");
+        assert_eq!(lines.len(), 13, "{lines:#?}");
         assert_eq!(
             lines[..2],
             ["tikvTxn.Commit", "  twoPhaseCommitter.prewriteMutations"]
@@ -1633,9 +1875,230 @@ mod client_span_tests {
                 "  - start get commit ts",
                 "  TiKVStore.getTimestampWithRetry",
                 "  - finish get commit ts",
+                "  - tag commitTs=10",
                 "  twoPhaseCommitter.commitMutations",
                 "    regionRequest.SendReqCtx",
                 "      - send Commit request to region 1",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_backoffer_ctx_keeps_the_last_span_set_on_it() {
+        let (handler, recorded) = recorder();
+        with_client_spans(handler, async {
+            let bo = BoSpanSlot::from_current();
+            let first = bo.start_span("first");
+            drop(first);
+            // client-go never restores `bo.ctx`: the next span nests under
+            // the finished one, and a Clone/Fork copies the ctx it has now.
+            let forked = bo.copied();
+            let second = bo.start_span("second");
+            drop(second);
+            drop(forked.start_span("forked"));
+            with_bo_span_slot(bo, async {
+                client_span_event(|| "after".to_owned());
+            })
+            .await;
+        })
+        .await;
+        assert_eq!(
+            render(&recorded),
+            ["first", "  second", "  forked", "    - after"]
+        );
+    }
+
+    async fn get_lines(rpc: Arc<crate::mock::MockPdClient>, key: u8) -> Vec<String> {
+        let (handler, recorded) = recorder();
+        let mut transaction = mock_transaction(rpc);
+        with_client_spans(handler, transaction.get(vec![key]))
+            .await
+            .unwrap();
+        client_span_testing::render_without_addresses(&recorded)
+    }
+
+    #[tokio::test]
+    async fn a_region_error_retry_reports_under_the_finished_on_region_error_span() {
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = attempts.clone();
+        let rpc = mock_pd(move |request| {
+            if request.downcast_ref::<kvrpcpb::GetRequest>().is_some()
+                && counter.fetch_add(1, AtomicOrdering::SeqCst) == 0
+            {
+                return Box::new(kvrpcpb::GetResponse {
+                    region_error: Some(crate::proto::errorpb::Error {
+                        not_leader: Some(crate::proto::errorpb::NotLeader {
+                            region_id: 1,
+                            leader: None,
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+            }
+            default_response(request)
+        });
+        // client-go's `onRegionError` sets the Backoffer's ctx and never
+        // restores it, so its backoff and the retry's send report under it.
+        assert_eq!(
+            get_lines(rpc, 5).await,
+            [
+                "tikvSnapshot.get",
+                "regionRequest.SendReqCtx",
+                "  - send Get request to region 1",
+                "  tikv.onRegionError",
+                "    tikv.backoff.regionScheduling",
+                "    - send Get request to region 1",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn lock_resolution_runs_after_send_req_ctx_on_its_backoffer() {
+        let gets = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = gets.clone();
+        let rpc = mock_pd(move |request| {
+            if request.downcast_ref::<kvrpcpb::GetRequest>().is_some()
+                && counter.fetch_add(1, AtomicOrdering::SeqCst) == 0
+            {
+                return Box::new(kvrpcpb::GetResponse {
+                    error: Some(kvrpcpb::KeyError {
+                        locked: Some(kvrpcpb::LockInfo {
+                            primary_lock: vec![5],
+                            lock_version: 2,
+                            key: vec![5],
+                            lock_ttl: 3000,
+                            txn_size: 1,
+                            lock_type: kvrpcpb::Op::Put as i32,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+            }
+            if request
+                .downcast_ref::<kvrpcpb::CheckTxnStatusRequest>()
+                .is_some()
+            {
+                return Box::new(kvrpcpb::CheckTxnStatusResponse {
+                    commit_version: 8,
+                    action: kvrpcpb::Action::NoAction as i32,
+                    ..Default::default()
+                });
+            }
+            if request
+                .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                .is_some()
+            {
+                return Box::<kvrpcpb::ResolveLockResponse>::default();
+            }
+            default_response(request)
+        });
+        // client-go's caller loop resolves the lock and sends again after
+        // `SendReqCtx` returned, on the same Backoffer: each later
+        // `SendReqCtx` nests under the previous one.
+        assert_eq!(
+            get_lines(rpc, 5).await,
+            [
+                "tikvSnapshot.get",
+                "regionRequest.SendReqCtx",
+                "  - send Get request to region 1",
+                "  regionRequest.SendReqCtx",
+                "    - send CheckTxnStatus request to region 1",
+                "    regionRequest.SendReqCtx",
+                "      - send Get request to region 1",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn callback_batch_get_first_attempts_open_no_sender_span() {
+        let mut transaction = mock_transaction(mock_pd(default_response));
+        transaction.set_enable_async_batch_get(true);
+        let (handler, recorded) = recorder();
+        with_client_spans(handler, transaction.batch_get(vec![vec![5_u8], vec![11]]))
+            .await
+            .unwrap()
+            .for_each(drop);
+        // `SendReqAsync` opens no span and logs no send event; the RPC span
+        // is `rpcClient.SendRequestAsync`, which the mock transport skips.
+        assert!(render(&recorded).is_empty());
+    }
+
+    #[tokio::test]
+    async fn one_pc_prewrite_reports_under_the_linearizability_timestamp_fetch() {
+        let rpc = mock_pd(|request| {
+            if request.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
+                return Box::new(kvrpcpb::PrewriteResponse {
+                    one_pc_commit_ts: 11,
+                    ..Default::default()
+                });
+            }
+            default_response(request)
+        });
+        let mut transaction = crate::Transaction::new(
+            crate::Timestamp::from_version(1),
+            rpc,
+            crate::TransactionOptions::new_optimistic()
+                .try_one_pc()
+                .heartbeat_option(crate::transaction::HeartbeatOption::NoHeartbeat)
+                .drop_check(crate::CheckLevel::None),
+            crate::request::Keyspace::Disable,
+        );
+        transaction.put(vec![5_u8], b"a".to_vec()).await.unwrap();
+        let (handler, recorded) = recorder();
+        with_client_spans(handler, transaction.commit())
+            .await
+            .unwrap();
+        // client-go fetches the linearizability timestamp with the prewrite
+        // Backoffer, whose ctx `getTimestampWithRetry` sets: the prewrite
+        // reports under that finished span.
+        assert_eq!(
+            client_span_testing::render_without_addresses(&recorded),
+            [
+                "tikvTxn.Commit",
+                "  TiKVStore.getTimestampWithRetry",
+                "    twoPhaseCommitter.prewriteMutations",
+                "      regionRequest.SendReqCtx",
+                "        - send Prewrite request to region 1",
+            ]
+        );
+    }
+
+    #[test]
+    fn asynchronous_execution_detail_spans_carry_go_s_async_tag() {
+        let span = build_execution_detail_span(&kvrpcpb::ExecDetailsV2 {
+            time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                total_rpc_wall_time_ns: 1_000,
+                ..Default::default()
+            }),
+            write_detail: Some(kvrpcpb::WriteDetail {
+                persist_log_nanos: 10,
+                commit_log_nanos: 20,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        let (handler, recorded) = recorder();
+        let mut normalized = span;
+        normalized.calculate_timeline_durations();
+        normalized.add_client_spans(
+            &ClientSpanContext {
+                handler,
+                parent: None,
+            },
+            Instant::now(),
+        );
+        assert_eq!(
+            render(&recorded),
+            [
+                "tikv.RPC",
+                "  tikv.AsyncWrite",
+                "    tikv.PersistLog",
+                "      - tag async=true",
+                "    tikv.CommitLog",
             ]
         );
     }

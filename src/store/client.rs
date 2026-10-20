@@ -1270,6 +1270,20 @@ mod tests {
                 })
                 .unwrap()
         };
+        // client-go's callback BatchGet sends its first attempt through
+        // `RPCClient.SendRequestAsync`.
+        let (handler, recorded) = crate::trace::client_span_testing::recorder();
+        crate::trace::with_client_spans(
+            handler,
+            crate::trace::with_rpc_send_async(true, async {
+                client.dispatch(&request).await.unwrap();
+            }),
+        )
+        .await;
+        assert_eq!(
+            crate::trace::client_span_testing::render(&recorded)[0],
+            "rpcClient.SendRequestAsync, region ID: 3, type: Get"
+        );
         assert_eq!(
             finish_of("tikv.RPC") - starts["tikv.RPC"],
             Duration::from_millis(1)
@@ -1801,7 +1815,13 @@ impl KvRpcClient {
                     .map_or(0, |context| context.region_id);
                 let command = crate::store::CommandType::from_request_label(request.label())
                     .map_or("Unknown", crate::store::CommandType::name);
-                format!("rpcClient.SendRequest, region ID: {region_id}, type: {command}").into()
+                // client-go's callback path goes through `SendRequestAsync`.
+                let method = if crate::trace::rpc_send_async() {
+                    "SendRequestAsync"
+                } else {
+                    "SendRequest"
+                };
+                format!("rpcClient.{method}, region ID: {region_id}, type: {command}").into()
             },
             self.send_request(request, timeout, forwarded_host),
         )

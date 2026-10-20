@@ -1304,38 +1304,46 @@ mod send_req_tests {
                 coprocessor::Response::default()
             }
         });
-        let backoffer = Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
-            crate::async_util::Cancellation::default(),
-            1_000,
-        )));
         let (handler, recorded) = crate::trace::client_span_testing::recorder();
-        crate::trace::with_client_spans(
-            handler,
+        crate::trace::with_client_spans(handler, async {
+            // The caller's Backoffer takes the scope it is made in as its
+            // ctx, as client-go's `NewBackoffer(ctx)` does.
+            let backoffer = Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                crate::async_util::Cancellation::default(),
+                1_000,
+            )));
+            send_req(
+                pd.clone(),
+                Keyspace::Disable,
+                request_to_region1(0),
+                Arc::clone(&backoffer),
+                std::time::Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+            // A second request on the same Backoffer nests under the ctx the
+            // first one left on it: the finished `tikv.onRegionError`.
             send_req(
                 pd,
                 Keyspace::Disable,
                 request_to_region1(0),
                 backoffer,
                 std::time::Duration::from_secs(1),
-            ),
-        )
-        .await
-        .unwrap();
-        let lines = crate::trace::client_span_testing::render(&recorded)
-            .into_iter()
-            .map(|line| match line.find(" at ") {
-                Some(at) => line[..at].to_owned(),
-                None => line,
-            })
-            .collect::<Vec<_>>();
+            )
+            .await
+            .unwrap();
+        })
+        .await;
         assert_eq!(
-            lines,
+            crate::trace::client_span_testing::render_without_addresses(&recorded),
             [
                 "regionRequest.SendReqCtx",
                 "  - send Cop request to region 1",
                 "  tikv.onRegionError",
                 "    tikv.backoff.tikvServerBusy",
-                "  - send Cop request to region 1",
+                "    - send Cop request to region 1",
+                "    regionRequest.SendReqCtx",
+                "      - send Cop request to region 1",
             ]
         );
     }
