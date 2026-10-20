@@ -255,6 +255,27 @@ pub trait PdClient: Send + Sync + 'static {
         Err(crate::Error::Unimplemented)
     }
 
+    /// [`Self::kv_client`] for a request bound to a store of `store_type`,
+    /// as client-go's `tikvrpc.Request.StoreTp` travels with the request.
+    async fn kv_client_with_store_type(
+        &self,
+        address: &str,
+        _store_type: crate::store::EndpointType,
+    ) -> Result<Self::KvClient> {
+        self.kv_client(address).await
+    }
+
+    /// client-go `RegionCache.GetTiFlashComputeStores`: the cluster's TiFlash
+    /// compute stores, from the region cache's own list. Clients without a
+    /// region cache refuse.
+    async fn get_tiflash_compute_stores(&self) -> Result<Vec<metapb::Store>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// client-go `RegionCache.InvalidateTiFlashComputeStores`: the next
+    /// [`Self::get_tiflash_compute_stores`] reloads the list from PD.
+    fn invalidate_tiflash_compute_stores(&self) {}
+
     /// Loads metadata using client-go's canonical default keyspace name.
     async fn get_keyspace_meta(&self, name: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.load_keyspace(&build_keyspace_name(name)).await
@@ -1591,6 +1612,22 @@ where
     async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
         PdRpcClient::kv_client(self, address).await
     }
+
+    async fn kv_client_with_store_type(
+        &self,
+        address: &str,
+        store_type: crate::store::EndpointType,
+    ) -> Result<KvC::KvClient> {
+        PdRpcClient::kv_client_with_store_type(self, address, store_type).await
+    }
+
+    async fn get_tiflash_compute_stores(&self) -> Result<Vec<metapb::Store>> {
+        self.region_cache.get_tiflash_compute_stores().await
+    }
+
+    fn invalidate_tiflash_compute_stores(&self) {
+        self.region_cache.invalidate_tiflash_compute_stores();
+    }
 }
 
 impl PdRpcClient<TikvConnect, Cluster> {
@@ -2024,6 +2061,16 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
     }
 
     pub(crate) async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
+        self.kv_client_with_store_type(address, crate::store::EndpointType::TiKv)
+            .await
+    }
+
+    /// The cached client for `address`, dialled for `store_type` on a miss.
+    pub(crate) async fn kv_client_with_store_type(
+        &self,
+        address: &str,
+        store_type: crate::store::EndpointType,
+    ) -> Result<KvC::KvClient> {
         if self.kv_client_closed.load(Ordering::Acquire) {
             return Err(crate::Error::StringError("rpc client is closed".to_owned()));
         }
@@ -2045,7 +2092,10 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
         // version (`CloseAddrVer`) and the request gets a new one.
         recycle_idle_kv_client(&self.kv_client_cache, address).await;
         info!("connect to tikv endpoint: {:?}", address);
-        let client = self.kv_connect.connect(address).await?;
+        let client = self
+            .kv_connect
+            .connect_with_store_type(address, store_type)
+            .await?;
         let mut cache = self.kv_client_cache.write().await;
         let version = {
             let mut versions = self.kv_client_versions.write().await;
@@ -2581,6 +2631,72 @@ pub mod test {
         assert_eq!(kv1.addr, "foo");
         assert_eq!(kv2.addr, "foo");
         assert_eq!(connects.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_kv_client_dials_with_the_requests_store_type() {
+        #[derive(Clone)]
+        struct TypedConnect {
+            dialled: Arc<std::sync::Mutex<Vec<crate::store::EndpointType>>>,
+        }
+
+        #[async_trait]
+        impl KvConnect for TypedConnect {
+            type KvClient = MockKvClient;
+
+            async fn connect(&self, address: &str) -> Result<Self::KvClient> {
+                self.connect_with_store_type(address, crate::store::EndpointType::TiKv)
+                    .await
+            }
+
+            async fn connect_with_store_type(
+                &self,
+                address: &str,
+                store_type: crate::store::EndpointType,
+            ) -> Result<Self::KvClient> {
+                self.dialled.lock().unwrap().push(store_type);
+                let mut client = MockKvClient::default();
+                client.addr = address.to_owned();
+                Ok(client)
+            }
+        }
+
+        let dialled = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dialled_clone = dialled.clone();
+        let client = PdRpcClient::new(
+            Config::default(),
+            move |_| TypedConnect {
+                dialled: dialled_clone.clone(),
+            },
+            |sm| async move {
+                Ok(RetryClient::new_with_cluster(
+                    sm,
+                    Config::default().timeout,
+                    MockCluster,
+                ))
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let peer = PdClient::kv_client_with_store_type(
+            &client,
+            "tidb-1:10080",
+            crate::store::EndpointType::TiDb,
+        )
+        .await
+        .unwrap();
+        let store = PdClient::kv_client(&client, "tikv-1").await.unwrap();
+        assert_eq!(peer.addr, "tidb-1:10080");
+        assert_eq!(store.addr, "tikv-1");
+        assert_eq!(
+            *dialled.lock().unwrap(),
+            vec![
+                crate::store::EndpointType::TiDb,
+                crate::store::EndpointType::TiKv
+            ]
+        );
     }
 
     #[tokio::test]
