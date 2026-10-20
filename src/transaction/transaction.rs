@@ -1183,6 +1183,9 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     snapshot_resource_group_name: Option<String>,
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
+    /// client-go `ctx.Value(util.ExecDetailsKey)` for this transaction's
+    /// operations when the caller does not supply it in the trace context.
+    exec_details: Option<Arc<crate::util::ExecDetails>>,
     /// Snapshot-only callers may replace this with source replica-read
     /// settings; ordinary transactions retain direct leader reads.
     replica_read_config: ReplicaReadConfig,
@@ -1340,6 +1343,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             snapshot_resource_group_name: None,
             resource_control: None,
             ru_details: None,
+            exec_details: None,
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
             sample_step: 0,
@@ -2015,6 +2019,32 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.ru_details = Some(ru_details);
     }
 
+    /// Charge subsequent transaction operations to `exec_details`, as
+    /// client-go charges the `util.ExecDetails` in the statement ctx passed to
+    /// `KVTxn.Get`/`BatchGet`/`LockKeys`/`Commit`: KV and PD waits, backoff
+    /// sleeps and traffic. An `ExecDetails` already in the caller's trace
+    /// context is replaced for these operations.
+    pub fn set_exec_details(&mut self, exec_details: Arc<crate::util::ExecDetails>) {
+        self.exec_details = Some(exec_details);
+    }
+
+    /// The statement ctx for one operation: the caller's trace context with
+    /// [`Self::set_exec_details`]' value as client-go's `ExecDetailsKey`.
+    /// `None` once the operation already runs under it.
+    fn statement_trace_context(&self) -> Option<crate::trace::TraceContext> {
+        let details = self.exec_details.as_ref()?;
+        let active = crate::trace::current_trace_context();
+        if crate::util::exec_details_from_context(&active)
+            .is_some_and(|active| Arc::ptr_eq(active, details))
+        {
+            return None;
+        }
+        Some(crate::util::context_with_exec_details(
+            &active,
+            Arc::clone(details),
+        ))
+    }
+
     /// Create a new 'get' request
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
@@ -2034,6 +2064,21 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.get_in_statement(key).await }),
+                )
+                .await
+            }
+            None => self.get_in_statement(key).await,
+        }
+    }
+
+    async fn get_in_statement(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         let _timer = crate::stats::snapshot_command_timer(
             "get",
             self.commit_settings.request_source.is_internal(),
@@ -2156,6 +2201,25 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// [`GetOption::ReturnCommitTs`] requests TiKV's commit timestamp and will
     /// not reuse a cached non-empty entry whose timestamp is unknown.
     pub async fn get_with_options(
+        &mut self,
+        key: impl Into<Key>,
+        options: &[GetOption],
+    ) -> Result<Option<ValueEntry>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.get_with_options_in_statement(key, options).await }),
+                )
+                .await
+            }
+            None => self.get_with_options_in_statement(key, options).await,
+        }
+    }
+
+    async fn get_with_options_in_statement(
         &mut self,
         key: impl Into<Key>,
         options: &[GetOption],
@@ -2327,6 +2391,21 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn get_for_update(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.get_for_update_in_statement(key).await }),
+                )
+                .await
+            }
+            None => self.get_for_update_in_statement(key).await,
+        }
+    }
+
+    async fn get_for_update_in_statement(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         debug!("invoking transactional get_for_update request");
         self.check_allow_operation().await?;
         if !self.is_pessimistic() {
@@ -2359,6 +2438,21 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.key_exists_in_statement(key).await }),
+                )
+                .await
+            }
+            None => self.key_exists_in_statement(key).await,
+        }
+    }
+
+    async fn key_exists_in_statement(&mut self, key: impl Into<Key>) -> Result<bool> {
         debug!("invoking transactional key_exists request");
         Ok(self.get(key).await?.is_some())
     }
@@ -2392,6 +2486,24 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn batch_get(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.batch_get_in_statement(keys).await }),
+                )
+                .await
+            }
+            None => self.batch_get_in_statement(keys).await,
+        }
+    }
+
+    async fn batch_get_in_statement(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
@@ -2550,6 +2662,31 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// keys are omitted and every returned [`ValueEntry`] retains its commit
     /// timestamp only when [`GetOption::ReturnCommitTs`] is requested.
     pub async fn batch_get_with_options(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        options: &[GetOption],
+    ) -> Result<BTreeMap<Key, ValueEntry>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move {
+                        self.batch_get_with_options_in_statement(keys, options)
+                            .await
+                    }),
+                )
+                .await
+            }
+            None => {
+                self.batch_get_with_options_in_statement(keys, options)
+                    .await
+            }
+        }
+    }
+
+    async fn batch_get_with_options_in_statement(
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
         options: &[GetOption],
@@ -2719,6 +2856,31 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
         _options: &[GetOption],
     ) -> Result<impl Iterator<Item = KvPair>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move {
+                        self.batch_get_from_buffer_with_options_in_statement(keys, _options)
+                            .await
+                    }),
+                )
+                .await
+            }
+            None => {
+                self.batch_get_from_buffer_with_options_in_statement(keys, _options)
+                    .await
+            }
+        }
+    }
+
+    async fn batch_get_from_buffer_with_options_in_statement(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        _options: &[GetOption],
+    ) -> Result<impl Iterator<Item = KvPair>> {
         let keys = keys.into_iter().map(Into::into).collect::<Vec<Key>>();
         if keys.is_empty() {
             // client-go returns before validating the tier, constructing a
@@ -2867,6 +3029,24 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.batch_get_for_update_in_statement(keys).await }),
+                )
+                .await
+            }
+            None => self.batch_get_for_update_in_statement(keys).await,
+        }
+    }
+
+    async fn batch_get_for_update_in_statement(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<Vec<KvPair>> {
         debug!("invoking transactional batch_get_for_update request");
         self.check_allow_operation().await?;
         if !self.is_pessimistic() {
@@ -2919,6 +3099,25 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.scan_in_statement(range, limit).await }),
+                )
+                .await
+            }
+            None => self.scan_in_statement(range, limit).await,
+        }
+    }
+
+    async fn scan_in_statement(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = KvPair>> {
         debug!("invoking transactional scan request");
         self.scan_inner(range, limit, false, false).await
     }
@@ -2955,6 +3154,25 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.scan_keys_in_statement(range, limit).await }),
+                )
+                .await
+            }
+            None => self.scan_keys_in_statement(range, limit).await,
+        }
+    }
+
+    async fn scan_keys_in_statement(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = Key>> {
         debug!("invoking transactional scan_keys request");
         Ok(self
             .scan_inner(range, limit, true, false)
@@ -2970,6 +3188,25 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.scan_reverse_in_statement(range, limit).await }),
+                )
+                .await
+            }
+            None => self.scan_reverse_in_statement(range, limit).await,
+        }
+    }
+
+    async fn scan_reverse_in_statement(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = KvPair>> {
         debug!("invoking transactional scan_reverse request");
         self.scan_inner(range, limit, false, true).await
     }
@@ -2978,6 +3215,27 @@ impl<PdC: PdClient> Transaction<PdC> {
     ///
     /// Similar to [`scan`](Transaction::scan_keys), but scans in the reverse direction.
     pub async fn scan_keys_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+        limit: u32,
+    ) -> Result<impl Iterator<Item = Key>> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(
+                        async move { self.scan_keys_reverse_in_statement(range, limit).await },
+                    ),
+                )
+                .await
+            }
+            None => self.scan_keys_reverse_in_statement(range, limit).await,
+        }
+    }
+
+    async fn scan_keys_reverse_in_statement(
         &mut self,
         range: impl Into<BoundRange>,
         limit: u32,
@@ -3263,6 +3521,33 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Lock keys and invoke `callback` after the source aggressive-lock
     /// applicability preflight, including any later error.
     pub async fn lock_keys_with_context_and_callback(
+        &mut self,
+        context: &mut LockContext,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        callback: impl FnOnce(),
+    ) -> Result<()> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(
+                        self.lock_keys_with_context_and_callback_in_statement(
+                            context, keys, callback,
+                        ),
+                    ),
+                )
+                .await
+            }
+            None => {
+                self.lock_keys_with_context_and_callback_in_statement(context, keys, callback)
+                    .await
+            }
+        }
+    }
+
+    async fn lock_keys_with_context_and_callback_in_statement(
         &mut self,
         context: &mut LockContext,
         keys: impl IntoIterator<Item = impl Into<Key>>,
@@ -3589,6 +3874,21 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     pub async fn retry_aggressive_locking(&mut self) -> Result<()> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.retry_aggressive_locking_in_statement().await }),
+                )
+                .await
+            }
+            None => self.retry_aggressive_locking_in_statement().await,
+        }
+    }
+
+    async fn retry_aggressive_locking_in_statement(&mut self) -> Result<()> {
         let mut context = self
             .aggressive_locking
             .take()
@@ -3620,6 +3920,21 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     pub async fn cancel_aggressive_locking(&mut self) -> Result<()> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.cancel_aggressive_locking_in_statement().await }),
+                )
+                .await
+            }
+            None => self.cancel_aggressive_locking_in_statement().await,
+        }
+    }
+
+    async fn cancel_aggressive_locking_in_statement(&mut self) -> Result<()> {
         let context = self
             .aggressive_locking
             .take()
@@ -3642,6 +3957,21 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     pub async fn done_aggressive_locking(&mut self) -> Result<()> {
+        // The statement ctx's path boxes the operation (built lazily inside
+        // the box), so the common path keeps the operation's own size.
+        match self.statement_trace_context() {
+            Some(statement) => {
+                crate::trace::with_trace_context(
+                    statement,
+                    Box::pin(async move { self.done_aggressive_locking_in_statement().await }),
+                )
+                .await
+            }
+            None => self.done_aggressive_locking_in_statement().await,
+        }
+    }
+
+    async fn done_aggressive_locking_in_statement(&mut self) -> Result<()> {
         let context = self
             .aggressive_locking
             .take()
@@ -3747,7 +4077,19 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
+        if let Some(statement) = self.statement_trace_context() {
+            return self.commit_with_statement(statement).await;
+        }
         crate::trace::client_span("tikvTxn.Commit", self.commit_txn()).await
+    }
+
+    /// [`Self::commit`] under its statement ctx. The future is built on the
+    /// heap in this frame, so the common path keeps `commit`'s own stack use.
+    fn commit_with_statement(
+        &mut self,
+        statement: crate::trace::TraceContext,
+    ) -> futures::future::BoxFuture<'_, Result<Option<Timestamp>>> {
+        Box::pin(crate::trace::with_trace_context(statement, self.commit()))
     }
 
     /// The body of client-go `KVTxn.Commit` inside its `tikvTxn.Commit`
@@ -4097,6 +4439,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn rollback(&mut self) -> Result<()> {
+        if let Some(statement) = self.statement_trace_context() {
+            return self.rollback_with_statement(statement).await;
+        }
         debug!(
             "rolling back transaction, start_ts: {}",
             self.timestamp.version()
@@ -4206,6 +4551,15 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.timestamp.version()
         );
         Ok(())
+    }
+
+    /// [`Self::rollback`] under its statement ctx. The future is built on the
+    /// heap in this frame, so the common path keeps `rollback`'s own stack use.
+    fn rollback_with_statement(
+        &mut self,
+        statement: crate::trace::TraceContext,
+    ) -> futures::future::BoxFuture<'_, Result<()>> {
+        Box::pin(crate::trace::with_trace_context(statement, self.rollback()))
     }
 
     /// Get the start timestamp of this transaction.

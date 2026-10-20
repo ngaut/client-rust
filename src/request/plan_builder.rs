@@ -112,6 +112,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 client_span_context: crate::trace::current_client_span_context(),
                 trace_context: crate::trace::current_trace_context(),
                 network_traffic_details: crate::traffic::current_network_traffic_details(),
+                exec_details: crate::util::current_stmt_exec_details(),
                 network_stale_read: false,
                 resource_control: None,
                 response_codec,

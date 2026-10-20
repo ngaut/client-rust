@@ -400,6 +400,10 @@ pub struct RetryBackoffer {
     /// task's client span scope, replaced by the spans that `bo.SetCtx`
     /// themselves, copied by `Clone` and `Fork`.
     client_spans: crate::trace::BoSpanSlot,
+    /// client-go `b.ctx.Value(util.ExecDetailsKey)`: the statement whose
+    /// `BackoffCount`/`BackoffDuration` every sleep charges, taken from the
+    /// creating task and copied by `Clone` and `Fork`.
+    exec_details: Option<Arc<crate::util::ExecDetails>>,
 }
 
 static NEXT_BACKOFFER_ID: AtomicU64 = AtomicU64::new(1);
@@ -433,6 +437,7 @@ impl RetryBackoffer {
             configs: Vec::new(),
             rpc_interceptor: None,
             client_spans: crate::trace::BoSpanSlot::from_current(),
+            exec_details: crate::util::current_stmt_exec_details(),
         }
     }
 
@@ -644,6 +649,9 @@ impl RetryBackoffer {
         }
         *self.sleep_by_type.entry(config.name).or_default() += real_sleep_ms;
         *self.times_by_type.entry(config.name).or_default() += 1;
+        if let Some(details) = &self.exec_details {
+            details.add_backoff(Duration::from_millis(real_sleep_ms));
+        }
         if let Some(metric_label) = config.metric_label {
             crate::stats::observe_retry_backoff(metric_label, Duration::from_millis(real_sleep_ms));
         }
@@ -726,6 +734,7 @@ impl RetryBackoffer {
                 configs: self.configs.clone(),
                 rpc_interceptor: self.rpc_interceptor.clone(),
                 client_spans: self.client_spans.copied(),
+                exec_details: self.exec_details.clone(),
             },
             cancellation,
         )
@@ -917,6 +926,7 @@ impl Clone for RetryBackoffer {
             configs: self.configs.clone(),
             rpc_interceptor: self.rpc_interceptor.clone(),
             client_spans: self.client_spans.copied(),
+            exec_details: self.exec_details.clone(),
         }
     }
 }

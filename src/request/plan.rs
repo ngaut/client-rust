@@ -222,6 +222,9 @@ pub struct Dispatch<Req: KvRequest> {
     /// fan-out task. It supplies client events and TiKV trace metadata.
     pub(crate) trace_context: crate::trace::TraceContext,
     pub(crate) network_traffic_details: Option<Arc<crate::traffic::NetworkTrafficDetails>>,
+    /// The `with_exec_details` scope's `ExecDetails` captured when the
+    /// request was built, for shards sent from spawned tasks.
+    pub(crate) exec_details: Option<Arc<crate::util::ExecDetails>>,
     /// Original request invariant retained when a stale read falls back to a
     /// normal leader read after meeting a lock.
     pub(crate) network_stale_read: bool,
@@ -241,6 +244,15 @@ pub(crate) struct ReadTimestampValidation {
 }
 
 impl<Req: KvRequest> Dispatch<Req> {
+    /// client-go `ctx.Value(util.ExecDetailsKey)` for this send: the
+    /// statement's `ExecDetails` in the trace context the request was built
+    /// in, else the one current when it was built.
+    fn exec_details(&self) -> Option<Arc<crate::util::ExecDetails>> {
+        crate::util::exec_details_from_context(&self.trace_context)
+            .cloned()
+            .or_else(|| self.exec_details.clone())
+    }
+
     /// The `RuDetails` this send charges: the plan's own, else the one in its
     /// trace context, as client-go's resource-control interceptor charges the
     /// `util.RUDetailsCtxKey` value of the request's ctx.
@@ -404,15 +416,12 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 }
             }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         });
-        let (result, transport_attempted) = match admission_result {
-            Ok(()) => {
-                let result = match &self.interceptor {
-                    Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
-                    None => next().await,
-                };
-                (result, true)
-            }
-            Err(error) => (Err(error), false),
+        let result = match admission_result {
+            Ok(()) => match &self.interceptor {
+                Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
+                None => next().await,
+            },
+            Err(error) => Err(error),
         };
         if let Some(runtime_stats) = &self.region_request_runtime_stats {
             if let Some(command) = CommandType::from_request_label(self.request.label()) {
@@ -434,20 +443,27 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 }
             }
         }
+        // client-go `sendReqToRegion`: the whole `SendRequest` (resource
+        // control wait included) is charged to the statement's
+        // `ExecDetails.WaitKVRespDuration`, then the network collector charges
+        // its traffic, whether or not the send succeeded.
+        let exec_details = self.exec_details();
+        if let Some(exec_details) = &exec_details {
+            exec_details.add_wait_kv_response(started_at.elapsed());
+        }
         let network_collector = crate::traffic::NetworkCollector {
             stale_read: self.network_stale_read || self.replica_read_config.stale_read,
             access_location: self.resource_control_access_location,
             endpoint_type: self.physical_endpoint_type,
+            exec_details,
             details: self
                 .network_traffic_details
                 .clone()
                 .or_else(crate::traffic::current_network_traffic_details),
         };
-        if transport_attempted {
-            network_collector.on_request(&request);
-            if let Ok(response) = &result {
-                network_collector.on_response(&request, response.as_ref());
-            }
+        network_collector.on_request(&request);
+        if let Ok(response) = &result {
+            network_collector.on_response(&request, response.as_ref());
         }
         let result = match result {
             Ok(response) => match selected_resource_control {

@@ -412,6 +412,12 @@ impl<PdC: PdClient> Snapshot<PdC> {
         self.transaction.set_ru_details(ru_details);
     }
 
+    /// Charge subsequent operations to client-go's statement `util.ExecDetails`
+    /// (see [`crate::Transaction::set_exec_details`]).
+    pub fn set_exec_details(&mut self, exec_details: std::sync::Arc<crate::util::ExecDetails>) {
+        self.transaction.set_exec_details(exec_details);
+    }
+
     /// Replace the RPC interceptor used by subsequent snapshot requests.
     pub fn set_rpc_interceptor(&mut self, interceptor: RpcInterceptorHandle) {
         self.transaction.set_rpc_interceptor(interceptor);

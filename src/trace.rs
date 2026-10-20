@@ -998,6 +998,11 @@ where
     ACTIVE_TRACE_CONTEXT.scope(context, future).await
 }
 
+/// Look at the active trace context without cloning it.
+pub(crate) fn with_active_trace_context<R>(read: impl FnOnce(&TraceContext) -> R) -> Option<R> {
+    ACTIVE_TRACE_CONTEXT.try_with(read).ok()
+}
+
 pub(crate) fn current_trace_context() -> TraceContext {
     ACTIVE_TRACE_CONTEXT
         .try_with(TraceContext::clone)

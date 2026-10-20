@@ -424,6 +424,18 @@ macro_rules! retry_core {
     }};
 }
 
+/// [`retry!`] for a call client-go's `util.InterceptedPDClient` wraps: the
+/// whole wait, retries included, is charged to the statement's
+/// `ExecDetails.WaitPDRespDuration` (Go `recordPDWaitTime`).
+macro_rules! retry_recording_pd_wait {
+    ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
+        let started = std::time::Instant::now();
+        let result = retry!($self, $tag, |$cluster| $call);
+        crate::util::record_pd_wait_time(started);
+        result
+    }};
+}
+
 macro_rules! retry {
     ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
         retry_core!($self, $tag, {
@@ -755,7 +767,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry!(self, "get_region", |cluster| {
+        retry_recording_pd_wait!(self, "get_region", |cluster| {
             let key = key.clone();
             cluster
                 .get_region(key.clone(), self.timeout)
@@ -773,7 +785,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         previous: bool,
         leader_only: bool,
     ) -> Result<RegionWithLeader> {
-        retry!(self, "get_region_for_cache", |cluster| {
+        retry_recording_pd_wait!(self, "get_region_for_cache", |cluster| {
             let key = key.clone();
             cluster
                 .get_region_routed(key.clone(), self.timeout, true, previous, !leader_only)
@@ -786,7 +798,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_region_with_buckets(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry!(self, "get_region_with_buckets", |cluster| {
+        retry_recording_pd_wait!(self, "get_region_with_buckets", |cluster| {
             let key = key.clone();
             cluster
                 .get_region_with_buckets(key.clone(), self.timeout, true)
@@ -799,7 +811,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry!(self, "get_prev_region", |cluster| {
+        retry_recording_pd_wait!(self, "get_prev_region", |cluster| {
             let key = key.clone();
             cluster
                 .get_prev_region(key.clone(), self.timeout)
@@ -815,7 +827,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         self: Arc<Self>,
         key: Vec<u8>,
     ) -> Result<RegionWithLeader> {
-        retry!(self, "get_prev_region_with_buckets", |cluster| {
+        retry_recording_pd_wait!(self, "get_prev_region_with_buckets", |cluster| {
             let key = key.clone();
             cluster
                 .get_prev_region_with_buckets(key.clone(), self.timeout, true)
@@ -828,7 +840,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
-        retry!(self, "get_region_by_id", |cluster| {
+        retry_recording_pd_wait!(self, "get_region_by_id", |cluster| {
             cluster
                 .get_region_by_id(region_id, self.timeout)
                 .map(move |result| {
@@ -843,7 +855,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         self: Arc<Self>,
         region_id: RegionId,
     ) -> Result<RegionWithLeader> {
-        retry!(self, "get_region_by_id_with_buckets", |cluster| {
+        retry_recording_pd_wait!(self, "get_region_by_id_with_buckets", |cluster| {
             cluster
                 .get_region_by_id_with_buckets(region_id, self.timeout, true)
                 .map(move |result| {
@@ -860,7 +872,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         end_key: Vec<u8>,
         limit: usize,
     ) -> Result<Vec<RegionWithLeader>> {
-        retry!(self, "scan_regions", |cluster| {
+        retry_recording_pd_wait!(self, "scan_regions", |cluster| {
             cluster
                 .scan_regions_routed(
                     start_key.clone(),
@@ -898,7 +910,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<Option<metapb::Store>> {
-        retry!(self, "get_store", |cluster| {
+        retry_recording_pd_wait!(self, "get_store", |cluster| {
             cluster
                 .get_store(id, self.timeout)
                 .map(|result| result.map(|resp| resp.store))
@@ -914,7 +926,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
+        retry_recording_pd_wait!(self, "get_timestamp", |cluster| cluster.get_timestamp())
     }
 
     async fn get_min_timestamp(self: Arc<Self>) -> Result<Timestamp> {
