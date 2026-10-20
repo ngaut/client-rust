@@ -164,6 +164,29 @@ pub struct TikvConnect {
 }
 
 impl TikvConnect {
+    /// client-go `NewRPCClient` with the options `config` carries: timeouts,
+    /// message size, compression, keepalive, window sizes, connection count,
+    /// batching and tracing.
+    pub fn from_config(security_mgr: Arc<SecurityManager>, config: &crate::Config) -> Self {
+        Self::new_with_grpc_compression(
+            security_mgr,
+            config.timeout,
+            config.grpc_max_decoding_message_size,
+            &config.tikv_client.grpc_compression_type,
+            Duration::from_secs(config.tikv_client.grpc_keep_alive_time),
+            Duration::from_secs_f64(config.tikv_client.grpc_keep_alive_timeout),
+            u32::try_from(config.tikv_client.grpc_initial_window_size)
+                .ok()
+                .filter(|size| *size > 0),
+            u32::try_from(config.tikv_client.grpc_initial_conn_window_size)
+                .ok()
+                .filter(|size| *size > 0),
+            config.tikv_client.grpc_connection_count as usize,
+        )
+        .with_open_tracing(config.open_tracing_enable)
+        .with_tikv_client_config(config.tikv_client.clone())
+    }
+
     /// Construct a connector using client-go's default `none` request
     /// compression setting.
     pub fn new(
