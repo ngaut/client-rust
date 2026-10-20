@@ -710,11 +710,9 @@ impl Cluster {
             }
             .into_request();
             req.set_timeout(timeout);
-            let response = client.store_global_config(req).await?.into_inner();
-            match response.error {
-                Some(error) => Err(internal_err!(error.message)),
-                None => Ok(()),
-            }
+            // Go's StoreGlobalConfig returns only the transport status.
+            client.store_global_config(req).await?;
+            Ok(())
         }
     }
 
