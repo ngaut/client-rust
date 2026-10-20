@@ -242,6 +242,11 @@ impl SecurityManager {
             initial_stream_window_size,
             initial_connection_window_size,
         )?;
+        // rustls needs a process crypto provider; this crate builds rustls
+        // with `ring` only, so that is the one installed when none is.
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
         let mut tls = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca));
         if let Some((cert, key)) = identity {
             tls = tls.identity(Identity::from_pem(cert, key));
