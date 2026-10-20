@@ -314,6 +314,18 @@ pub trait PdClient: Send + Sync + 'static {
         Vec::new()
     }
 
+    /// client-go `RegionCache.LoadRegionsInKeyRange(bo, startKey, endKey)`:
+    /// every region in `[start_key, end_key)`, freshly loaded from PD. Clients
+    /// without a region cache refuse.
+    async fn load_regions_in_key_range(
+        &self,
+        _start_key: Key,
+        _end_key: Key,
+        _backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
     /// Loads metadata using client-go's canonical default keyspace name.
     async fn get_keyspace_meta(&self, name: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.load_keyspace(&build_keyspace_name(name)).await
@@ -1720,6 +1732,17 @@ where
         filter: crate::region_cache::TiFlashLabelFilter,
     ) -> Vec<metapb::Store> {
         self.region_cache.get_tiflash_stores(filter)
+    }
+
+    async fn load_regions_in_key_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.region_cache
+            .load_regions_in_key_range(start_key, end_key, backoffer)
+            .await
     }
 }
 

@@ -196,10 +196,12 @@ impl Config {
                     Value::String(text) if text == "false" => {
                         base.enable_controller_trace_log = false
                     }
-                    other => return Err(format!(
+                    other => {
+                        return Err(format!(
                         "json: invalid use of ,string struct tag, trying to unmarshal {} into bool",
                         other
-                    )),
+                    ))
+                    }
                 },
                 "ru-version-policy" => match value {
                     Value::Null => base.ru_version_policy = None,
