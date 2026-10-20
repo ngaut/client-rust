@@ -1333,7 +1333,7 @@ impl<PdC: PdClient> KvStore<PdC> {
     /// locate again; client-go returns it in the response.
     pub async fn send_req<Req>(
         &self,
-        backoffer: crate::retry::RetryBackoffer,
+        backoffer: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
         mut request: Req,
         region: &crate::region::RegionVerId,
         timeout: Duration,
@@ -3085,8 +3085,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let backoffer =
-            || crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000);
+        let backoffer = || {
+            Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                crate::async_util::Cancellation::default(),
+                1_000,
+            )))
+        };
         let gc = || kvrpcpb::GcRequest {
             safe_point: 1,
             ..Default::default()
