@@ -1807,7 +1807,9 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
     /// client-go `tikv.NewKVStore`'s client half over a PD client the caller
     /// already holds -- an embedded store's or a mock's -- with the TiKV
     /// clients `kv_connect` opens: the region cache, store clients and routing
-    /// are this client's own, whatever answers PD.
+    /// are this client's own, whatever answers PD. With `config.keyspace` the
+    /// codec is that keyspace's API V2 one, loaded from `pd`, as client-go's
+    /// `NewCodecPDClientWithKeyspace`; without, API V1.
     pub async fn new_with_pd_client(
         config: Config,
         kv_connect: KvC,
@@ -1815,20 +1817,31 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
         enable_codec: bool,
     ) -> Result<PdRpcClient<KvC, P>>
     where
-        P: Send + Sync + 'static,
+        P: RetryClientTrait + Send + Sync + 'static,
     {
         let mode = if enable_codec {
             KeyMode::Txn
         } else {
             KeyMode::Raw
         };
+        let keyspace_name = config.keyspace.as_deref().map(build_keyspace_name);
         let security_mgr = Self::configured_security(&config)?;
         let client = Self::assemble(
             config,
             security_mgr,
             |_| kv_connect,
             pd,
-            move |_| async move { Ok((PdRegionCodec::v1(mode), None)) },
+            move |pd| async move {
+                let Some(name) = keyspace_name else {
+                    return Ok((PdRegionCodec::v1(mode), None));
+                };
+                let meta = pd.load_keyspace(&name).await?;
+                let keyspace_id = match keyspace_from_pd_meta(&meta)? {
+                    Keyspace::Enable { keyspace_id } => keyspace_id,
+                    _ => unreachable!("PD metadata always constructs a numeric V2 keyspace"),
+                };
+                Ok((PdRegionCodec::v2(mode, keyspace_id)?, Some(meta)))
+            },
         )
         .await?;
         client.region_cache.start_background_gc();
