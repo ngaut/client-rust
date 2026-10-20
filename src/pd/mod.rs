@@ -7,6 +7,7 @@ mod codec;
 pub mod connectionctx;
 pub mod deadline;
 pub mod errs;
+pub mod http;
 pub mod keyspace;
 pub mod metrics;
 pub mod opt;

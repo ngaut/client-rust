@@ -86,6 +86,16 @@ impl SecurityManager {
         self.ca_path.is_some()
     }
 
+    /// The CA, certificate and private-key PEM paths, for HTTP clients that
+    /// build their own TLS connector from the same configuration.
+    pub(crate) fn tls_paths(&self) -> (Option<&Path>, Option<&Path>, Option<&Path>) {
+        (
+            self.ca_path.as_deref(),
+            self.cert_path.as_deref(),
+            self.key_path.as_deref(),
+        )
+    }
+
     /// Connect to gRPC server using TLS connection. If TLS is not configured, use normal connection.
     pub async fn connect<Factory, Client>(
         &self,

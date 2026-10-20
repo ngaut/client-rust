@@ -1823,6 +1823,14 @@ enum PdCodecConfig {
     },
 }
 
+impl<KvC: KvConnect + Send + Sync + 'static> PdRpcClient<KvC, RetryClient<Cluster>> {
+    /// Go `pd.Client.GetServiceDiscovery`: this client's PD membership, the
+    /// leader first, for `pd_http::new_client_with_service_discovery`.
+    pub fn get_service_discovery(&self) -> Arc<dyn crate::pd::http::ServiceDiscovery> {
+        self.pd.get_service_discovery()
+    }
+}
+
 impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
     pub(crate) async fn advance_transaction_safe_point_for_keyspace(
         &self,

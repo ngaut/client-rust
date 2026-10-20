@@ -597,6 +597,46 @@ impl RetryClient<Cluster> {
     pub async fn cluster_id(&self) -> u64 {
         self.cluster.read().await.0.id()
     }
+
+    /// Go `pd.Client.GetServiceDiscovery`, for the PD HTTP client: the
+    /// members this client discovered, the leader first, as its membership
+    /// refreshes. A membership check scheduled through it wakes this client's
+    /// member refresh. The view does not keep the client alive; once the
+    /// client is dropped it has no members.
+    pub fn get_service_discovery(&self) -> Arc<dyn super::http::ServiceDiscovery> {
+        Arc::new(MemberServiceDiscovery {
+            cluster: Arc::downgrade(&self.cluster),
+            refresh: Arc::downgrade(&self.reconnect),
+        })
+    }
+}
+
+// The PD client's membership as the HTTP client's service discovery.
+struct MemberServiceDiscovery {
+    cluster: std::sync::Weak<RwLock<(Cluster, Instant)>>,
+    refresh: std::sync::Weak<DiscoveryRefresh>,
+}
+
+#[async_trait]
+impl super::http::ServiceDiscovery for MemberServiceDiscovery {
+    async fn get_all_service_clients(&self) -> Vec<super::http::ServiceClient> {
+        let Some(cluster) = self.cluster.upgrade() else {
+            return Vec::new();
+        };
+        let urls = cluster.read().await.0.service_client_urls();
+        urls.into_iter()
+            .map(|(url, is_leader)| super::http::ServiceClient::new(url, is_leader))
+            .collect()
+    }
+
+    fn schedule_check_member_changed(&self) {
+        if let Some(refresh) = self.refresh.upgrade() {
+            refresh.members_changed.notify_one();
+        }
+    }
+
+    // The PD client owns its discovery; the HTTP client never closes it.
+    async fn close(&self) {}
 }
 
 #[async_trait]

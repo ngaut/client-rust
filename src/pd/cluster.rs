@@ -680,6 +680,32 @@ impl Cluster {
             .and_then(|member| self.connection.member_url(member))
     }
 
+    /// Go `serviceDiscovery.GetAllServiceClients` over the accepted membership:
+    /// the leader's matched client URL first (`true`), then the matched URL of
+    /// every other member ID, one client per URL as Go's `updateFollowers`
+    /// keys its followers.
+    pub(crate) fn service_client_urls(&self) -> Vec<(String, bool)> {
+        let leader_id = self.members.leader.as_ref().map(|member| member.member_id);
+        let mut clients = Vec::with_capacity(self.members.members.len());
+        if let Some(url) = self.leader_url() {
+            clients.push((url, true));
+        }
+        let mut followers: Vec<String> = Vec::new();
+        for member in &self.members.members {
+            if Some(member.member_id) == leader_id {
+                continue;
+            }
+            let Some(url) = self.connection.member_url(member) else {
+                continue;
+            };
+            if !followers.contains(&url) {
+                followers.push(url);
+            }
+        }
+        clients.extend(followers.into_iter().map(|url| (url, false)));
+        clients
+    }
+
     /// pd-client `GetAllMembers`.
     pub fn get_all_members(
         &self,
