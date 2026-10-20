@@ -1398,9 +1398,11 @@ impl<PdC: PdClient> KvStore<PdC> {
     ///
     /// The send goes through resource control as client-go's
     /// `interceptedClient.SendRequest` sends it: `OnRequestWait` sets the
-    /// request's penalty and (unless set) priority, `OnResponseWait` settles
-    /// the response, and both charge the `RuDetails` of the current trace
-    /// context (client-go's `util.RUDetailsCtxKey` value).
+    /// request's penalty and (unless set) priority, the response is settled,
+    /// and both charge the `RuDetails` of the current trace context
+    /// (client-go's `util.RUDetailsCtxKey` value). The settlement is the
+    /// non-waiting `OnResponse`, as for dispatched plans: the boxed response
+    /// cannot be held across an await of a `Send` future.
     pub async fn send_request_with_store_type(
         &self,
         address: &str,
@@ -1438,16 +1440,11 @@ impl<PdC: PdClient> KvStore<PdC> {
             .dispatch_with_timeout(&*request, Some(timeout))
             .await?;
         if let Some(selected) = selected {
-            let settled = selected
-                .controller
-                .on_response_wait_async(
-                    &selected.resource_group_name,
-                    selected.request,
-                    crate::resource_control::ResponseInfo::from_dispatch_response(
-                        response.as_ref(),
-                    ),
-                )
-                .await?;
+            let settled = selected.controller.on_response_wait(
+                &selected.resource_group_name,
+                selected.request,
+                crate::resource_control::ResponseInfo::from_dispatch_response(response.as_ref()),
+            )?;
             if let Some(ru_details) = &ru_details {
                 ru_details.update(&settled.consumption, settled.wait_duration);
             }
