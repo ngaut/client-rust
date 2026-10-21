@@ -16,7 +16,7 @@ pub mod opt;
 pub mod resource_group;
 pub mod resource_manager_client;
 mod retry;
-mod timestamp;
+pub(crate) mod tso;
 pub mod tso_batch;
 
 pub use self::client::PdRpcClient;
