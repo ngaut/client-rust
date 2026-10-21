@@ -399,6 +399,23 @@ impl<Cl> RetryClient<Cl> {
     }
 }
 
+impl RetryClient<Cluster> {
+    /// A retry client over `cluster` that shares the connection which built
+    /// it, as [`Self::connect_with_options`] does: the membership the cluster
+    /// publishes is the one the client's TSO discovery reads.
+    #[cfg(test)]
+    pub(crate) fn new_with_connected_cluster(
+        security_mgr: Arc<SecurityManager>,
+        timeout: Duration,
+        cluster: Cluster,
+    ) -> RetryClient<Cluster> {
+        let connection = cluster.connection().clone();
+        let mut client = Self::new_with_cluster(security_mgr, timeout, cluster);
+        client.connection = connection;
+        client
+    }
+}
+
 macro_rules! retry_core {
     ($self: ident, $tag: literal, $call: expr) => {{
         let stats = pd_stats($tag);
@@ -752,7 +769,23 @@ impl RetryClient<Cluster> {
         let check_refresh = Arc::downgrade(&self.reconnect);
         let connection = self.connection.clone();
         let timeout = self.timeout;
+        let pd_cluster = Arc::downgrade(&self.cluster);
+        let pd_refresh = Arc::downgrade(&self.reconnect);
+        let pd_connection = self.connection.clone();
         super::cluster::TsoDiscoveryHooks {
+            pd_check_member_changed: Arc::new(move || {
+                let cluster = pd_cluster.clone();
+                let refresh = pd_refresh.clone();
+                let connection = pd_connection.clone();
+                async move {
+                    let (Some(cluster), Some(refresh)) = (cluster.upgrade(), refresh.upgrade())
+                    else {
+                        return Err(Error::ContextCanceled);
+                    };
+                    refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None, false).await
+                }
+                .boxed()
+            }),
             schedule_check_member_changed: Arc::new(move || {
                 if let Some(refresh) = refresh.upgrade() {
                     refresh.members_changed.notify_one();
@@ -863,13 +896,15 @@ impl RetryClient<Cluster> {
                     let Some(cluster) = cluster.upgrade() else {
                         break;
                     };
-                    // pd-client `tsoServiceDiscovery.startCheckMemberLoop`.
-                    if let Err(error) =
+                    // pd-client `setServiceMode` (a TSO client reset when the
+                    // accepted mode changes) and, in PD mode, the TSO client's
+                    // leader-switched / members-changed callbacks. In API mode
+                    // the TSO service discovery checks its group itself.
+                    // Neither path has a line of its own in Go: the mode
+                    // check and the member updates log their failures.
+                    let _ =
                         refresh_timestamp_cached(&cluster, &connection, &refresh, timeout, None)
-                            .await
-                    {
-                        log::warn!(error:% = error; "[tso] failed to update member");
-                    }
+                            .await;
                 }
             };
             let members = async {
@@ -970,6 +1005,20 @@ impl RetryClient<Cluster> {
     #[cfg(test)]
     pub(crate) async fn tso_for_test(&self) -> Arc<super::tso::Cli> {
         self.cluster.read().await.0.tso_for_test()
+    }
+
+    /// One member update of the current TSO service discovery (what its
+    /// check member loop runs), without its retries.
+    #[cfg(test)]
+    pub(crate) async fn tso_update_member_for_test(&self) -> Result<()> {
+        let discovery = self
+            .cluster
+            .read()
+            .await
+            .0
+            .tso_svc_discovery_for_test()
+            .expect("the TSO microservice provides TSO");
+        discovery.update_member_for_test().await
     }
 
     pub async fn cluster_id(&self) -> u64 {
