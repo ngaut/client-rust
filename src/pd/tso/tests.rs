@@ -196,6 +196,13 @@ where
                         .await,
                 )
             }),
+            "/pdpb.PD/QueryRegion" => Box::pin(async move {
+                Ok(
+                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                        .streaming(QueryRegionServer(service), request)
+                        .await,
+                )
+            }),
             _ => Box::pin(async move {
                 Ok(http::Response::builder()
                     .status(200)
@@ -460,6 +467,57 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
                     Some((Ok(response), (requests, None, active, service)))
                 },
             );
+            Ok(tonic::Response::new(
+                Box::pin(responses) as Self::ResponseStream
+            ))
+        })
+    }
+}
+
+/// PD's `QueryRegion` stream: every key maps to the server's region.
+#[derive(Clone)]
+struct QueryRegionServer(PdServer);
+
+impl tonic::server::StreamingService<pdpb::QueryRegionRequest> for QueryRegionServer {
+    type Response = pdpb::QueryRegionResponse;
+    type ResponseStream = Pin<
+        Box<
+            dyn Stream<Item = std::result::Result<pdpb::QueryRegionResponse, tonic::Status>> + Send,
+        >,
+    >;
+    type Future = BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+
+    fn call(
+        &mut self,
+        request: tonic::Request<tonic::Streaming<pdpb::QueryRegionRequest>>,
+    ) -> Self::Future {
+        let service = self.0.clone();
+        Box::pin(async move {
+            let responses = request.into_inner().map(move |request| {
+                let request = request?;
+                let id = service.region_id.load(Ordering::SeqCst) as u64;
+                let mut response = pdpb::QueryRegionResponse {
+                    header: Some(ResponseHeader {
+                        cluster_id: 42,
+                        ..Default::default()
+                    }),
+                    key_id_map: vec![id; request.keys.len()],
+                    prev_key_id_map: vec![id; request.prev_keys.len()],
+                    ..Default::default()
+                };
+                response.regions_by_id.insert(
+                    id,
+                    pdpb::RegionResponse {
+                        region: Some(metapb::Region {
+                            id,
+                            region_epoch: Some(metapb::RegionEpoch::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                );
+                Ok(response)
+            });
             Ok(tonic::Response::new(
                 Box::pin(responses) as Self::ResponseStream
             ))
@@ -2739,6 +2797,9 @@ async fn availability_pair_with_reply(
                 options.timeout = Duration::from_secs(1);
                 options.enable_forwarding = enabled;
                 options.set_enable_tso_follower_proxy(proxy);
+                // These cases exercise the unary region RPCs, which pd-client
+                // uses only while the router client is disabled.
+                options.set_enable_router_client(false);
                 options
             },
             None,
@@ -4124,5 +4185,98 @@ async fn client_discovery_lines_follow_the_service_mode() {
     client.close().await;
     assert!(crate::logutil::test_capture::any(
         |line| line == "INFO [router service] is closed"
+    ));
+}
+
+/// pd-client creates the router client at init (`EnableRouterClient`
+/// defaults to on) and its `routerClientInitializer` closes and recreates it
+/// as the option changes; region lookups take the router client's
+/// `QueryRegion` stream while it exists and PD's unary RPCs otherwise.
+#[tokio::test]
+async fn router_client_follows_the_enable_router_client_option() {
+    crate::logutil::test_capture::install();
+    let server = Server::start(Reply::Timestamp).await;
+    server.service.region_id.store(77, Ordering::SeqCst);
+    let client = Arc::new(
+        RetryClient::connect_with_options(
+            &[server.service.endpoint.clone()],
+            Arc::new(SecurityManager::default()),
+            {
+                let mut options = crate::pd::opt::Options::new();
+                options.timeout = Duration::from_secs(3);
+                options
+            },
+            None,
+        )
+        .await
+        .unwrap(),
+    );
+    let routes = |path: &str| {
+        server
+            .service
+            .wire_routes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(route, _, _)| route == path)
+            .count()
+    };
+    let region = client
+        .clone()
+        .get_region_for_cache(b"k".to_vec(), false, false)
+        .await
+        .unwrap();
+    assert_eq!(region.region.id, 77);
+    assert_eq!(routes("/pdpb.PD/QueryRegion"), 1);
+    assert_eq!(routes("/pdpb.PD/GetRegion"), 0);
+    let line = format!(
+        "INFO [router] successfully established the leader router stream connection url={}",
+        server.service.endpoint
+    );
+    assert!(crate::logutil::test_capture::any(|l| l == line));
+    assert!(crate::logutil::test_capture::any(
+        |l| l == "INFO [pd] start router client initializer"
+    ));
+
+    client.set_enable_router_client(false);
+    crate::logutil::test_capture::wait_for("the router client disabled", |l| {
+        l == "INFO [pd] notified to disable the router client"
+    })
+    .await;
+    crate::logutil::test_capture::wait_for("the router client closed", |l| {
+        l == "INFO [router] router client is closed"
+    })
+    .await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while client.get_router_client().is_some() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    client.clone().get_region(b"k".to_vec()).await.unwrap();
+    assert_eq!(routes("/pdpb.PD/GetRegion"), 1);
+
+    client.set_enable_router_client(true);
+    crate::logutil::test_capture::wait_for("the router client enabled", |l| {
+        l == "INFO [pd] notified to enable the router client"
+    })
+    .await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while client.get_router_client().is_none() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    client
+        .clone()
+        .get_region_by_id_with_buckets(77)
+        .await
+        .unwrap();
+    assert_eq!(routes("/pdpb.PD/QueryRegion"), 2);
+    client.close().await;
+    assert!(crate::logutil::test_capture::any(
+        |l| l == "INFO [pd] exit router client initializer"
     ));
 }

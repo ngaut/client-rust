@@ -159,6 +159,16 @@ impl ChannelCache {
         }
     }
 
+    /// The cached connection of `endpoint`, if one exists (a Go
+    /// `clientConns.Load`).
+    pub fn get(&self, endpoint: &str) -> Option<Channel> {
+        self.channels
+            .lock()
+            .expect("PD channel cache poisoned")
+            .as_ref()
+            .and_then(|channels| channels.get(endpoint).cloned())
+    }
+
     /// Release cached handles and prohibit new publication, including a dial
     /// that began before close. RPC/stream owners cancel and join separately.
     pub fn close(&self) {
@@ -617,4 +627,116 @@ pub(crate) fn callee_id(endpoint: &str) -> String {
                 .map(|authority| authority.as_str().to_owned())
         })
         .unwrap_or_default()
+}
+
+/// Go `LeaderSwitchedCallbackFunc`.
+pub(crate) type LeaderSwitchedCallback = Arc<dyn Fn(&str) -> crate::Result<()> + Send + Sync>;
+/// A members-changed callback (Go `func()`).
+pub(crate) type MembersChangedCallback = Arc<dyn Fn() + Send + Sync>;
+
+/// Go `serviceCallbacks` (callbacks.go): the callbacks a service discovery
+/// runs after its leader/primary switches and after its membership changes.
+#[derive(Default)]
+pub(crate) struct ServiceCallbacks {
+    leader_switched_cbs: std::sync::RwLock<Vec<LeaderSwitchedCallback>>,
+    members_changed_cbs: std::sync::RwLock<Vec<MembersChangedCallback>>,
+}
+
+impl ServiceCallbacks {
+    /// Go `addLeaderSwitchedCallback`.
+    pub(crate) fn add_leader_switched_callback(&self, callback: LeaderSwitchedCallback) {
+        self.leader_switched_cbs.write().unwrap().push(callback);
+    }
+
+    /// Go `addMembersChangedCallback`.
+    pub(crate) fn add_members_changed_callback(&self, callback: MembersChangedCallback) {
+        self.members_changed_cbs.write().unwrap().push(callback);
+    }
+
+    /// Go `onLeaderSwitched`: the callbacks in order, stopping at the first
+    /// error.
+    pub(crate) fn on_leader_switched(&self, leader: &str) -> crate::Result<()> {
+        let callbacks = self.leader_switched_cbs.read().unwrap().clone();
+        for callback in callbacks {
+            callback(leader)?;
+        }
+        Ok(())
+    }
+
+    /// Go `onMembersChanged`.
+    pub(crate) fn on_members_changed(&self) {
+        let callbacks = self.members_changed_cbs.read().unwrap().clone();
+        for callback in callbacks {
+            callback();
+        }
+    }
+}
+
+/// The PD members as pd-client's `serviceDiscovery` holds them: the leader's
+/// URL (Go `getLeaderURL`), the URLs the client keeps connections to (the
+/// leader and followers, `PickMatchedURL` of each member), the sorted client
+/// URLs of every member (Go `urls`), and the callbacks run when they change.
+#[derive(Default)]
+pub(crate) struct PdMembership {
+    state: std::sync::RwLock<PdMembershipState>,
+    callbacks: ServiceCallbacks,
+}
+
+#[derive(Default)]
+struct PdMembershipState {
+    leader_url: String,
+    member_urls: Vec<String>,
+    sorted_urls: Vec<String>,
+}
+
+/// What [`PdMembership::update`] changed.
+pub(crate) struct PdMembershipChange {
+    pub(crate) old_sorted_urls: Vec<String>,
+    pub(crate) urls_changed: bool,
+    pub(crate) old_leader_url: String,
+    pub(crate) leader_changed: bool,
+}
+
+impl PdMembership {
+    /// Go `getLeaderURL` / `GetServingURL`.
+    pub(crate) fn leader_url(&self) -> String {
+        self.state.read().unwrap().leader_url.clone()
+    }
+
+    /// The leader's and followers' URLs (the keys of Go's `clientConns` that
+    /// belong to members).
+    pub(crate) fn member_urls(&self) -> Vec<String> {
+        self.state.read().unwrap().member_urls.clone()
+    }
+
+    /// Go `GetServiceURLs`.
+    pub(crate) fn sorted_urls(&self) -> Vec<String> {
+        self.state.read().unwrap().sorted_urls.clone()
+    }
+
+    pub(crate) fn callbacks(&self) -> &ServiceCallbacks {
+        &self.callbacks
+    }
+
+    /// Publishes a membership observation (Go `updateURLs` and
+    /// `switchLeader`'s stores); the caller runs the callbacks and logs.
+    pub(crate) fn update(
+        &self,
+        leader_url: String,
+        member_urls: Vec<String>,
+        sorted_urls: Vec<String>,
+    ) -> PdMembershipChange {
+        let mut state = self.state.write().unwrap();
+        let urls_changed = state.sorted_urls != sorted_urls;
+        let old_sorted_urls = std::mem::replace(&mut state.sorted_urls, sorted_urls);
+        let leader_changed = state.leader_url != leader_url;
+        let old_leader_url = std::mem::replace(&mut state.leader_url, leader_url);
+        state.member_urls = member_urls;
+        PdMembershipChange {
+            old_sorted_urls,
+            urls_changed,
+            old_leader_url,
+            leader_changed,
+        }
+    }
 }

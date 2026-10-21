@@ -1323,10 +1323,9 @@ impl Cluster {
         }
         self.client = Some(leader.client);
         self.keyspace_client = Some(leader.keyspace_client);
-        let previous = std::mem::replace(&mut self.members, leader.members);
-        self.log_member_changes(Some(&previous));
+        self.members = leader.members;
         self.update_region_members();
-        Ok(())
+        self.log_member_changes()
     }
 
     /// The members' client URLs, sorted (pd-client `GetServiceURLs`).
@@ -1334,34 +1333,43 @@ impl Cluster {
         sorted_member_urls(&self.members)
     }
 
-    /// pd-client `updateURLs` and `switchLeader`'s log lines for a new
-    /// membership observation (`previous` is `None` at initialization).
-    fn log_member_changes(&self, previous: Option<&pdpb::GetMembersResponse>) {
-        let old_urls = previous.map(sorted_member_urls).unwrap_or_default();
+    /// pd-client `updateURLs` and `switchLeader` for a new membership
+    /// observation: publishes it to the shared membership, runs the
+    /// members-changed callbacks when the URLs change and the leader-switched
+    /// callbacks when the leader does, each before its line, as Go does.
+    fn log_member_changes(&self) -> Result<()> {
         let new_urls = sorted_member_urls(&self.members);
-        if old_urls != new_urls {
+        let new_leader = self
+            .members
+            .leader
+            .as_ref()
+            .and_then(|member| self.connection.member_url(member))
+            .unwrap_or_default();
+        let member_urls = self
+            .members
+            .members
+            .iter()
+            .filter_map(|member| self.connection.member_url(member))
+            .collect();
+        let membership = &self.connection.membership;
+        let change = membership.update(new_leader.clone(), member_urls, new_urls.clone());
+        if change.urls_changed {
+            membership.callbacks().on_members_changed();
             log::info!(
-                "old-sorted-urls":serde = old_urls,
+                "old-sorted-urls":serde = change.old_sorted_urls,
                 "new-sorted-urls":serde = new_urls;
                 "[pd] update member urls"
             );
         }
-        let leader_url = |members: &pdpb::GetMembersResponse| {
-            members
-                .leader
-                .as_ref()
-                .and_then(|member| self.connection.member_url(member))
-                .unwrap_or_default()
-        };
-        let old_leader = previous.map(leader_url).unwrap_or_default();
-        let new_leader = leader_url(&self.members);
-        if old_leader != new_leader {
+        if change.leader_changed {
+            membership.callbacks().on_leader_switched(&new_leader)?;
             log::info!(
                 "new-leader" = new_leader.as_str(),
-                "old-leader" = old_leader.as_str();
+                "old-leader" = change.old_leader_url.as_str();
                 "[pd] switch leader"
             );
         }
+        Ok(())
     }
 
     /// Publishes a TSO routing observation. A provider change (PD vs. TSO
@@ -1538,6 +1546,9 @@ pub struct Connection {
     rm_discovery: Arc<
         std::sync::RwLock<Option<Arc<super::resource_manager_discovery::ResourceManagerDiscovery>>>,
     >,
+    /// pd-client `serviceDiscovery`'s members and callbacks, as the current
+    /// cluster last observed them.
+    pub(crate) membership: Arc<super::service_discovery::PdMembership>,
 }
 
 impl Connection {
@@ -1573,6 +1584,7 @@ impl Connection {
             discovery: TsoDiscovery::default(),
             router_discovery: Arc::default(),
             rm_discovery: Arc::default(),
+            membership: Arc::default(),
         }
     }
 
@@ -1634,6 +1646,11 @@ impl Connection {
         url: &str,
     ) -> std::result::Result<Channel, tonic::Status> {
         self.channel(url).await
+    }
+
+    /// The cached connection of `url`, if one exists.
+    pub(crate) fn cached_channel(&self, url: &str) -> Option<Channel> {
+        self.channels.get(url)
     }
 
     /// Go `RemoveClientConn` over the shared connection cache.
@@ -1722,8 +1739,8 @@ impl Connection {
             tso_hooks,
             retired_tso: Vec::new(),
         };
-        cluster.log_member_changes(None);
         cluster.update_region_members();
+        cluster.log_member_changes()?;
         Ok((cluster, meta))
     }
 
