@@ -584,16 +584,19 @@ impl BatchPendingResponses {
         id: u64,
         response: Result<BatchCommandResponse>,
     ) -> BatchResponseDisposition {
-        self.complete_result_observed(id, response, |_| {})
+        self.complete_result_observed(id, response, |_| {}, |_, _| {})
     }
 
     /// [`Self::complete_result`], first showing the retired entry to
     /// `observe` (client-go's receive loop logs on `entry.ctx` there).
+    /// `cancelled` sees the entry and, for a successful response, the
+    /// response its caller no longer waits for (client-go logs both).
     pub(crate) fn complete_result_observed(
         &self,
         id: u64,
         response: Result<BatchCommandResponse>,
         observe: impl FnOnce(&BatchRequestTelemetry),
+        cancelled: impl FnOnce(&BatchRequestTelemetry, Option<BatchCommandResponse>),
     ) -> BatchResponseDisposition {
         match self.entries.lock().unwrap().remove(&id) {
             Some(entry) => {
@@ -604,20 +607,22 @@ impl BatchPendingResponses {
                     metrics.increment(BatchStreamRequestCounter::Retired);
                 }
                 match response {
-                    Ok(response) => {
-                        if entry.sender.send(Ok(response)).is_ok() {
+                    Ok(response) => match entry.sender.send(Ok(response)) {
+                        Ok(()) => {
                             entry.telemetry.complete(None);
                             BatchResponseDisposition::Delivered
-                        } else {
+                        }
+                        Err(returned) => {
                             if let Some(metrics) = entry.stream_metrics.as_ref() {
                                 metrics.observe_cancelled_entry_tail(&entry.telemetry);
                             }
+                            cancelled(&entry.telemetry, returned.ok());
                             entry.telemetry.complete(Some(&Error::StringError(
                                 "batch request cancelled".to_owned(),
                             )));
                             BatchResponseDisposition::Cancelled
                         }
-                    }
+                    },
                     Err(error) => {
                         entry.telemetry.complete(Some(&error));
                         if entry.sender.send(Err(error)).is_ok() {
@@ -626,6 +631,7 @@ impl BatchPendingResponses {
                             if let Some(metrics) = entry.stream_metrics.as_ref() {
                                 metrics.observe_cancelled_entry_tail(&entry.telemetry);
                             }
+                            cancelled(&entry.telemetry, None);
                             BatchResponseDisposition::Cancelled
                         }
                     }

@@ -745,6 +745,24 @@ fn is_unroutable_peer(region: &RegionWithLeader, candidate: &metapb::Peer) -> bo
                 .is_none_or(|leader| leader.id != candidate.id))
 }
 
+/// Go's deferred `recover()` around a background round: a panic is logged
+/// with its value and stack, and the loop goes on.
+async fn recover_panic(message: &'static str, round: impl std::future::Future<Output = ()>) {
+    use futures::FutureExt;
+    if let Err(panic) = std::panic::AssertUnwindSafe(round).catch_unwind().await {
+        let value = panic
+            .downcast_ref::<&str>()
+            .map(|value| (*value).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        log::error!(
+            r:% = value,
+            "stack trace":% = std::backtrace::Backtrace::force_capture();
+            "{message}"
+        );
+    }
+}
+
 impl CachedStore {
     fn new(meta: Store) -> Self {
         let resolve_state = if is_tombstone_store(&meta) {
@@ -753,9 +771,9 @@ impl CachedStore {
             StoreResolveState::Resolved
         };
         Self {
+            health_status: Arc::new(StoreHealthStatus::new(meta.id)),
             meta,
             resolve_state: AtomicU8::new(resolve_state as u8),
-            health_status: Arc::new(StoreHealthStatus::default()),
             epoch: AtomicU32::new(0),
             liveness: AtomicU8::new(StoreLiveness::Reachable as u8),
             health_check_running: AtomicBool::new(false),
@@ -1233,13 +1251,19 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                             _ = cache.store_check_notify.notified() => {
                                 tokio::select! {
                                     _ = cancellation.cancelled() => return,
-                                    _ = cache.refresh_store_cache(true) => {}
+                                    _ = recover_panic(
+                                        "panic in the checkAndResolve goroutine",
+                                        cache.refresh_store_cache(true),
+                                    ) => {}
                                 }
                             }
                             _ = tick.tick() => {
                                 tokio::select! {
                                     _ = cancellation.cancelled() => return,
-                                    _ = cache.refresh_store_cache(false) => {}
+                                    _ = recover_panic(
+                                        "panic in the checkAndResolve goroutine",
+                                        cache.refresh_store_cache(false),
+                                    ) => {}
                                 }
                             }
                         }
@@ -1261,7 +1285,10 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                         };
                         tokio::select! {
                             _ = cancellation.cancelled() => return,
-                            _ = cache.tick_store_health_with_callback(Instant::now()) => {}
+                            _ = recover_panic(
+                                "panic in the checkAndUpdateStoreHealthStatus goroutine",
+                                cache.tick_store_health_with_callback(Instant::now()),
+                            ) => {}
                         }
                     }
                 }));
@@ -1301,12 +1328,9 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 let Some(cache) = cache.upgrade() else {
                     return;
                 };
-                let result = tokio::select! {
+                tokio::select! {
                     _ = cancellation.cancelled() => return,
-                    result = cache.insert_missing_stores() => result,
-                };
-                if let Err(error) = result {
-                    log::info!(error:% = error; "refresh full store list failed");
+                    _ = cache.insert_missing_stores() => {}
                 }
             }
         }));
@@ -1337,8 +1361,25 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         }
     }
 
+    /// client-go `storeCacheUpdater.tick`: the full store list, retried
+    /// once (with PD-leader-only handling in Go) before giving up.
     async fn insert_missing_stores(&self) -> Result<()> {
-        let stores = self.inner_client.clone().get_all_stores().await?;
+        let stores = match self.inner_client.clone().get_all_stores().await {
+            Ok(stores) => stores,
+            Err(error) => {
+                log::info!(error:% = error; "refresh full store list failed");
+                match self.inner_client.clone().get_all_stores().await {
+                    Ok(stores) => stores,
+                    Err(error) => {
+                        log::info!(
+                            error:% = error;
+                            "refresh full store list with PD leader handle request only failed"
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+        };
         self.insert_missing_stores_from_list(&stores);
         self.clean_up_stale_store_metrics(&stores, Instant::now())
             .await;
@@ -1390,7 +1431,15 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         };
         let store_id = confirm?;
         match self.inner_client.clone().get_store(store_id).await {
-            Ok(Some(store)) if !is_tombstone_store(&store) => None,
+            Ok(Some(store)) if !is_tombstone_store(&store) => {
+                log::info!(
+                    storeID = store_id,
+                    state = metapb::StoreState::try_from(store.state)
+                        .map_or("", |state| state.as_str_name());
+                    "skip cleaning up metrics of a valid store"
+                );
+                None
+            }
             Ok(_) => {
                 crate::stats::remove_store_metrics(store_id);
                 Some(store_id)
@@ -3159,8 +3208,14 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .unwrap()
             .get(&feedback.store_id)
             .map(|store| store.health_status.clone());
-        if let Some(health_status) = health_status {
-            health_status.record_tikv_slow_score(i64::from(feedback.slow_score), now);
+        match health_status {
+            Some(health_status) => {
+                health_status.record_tikv_slow_score(i64::from(feedback.slow_score), now)
+            }
+            None => log::info!(
+                storeID = feedback.store_id;
+                "dropped health feedback info due to unknown store id"
+            ),
         }
     }
 
@@ -3420,6 +3475,13 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             crate::stats::increment_health_feedback_operation(store_id, "tick");
             health_status
                 .tick_with_feedback(now, async {
+                    if liveness == StoreLiveness::Reachable && callback.is_some() && address.is_empty()
+                    {
+                        log::warn!(
+                            storeID = store_id;
+                            "skip actively request health feedback info from store due to unknown addr"
+                        );
+                    }
                     if liveness == StoreLiveness::Reachable && !address.is_empty() {
                         if let Some(callback) = callback.as_ref() {
                             crate::stats::increment_health_feedback_operation(
@@ -5570,6 +5632,43 @@ mod test {
         periodic.close_background_task().await;
         assert!(periodic.background_tasks.lock().unwrap().is_empty());
         Ok(())
+    }
+
+    /// client-go's store-health lines: `store health status changed` when the
+    /// slow flag flips (Go `updateSlowFlag`) and `dropped health feedback
+    /// info due to unknown store id` (Go `onHealthFeedback`).
+    #[tokio::test]
+    async fn store_health_lines_carry_client_gos_fields() {
+        crate::logutil::test_capture::install();
+        let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
+        cache.store_cache.write().unwrap().insert(
+            91_001,
+            CachedStore::new(metapb::Store {
+                id: 91_001,
+                address: "store-91001".to_owned(),
+                ..Default::default()
+            }),
+        );
+        cache
+            .store_health_status(91_001)
+            .unwrap()
+            .mark_already_slow();
+        let flipped = "INFO store health status changed storeID=91001 isSlow=true healthDetail={ ClientSideSlowScore: ";
+        assert!(
+            crate::logutil::test_capture::any(
+                |line| line.starts_with(flipped) && line.ends_with(", TiKVSideSlowScore: 0 }")
+            ),
+            "{:?}",
+            crate::logutil::test_capture::lines()
+        );
+        cache.record_health_feedback(&crate::proto::kvrpcpb::HealthFeedback {
+            store_id: 91_002,
+            slow_score: 100,
+            ..Default::default()
+        });
+        assert!(crate::logutil::test_capture::any(|line| {
+            line == "INFO dropped health feedback info due to unknown store id storeID=91002"
+        }));
     }
 
     #[tokio::test]
