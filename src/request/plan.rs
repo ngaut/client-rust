@@ -8,10 +8,6 @@ use std::time::{Duration, Instant};
 use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::prelude::*;
-use log::debug;
-use log::error;
-use log::info;
-use log::warn;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -492,8 +488,12 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                                 .is_some_and(|request| request.is_txn_file) =>
                         {
                             log::warn!(
-                                "txn file: resource control accounting failed after commit: {}",
-                                error
+                                txnStartTS = request
+                                    .as_any()
+                                    .downcast_ref::<kvrpcpb::CommitRequest>()
+                                    .map_or(0, |request| request.start_version),
+                                error:% = error;
+                                "txn file: resource control accounting failed after commit"
                             );
                             Ok(response)
                         }
@@ -704,7 +704,7 @@ pub(crate) async fn invalidate_connection_for_error<PdC: PdClient>(
 async fn collect_join_set_results<T>(
     mut join_set: JoinSet<(usize, T)>,
     task_count: usize,
-    handler_name: &str,
+    _handler_name: &str,
 ) -> Result<Vec<T>>
 where
     T: Send + 'static,
@@ -714,10 +714,6 @@ where
         match join_result {
             Ok((idx, val)) => results[idx] = Some(val),
             Err(e) => {
-                error!(
-                    "{}: failed to join task ({} tasks): {}",
-                    handler_name, task_count, e
-                );
                 join_set.shutdown().await;
                 return Err(Error::JoinError(e));
             }
@@ -1263,7 +1259,6 @@ where
         let shards_len = shards.len();
         let record_async_batch_get_metric =
             snapshot_region_scope.is_some() && snapshot_async_batch_get && shards_len > 1;
-        debug!("single_plan_handler, shards: {}", shards_len);
         if shards_len == 0 {
             return (Ok(Vec::new()), backoff);
         }
@@ -1565,10 +1560,6 @@ where
         }
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();
-        debug!(
-            "single_shard_handler, region: {:?}, store: {:?}",
-            region_ver_id, store_id
-        );
         let replica_read_config = plan.replica_read_config();
         let replica_selector_state = plan.replica_selector_state();
         let is_read_request = plan.is_read_request();
@@ -1623,7 +1614,6 @@ where
                 return SendReqOutcome::Done(Err(err), backoff);
             }
             Err(err) => {
-                debug!("single_shard_handler::sharding, error: {:?}", err);
                 return Self::handle_other_error(
                     pd_client,
                     plan,
@@ -1698,10 +1688,6 @@ where
                 if let Some(peer) = region_store.target_peer.as_ref() {
                     plan.mark_replica_deadline_exceeded(peer.id);
                 }
-                debug!(
-                    "single_shard_handler: configurable read timeout, reselection without backoff: {:?}",
-                    e
-                );
                 plan.mark_retry_request();
                 return Self::single_shard_handler(
                     pd_client,
@@ -1715,7 +1701,6 @@ where
                 .await;
             }
             Err(e) if is_grpc_error(&e) => {
-                debug!("single_shard_handler:execute: grpc error: {:?}", e);
                 return Self::handle_other_error(
                     pd_client,
                     plan,
@@ -1733,26 +1718,20 @@ where
                 .await;
             }
             Err(e) => {
-                debug!("single_shard_handler:execute: error: {:?}", e);
                 return SendReqOutcome::Done(Err(e), backoff);
             }
         };
 
         if let Some(e) = resp.key_errors() {
-            debug!("single_shard_handler:execute: key errors: {:?}", e);
             SendReqOutcome::Done(Ok(vec![Err(Error::MultipleKeyErrors(e))]), backoff)
         } else if let Some(e) = resp.region_error() {
             // client-go `RegionRequestSender.onRegionError`: its span becomes
             // the Backoffer's ctx, so its backoff, its cache loads and the
             // retry that follows report under it.
             let on_region_error_span = crate::trace::start_bo_client_span("tikv.onRegionError");
-            debug!(
-                "single_shard_handler:execute: region error: {:?}, region: {:?}",
-                e, region_ver_id
-            );
             let region_error_label = region_error_label(&e);
             if region_error_label == "unknown" {
-                info!("unknown region error: {e:?}");
+                log::info!(error:% = crate::error::protobuf_text(&e); "unknown region error");
             }
             crate::stats::increment_region_error(
                 region_error_label,
@@ -1781,10 +1760,6 @@ where
                 if let Some(peer) = region_store.target_peer.as_ref() {
                     plan.mark_replica_deadline_exceeded(peer.id);
                 }
-                debug!(
-                    "single_shard_handler: configurable server-busy deadline, reselection without backoff: {:?}",
-                    e
-                );
                 plan.mark_retry_request();
                 drop(on_region_error_span);
                 return Self::single_shard_handler(
@@ -1987,10 +1962,6 @@ where
                             .await;
                         }
                         Ok(false) => {
-                            warn!(
-                                "giving up after exhausting retries on region error, region: {:?}",
-                                region_ver_id
-                            );
                             return SendReqOutcome::Done(
                                 Err(Error::RegionError(Box::new(e))),
                                 backoff,
@@ -2057,15 +2028,10 @@ where
                 // after a forced follower leader-read succeeds. Cache update
                 // failure is advisory and must not turn a successful user RPC
                 // into an error.
-                if let Err(error) = pd_client
+                // client-go logs nothing here.
+                let _ = pd_client
                     .update_leader(region_store.region_with_leader.ver_id(), leader)
-                    .await
-                {
-                    warn!(
-                        "failed to update cached leader after successful forced leader read: {:?}",
-                        error
-                    );
-                }
+                    .await;
             }
             SendReqOutcome::Done(Ok(vec![Ok(resp)]), backoff)
         }
@@ -2084,7 +2050,6 @@ where
         one_region: Option<bool>,
         e: Error,
     ) -> SendReqOutcome<P, <Self as Plan>::Result, R> {
-        debug!("handle_other_error: {:?}", e);
         // client-go `RegionRequestSender.onSendFail`: its span becomes the
         // Backoffer's ctx, so the TiKV-RPC backoff below and everything the
         // request reports afterwards hang under it.
@@ -2352,7 +2317,6 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
 ) -> Result<RegionErrorRetry> {
     let ver_id = region_store.region_with_leader.ver_id();
     let store_id = region_store.region_with_leader.get_store_id();
-    debug!("handling region error: {:?}, region: {:?}", e, ver_id);
     // Source checks this flag before the ordered errorpb branch chain. A
     // malformed response can carry several optional errors, so preserving the
     // precedence prevents an indeterminate write from being retried.
@@ -2495,10 +2459,6 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         // fallback returns true here so `next` can select another replica
         // without cache eviction or backoff. Rust routes the next attempt
         // through the retained `ReplicaSelectorState` in `Dispatch`.
-        debug!(
-            "unknown region error, retrying source replica selection, region: {:?}: {:?}",
-            ver_id, e
-        );
         Ok(RegionErrorRetry::Immediate)
     }
 }
@@ -3406,11 +3366,9 @@ where
 
             // Propagate errors to `retry_multi_region` for retry.
             if let Some(e) = scan_lock_resp.key_errors() {
-                info!("CleanupLocks::execute, inner key errors:{:?}", e);
                 result.key_error = Some(e);
                 return Ok(result);
             } else if let Some(e) = scan_lock_resp.region_error() {
-                info!("CleanupLocks::execute, inner region error:{}", e.message);
                 result.region_error = Some(e);
                 return Ok(result);
             }
@@ -3422,7 +3380,6 @@ where
                         .encode_keyspace(self.keyspace, KeyMode::Txn)
                         .into();
                     if region.contains(start.as_ref()) {
-                        debug!("CleanupLocks::execute, next range:{:?}", (&start, &end));
                         inner.next_batch((start, end));
                     } else {
                         has_more_batch = false;
@@ -3450,7 +3407,6 @@ where
                     .collect::<Vec<_>>();
             }
             locks = locks.encode_keyspace(self.keyspace, KeyMode::Txn);
-            debug!("CleanupLocks::execute, meet locks:{}", locks.len());
 
             let lock_size = locks.len();
             match lock_resolver

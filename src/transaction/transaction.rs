@@ -12,7 +12,6 @@ use async_trait::async_trait;
 use derive_new::new;
 use fail::fail_point;
 use futures::prelude::*;
-use log::{debug, error, info, trace, warn};
 use tokio::time::Duration;
 
 use crate::backoff::Backoff;
@@ -831,6 +830,17 @@ enum TxnFileAction {
     Prewrite,
     Commit,
     Rollback,
+}
+
+impl std::fmt::Display for TxnFileAction {
+    /// client-go's `txnFileAction.String()`.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Prewrite => "txnFilePrewrite",
+            Self::Commit => "txnFileCommit",
+            Self::Rollback => "txnFileRollback",
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -2083,7 +2093,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             "get",
             self.commit_settings.request_source.is_internal(),
         );
-        trace!("invoking transactional get request");
         self.check_allow_operation().await?;
         let key = key.into();
         if self.is_pipelined() {
@@ -2237,7 +2246,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             "get",
             self.commit_settings.request_source.is_internal(),
         );
-        trace!("invoking transactional get request with options");
         self.check_allow_operation().await?;
         let mut get_options = GetOptions::default();
         get_options.apply(options);
@@ -2406,7 +2414,6 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     async fn get_for_update_in_statement(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        debug!("invoking transactional get_for_update request");
         self.check_allow_operation().await?;
         if !self.is_pessimistic() {
             let key = key.into();
@@ -2453,7 +2460,6 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     async fn key_exists_in_statement(&mut self, key: impl Into<Key>) -> Result<bool> {
-        debug!("invoking transactional key_exists request");
         Ok(self.get(key).await?.is_some())
     }
 
@@ -2507,7 +2513,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!("invoking transactional batch_get request");
         self.check_allow_operation().await?;
         let keys = keys.into_iter().map(Into::into).collect::<Vec<Key>>();
         if self.is_pipelined() {
@@ -2701,7 +2706,6 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .map(|pair| (pair.0, ValueEntry::new(pair.1, 0)))
                 .collect());
         }
-        debug!("invoking transactional batch_get request with options");
         self.check_allow_operation().await?;
         let mut get_options = GetOptions::default();
         get_options.apply(options);
@@ -3047,7 +3051,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
-        debug!("invoking transactional batch_get_for_update request");
         self.check_allow_operation().await?;
         if !self.is_pessimistic() {
             let keys: Vec<Key> = keys.into_iter().map(|k| k.into()).collect();
@@ -3118,7 +3121,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!("invoking transactional scan request");
         self.scan_inner(range, limit, false, false).await
     }
 
@@ -3173,7 +3175,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        debug!("invoking transactional scan_keys request");
         Ok(self
             .scan_inner(range, limit, true, false)
             .await?
@@ -3207,7 +3208,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!("invoking transactional scan_reverse request");
         self.scan_inner(range, limit, false, true).await
     }
 
@@ -3240,7 +3240,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        debug!("invoking transactional scan_keys_reverse request");
         Ok(self
             .scan_inner(range, limit, true, true)
             .await?
@@ -3283,7 +3282,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         value: impl Into<Value>,
         options: Option<MutationOptions>,
     ) -> Result<()> {
-        trace!("invoking transactional put request");
         self.check_allow_operation().await?;
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let value = value.into();
@@ -3337,7 +3335,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         value: impl Into<Value>,
         options: Option<MutationOptions>,
     ) -> Result<()> {
-        debug!("invoking transactional insert request");
         self.check_allow_operation().await?;
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let value = value.into();
@@ -3390,7 +3387,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         key: impl Into<Key>,
         options: Option<MutationOptions>,
     ) -> Result<()> {
-        debug!("invoking transactional delete request");
         self.check_allow_operation().await?;
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         self.buffer.delete(key.clone())?;
@@ -3436,7 +3432,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         &mut self,
         mutations: impl IntoIterator<Item = Mutation>,
     ) -> Result<()> {
-        debug!("invoking transactional batch mutate request");
         self.check_allow_operation().await?;
         let mutations: Vec<Mutation> = mutations
             .into_iter()
@@ -3567,7 +3562,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys: Vec<Key>,
         callback: F,
     ) -> Result<()> {
-        debug!("invoking transactional lock_keys request");
         self.check_allow_operation().await?;
         if let Some(error) = self.shared_lock_abort_error() {
             return Err(error);
@@ -3897,11 +3891,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .pessimistic_lock_count
             .saturating_sub(context.previous.len());
         if let Err(error) = self.rollback_aggressive_keys(&context.previous).await {
-            warn!(
-                "failed to clean up redundant aggressive locks during retry, start_ts: {}, error: {}",
-                self.timestamp.version(),
-                error
-            );
+            log::warn!(error:% = error; "[kv] pessimisticRollback failed.");
         }
         if context.assigned_primary_key {
             context.assigned_primary_key = false;
@@ -3947,11 +3937,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys.extend(context.current);
         self.pessimistic_lock_count = self.pessimistic_lock_count.saturating_sub(keys.len());
         if let Err(error) = self.rollback_aggressive_keys(&keys).await {
-            warn!(
-                "failed to clean up aggressive locks during cancel, start_ts: {}, error: {}",
-                self.timestamp.version(),
-                error
-            );
+            log::warn!(error:% = error; "[kv] pessimisticRollback failed.");
         }
         Ok(())
     }
@@ -3987,11 +3973,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .pessimistic_lock_count
             .saturating_sub(context.previous.len());
         if let Err(error) = self.rollback_aggressive_keys(&context.previous).await {
-            warn!(
-                "failed to clean up redundant aggressive locks while finishing, start_ts: {}, error: {}",
-                self.timestamp.version(),
-                error
-            );
+            log::warn!(error:% = error; "[kv] pessimisticRollback failed.");
         }
         for (key, mut entry) in context.current {
             if !entry.has_return_value && !entry.has_check_existence {
@@ -4095,10 +4077,6 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// The body of client-go `KVTxn.Commit` inside its `tikvTxn.Commit`
     /// span (Go's `trace.StartRegion(ctx, "CommitTxn")` region).
     async fn commit_txn(&mut self) -> Result<Option<Timestamp>> {
-        debug!(
-            "committing transaction, start_ts: {}",
-            self.timestamp.version()
-        );
         if self.get_status() == TransactionStatus::Active {
             if let Some(error) = self.shared_lock_abort_error() {
                 return Err(error);
@@ -4361,12 +4339,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         if let Ok(commit_ts) = &res {
             self.commit_timestamp = commit_ts.clone();
             self.set_status(TransactionStatus::Committed);
-            debug!(
-                "transaction committed, start_ts: {}, commit_ts: {:?}, elapsed: {:?}",
-                self.timestamp.version(),
-                commit_ts.as_ref().map(|ts| ts.version()),
-                self.start_instant.elapsed(),
-            );
         }
         res
     }
@@ -4399,7 +4371,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.start_instant,
         )
         .with_pessimistic_lock_keys(rollback_keys);
-        let start_timestamp = self.timestamp.version();
         let retry_owner = committer.options.source_retry_owner(|| {
             new_cleanup_backoffer(
                 crate::async_util::background_rpc_cancellation().unwrap_or_default(),
@@ -4413,10 +4384,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .rollback_with_retry_owner(false, retry_owner)
                     .await
                 {
-                    warn!(
-                        "failed to roll back pessimistic locks after mutation initialization error, start_ts: {}, error: {}",
-                        start_timestamp, error
-                    );
+                    log::warn!(error:% = error; "[kv] pessimisticRollback failed.");
                 }
             },
         ));
@@ -4442,10 +4410,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         if let Some(statement) = self.statement_trace_context() {
             return self.rollback_with_statement(statement).await;
         }
-        debug!(
-            "rolling back transaction, start_ts: {}",
-            self.timestamp.version()
-        );
         // A transaction that already started committing may have placed prewrite
         // (2PC) locks; use the persisted flag so the committer rolls those back
         // with `BatchRollback` rather than `PessimisticRollback` (which cannot
@@ -4472,24 +4436,15 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
         if self.aggressive_locking.is_some() {
             if let Err(error) = self.cancel_aggressive_locking().await {
-                warn!(
-                    "failed to clean up aggressive pessimistic locks during rollback, start_ts: {}, error: {}",
-                    self.timestamp.version(),
-                    error
-                );
+                log::warn!(error:% = error; "[kv] pessimisticRollback failed.");
             }
         }
 
         if self.is_pipelined() {
             self.configure_pipelined_memdb();
             self.pipelined_cancellation.cancel();
-            if let Err(error) = self.buffer.mem_buffer().flush_wait() {
-                warn!(
-                    "pipelined flush failed before rollback, start_ts: {}, error: {}",
-                    self.timestamp.version(),
-                    error
-                );
-            }
+            // client-go ignores FlushWait's error before rolling back.
+            let _ = self.buffer.mem_buffer().flush_wait();
             self.sync_pipelined_state_from_memdb();
         }
 
@@ -4518,19 +4473,14 @@ impl<PdC: PdClient> Transaction<PdC> {
         .with_pessimistic_lock_keys(pessimistic_lock_keys);
         if self.is_pipelined() {
             let hooks = self.commit_settings.lifecycle_hooks.clone();
-            let start_timestamp = self.timestamp.version();
             let committer = committer.detached();
             let cancellation = committer.lock_resolver_context.background_cancellation();
             tokio::spawn(async move {
                 if let Some(pre) = hooks.pre {
                     pre();
                 }
-                if let Err(error) = committer.rollback(prewritten, cancellation).await {
-                    warn!(
-                        "failed to clean up pipelined transaction during rollback, start_ts: {}, error: {}",
-                        start_timestamp, error
-                    );
-                }
+                // `finish_pipelined_locks` logs a failure as client-go does.
+                let _ = committer.rollback(prewritten, cancellation).await;
                 if let Some(post) = hooks.post {
                     post();
                 }
@@ -4539,17 +4489,10 @@ impl<PdC: PdClient> Transaction<PdC> {
             .rollback(prewritten, crate::async_util::Cancellation::default())
             .await
         {
-            warn!(
-                "failed to clean up transaction during rollback, start_ts: {}, error: {}",
-                self.timestamp.version(),
-                error
-            );
+            // client-go `KVTxn.Rollback`: `logutil.BgLogger().Error(err.Error())`.
+            log::error!("{error}");
         }
         self.set_status(TransactionStatus::Rolledback);
-        debug!(
-            "transaction rolled back, start_ts: {}",
-            self.timestamp.version()
-        );
         Ok(())
     }
 
@@ -4804,7 +4747,6 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// Returns the TTL set on the transaction's locks by TiKV.
     #[doc(hidden)]
     pub async fn send_heart_beat(&mut self) -> Result<u64> {
-        debug!("sending heartbeat, start_ts: {}", self.timestamp.version());
         self.check_allow_operation().await?;
         let primary_key = match self.buffer.get_primary_key() {
             Some(k) => k,
@@ -5639,12 +5581,6 @@ impl<PdC: PdClient> Transaction<PdC> {
                 *assertion = kvrpcpb::Assertion::NotExist;
             }
         }
-        debug!(
-            "acquiring pessimistic lock, start_ts: {}, keys: {}, need_value: {}",
-            self.timestamp.version(),
-            locks.len(),
-            need_value,
-        );
 
         let first_key = locks
             .iter()
@@ -5727,8 +5663,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         // groupMutations pre-split gate as prewrite. Split before locating the
         // request shards so a large first lock operation immediately benefits
         // from the new topology.
-        pre_split_large_mutation_regions(self.rpc.clone(), &request.mutations, "pessimistic lock")
-            .await;
+        pre_split_large_mutation_regions(
+            self.rpc.clone(),
+            &request.mutations,
+            self.timestamp.version(),
+        )
+        .await;
 
         // Locate first so the batch containing the primary can complete before
         // any secondary batch starts. This is the ordering contract enforced by
@@ -5901,12 +5841,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             let definitive_single_key_failure = keys.len() == 1
                 && (crate::error::is_write_conflict(&err) || crate::error::is_key_exists(&err));
             if !is_shared_lock_upgrade && !definitive_single_key_failure {
-                debug!(
-                    "pessimistic lock failed, rolling back {} potentially-acquired lock(s), start_ts: {}, for_update_ts: {}",
-                    keys.len(),
-                    self.timestamp.version(),
-                    for_update_ts.version(),
-                );
                 if let Err(rollback_error) = self
                     .pessimistic_lock_rollback(
                         keys.iter().cloned(),
@@ -5915,11 +5849,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     )
                     .await
                 {
-                    warn!(
-                        "failed to roll back pessimistic locks after lock error, start_ts: {}, error: {}",
-                        self.timestamp.version(),
-                        rollback_error
-                    );
+                    log::warn!(error:% = rollback_error; "[kv] pessimisticRollback failed.");
                 }
             }
             if deadlock_is_retryable {
@@ -6082,12 +6012,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         if keys.is_empty() {
             return Ok(());
         }
-        debug!(
-            "rolling back pessimistic lock, start_ts: {}, for_update_ts: {}, keys: {}",
-            start_version.version(),
-            for_update_ts.version(),
-            keys.len(),
-        );
 
         let mut req = new_pessimistic_rollback_request(
             keys.clone().into_iter(),
@@ -6246,10 +6170,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             let lock_expired = lock_expired.clone();
             let min_commit_ts = min_commit_ts.clone();
             let start_ts_for_log = start_ts.version();
-            debug!(
-                "starting auto-heartbeat, start_ts: {}, interval: {:?}",
-                start_ts_for_log, heartbeat_interval,
-            );
             tokio::spawn(crate::async_util::with_background_rpc_context(
                 crate::async_util::Cancellation::default(),
                 async move {
@@ -6281,27 +6201,36 @@ impl<PdC: PdClient> Transaction<PdC> {
                         let now = match store_oracle.get_timestamp(&rpc).await {
                             Ok(now) => now,
                             Err(error) => {
-                                warn!(
-                                    "auto-heartbeat get timestamp failed, start_ts: {}: {}",
-                                    start_ts_for_log, error
-                                );
+                                log::warn!(error:% = error; "keepAlive get tso fail");
                                 break;
                             }
                         };
                         let uptime = crate::oracle::extract_physical(now.version())
                             .saturating_sub(crate::oracle::extract_physical(start_ts.version()))
                             .max(0) as u64;
-                        if uptime > crate::config::get_global_config().max_txn_ttl {
+                        let max_txn_ttl = crate::config::get_global_config().max_txn_ttl;
+                        if uptime > max_txn_ttl {
+                            log::info!(
+                                txnStartTS = start_ts_for_log,
+                                uptime = uptime,
+                                maxTxnTTL = max_txn_ttl,
+                                isPipelinedTxn = false;
+                                "ttlManager live up to its lifetime"
+                            );
                             if let Some(lock_expired) = &lock_expired {
                                 lock_expired.store(1, atomic::Ordering::Release);
                             }
                             break;
                         }
-                        let mut request = new_heart_beat_request(
-                            start_ts.clone(),
-                            primary_key.clone(),
-                            uptime.saturating_add(managed_lock_ttl()),
+                        let new_ttl = uptime.saturating_add(managed_lock_ttl());
+                        log::info!(
+                            startTS = start_ts_for_log,
+                            newTTL = new_ttl,
+                            isPipelinedTxn = false;
+                            "send TxnHeartBeat"
                         );
+                        let mut request =
+                            new_heart_beat_request(start_ts.clone(), primary_key.clone(), new_ttl);
                         request.min_commit_ts = min_commit_ts.get();
                         request.is_txn_file = is_txn_file;
                         commit_settings
@@ -6328,13 +6257,22 @@ impl<PdC: PdClient> Transaction<PdC> {
                             Ok(_) => consecutive_failures = 0,
                             Err(error) => {
                                 consecutive_failures = consecutive_failures.saturating_add(1);
+                                log::debug!(
+                                    error:% = error,
+                                    txnStartTS = start_ts_for_log,
+                                    isPipelinedTxn = false;
+                                    "send TxnHeartBeat failed"
+                                );
                                 if heartbeat_error_stops_immediately(&error)
                                     || consecutive_failures > 10
                                 {
-                                    warn!(
-                                    "auto-heartbeat stopped, start_ts: {}, consecutive failures: {}: {}",
-                                    start_ts_for_log, consecutive_failures, error
-                                );
+                                    log::warn!(
+                                        error:% = error,
+                                        consecutiveFailure = consecutive_failures,
+                                        txnStartTS = start_ts_for_log,
+                                        isPipelinedTxn = false;
+                                        "stop TxnHeartBeat"
+                                    );
                                     break;
                                 }
                             }
@@ -6432,11 +6370,6 @@ impl<PdC: PdClient> std::fmt::Display for Transaction<PdC> {
 
 impl<PdC: PdClient> Drop for Transaction<PdC> {
     fn drop(&mut self) {
-        debug!(
-            "dropping transaction, start_ts: {}, status: {:?}",
-            self.timestamp.version(),
-            self.get_status()
-        );
         self.pipelined_cancellation.cancel();
         if std::thread::panicking() {
             return;
@@ -6447,14 +6380,8 @@ impl<PdC: PdClient> Drop for Transaction<PdC> {
                 CheckLevel::Panic => {
                     panic!("dropping an active transaction (start_ts: {start_ts}). Consider commit or rollback it.")
                 }
-                CheckLevel::Warn => {
-                    warn!("dropping an active transaction, start_ts: {start_ts}. Consider commit or rollback it.")
-                }
-                // Even with the drop check disabled, leave a debug breadcrumb so
-                // an unfinished transaction is not completely silent.
-                CheckLevel::None => {
-                    debug!("dropping an active transaction (drop check disabled), start_ts: {start_ts}")
-                }
+                // client-go logs nothing for an unfinished transaction.
+                CheckLevel::Warn | CheckLevel::None => {}
             }
         }
         self.set_status(TransactionStatus::Dropped);
@@ -6545,10 +6472,35 @@ async fn wait_scatter_region_finish<PdC: PdClient>(rpc: Arc<PdC>, region_id: u64
     }
 }
 
+/// client-go `executeTxnFile`'s `steps`: each step's name and the time since
+/// the previous one, rendered as Go's `step.String()`.
+struct TxnFileSteps {
+    start: Instant,
+    rendered: Vec<String>,
+}
+
+impl TxnFileSteps {
+    fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            rendered: Vec::new(),
+        }
+    }
+
+    fn done(&mut self, name: &str) {
+        let now = Instant::now();
+        self.rendered.push(format!(
+            "{name}:{}",
+            crate::logutil::go_duration(now - self.start)
+        ));
+        self.start = now;
+    }
+}
+
 async fn pre_split_large_mutation_regions<PdC: PdClient>(
     rpc: Arc<PdC>,
     mutations: &[kvrpcpb::Mutation],
-    operation: &str,
+    start_ts: u64,
 ) {
     let detect_threshold = PRE_SPLIT_DETECT_THRESHOLD.load(atomic::Ordering::Relaxed) as usize;
     let size_threshold = PRE_SPLIT_SIZE_THRESHOLD.load(atomic::Ordering::Relaxed) as usize;
@@ -6564,16 +6516,20 @@ async fn pre_split_large_mutation_regions<PdC: PdClient>(
             .await
         {
             Ok(region) => region,
-            Err(error) => {
-                warn!("{operation} pre-split lookup failed: {error}");
-                return;
-            }
+            // client-go returns the grouping error without a log line.
+            Err(_) => return,
         };
         let mut end = start + 1;
         while end < mutations.len() && region.contains(&Key::from(mutations[end].key.clone())) {
             end += 1;
         }
         if end - start >= detect_threshold {
+            log::info!(
+                region = region.id(),
+                "mutations count" = end - start,
+                startTS = start_ts;
+                "2PC detect large amount of mutations on a single region"
+            );
             let mut accumulated = 0_usize;
             let mut split_keys = Vec::new();
             for mutation in &mutations[start..end] {
@@ -6599,17 +6555,29 @@ async fn pre_split_large_mutation_regions<PdC: PdClient>(
                             if let Err(error) =
                                 wait_scatter_region_finish(rpc.clone(), region_id).await
                             {
-                                warn!(
-                                    "{operation} wait scatter region failed for region {region_id}: {error}"
+                                log::warn!(
+                                    regionID = region_id,
+                                    error:% = error,
+                                    startTS = start_ts;
+                                    "2PC wait scatter region failed"
                                 );
                             }
                         }
                         rpc.invalidate_region_cache(region.ver_id()).await;
                     }
-                    Ok(_) => warn!("{operation} scatter failed for region {}", region.id()),
-                    Err(error) => warn!(
-                        "{operation} pre-split failed for region {}: {error}",
-                        region.id()
+                    Ok(_) => log::warn!(
+                        regionID = region.id(),
+                        "keys count" = end - start,
+                        error = "scatter region failed",
+                        startTS = start_ts;
+                        "2PC split regions failed"
+                    ),
+                    Err(error) => log::warn!(
+                        regionID = region.id(),
+                        "keys count" = end - start,
+                        error:% = error,
+                        startTS = start_ts;
+                        "2PC split regions failed"
                     ),
                 }
             }
@@ -7151,13 +7119,27 @@ impl<PdC: PdClient> Committer<PdC> {
             pre();
         }
         let start_timestamp = committer.start_version.version();
+        let is_pessimistic = matches!(committer.options.kind, TransactionKind::Pessimistic(_));
+        let is_one_pc = committer.options.try_one_pc;
         let cancellation = committer.lock_resolver_context.background_cancellation();
         tokio::spawn(async move {
-            if let Err(error) = committer.rollback(prewritten, cancellation).await {
-                warn!(
-                    "failed to clean up transaction after commit error, start_ts: {}, error: {}",
-                    start_timestamp, error
-                );
+            match committer.rollback(prewritten, cancellation).await {
+                Err(error) => log::info!(
+                    error:% = error,
+                    txnStartTS = start_timestamp,
+                    isPessimistic = is_pessimistic,
+                    isOnePC = is_one_pc;
+                    "2PC cleanup failed"
+                ),
+                Ok(()) if prewritten => log::info!(
+                    txnStartTS = start_timestamp,
+                    isPessimistic = is_pessimistic;
+                    "2PC prewrite lock cleanup finished"
+                ),
+                Ok(()) => log::debug!(
+                    txnStartTS = start_timestamp;
+                    "2PC pessimistic lock rollback finished"
+                ),
             }
             if let Some(post) = hooks.post {
                 post();
@@ -7211,11 +7193,7 @@ impl<PdC: PdClient> Committer<PdC> {
                 )
                 .await
                 {
-                    warn!(
-                        "failed to clean up transaction after commit error, start_ts: {}, error: {}",
-                        self.start_version.version(),
-                        error
-                    );
+                    log::error!(error:% = error; "txn file: rollback on error failed");
                 }
             }
         }
@@ -7286,11 +7264,6 @@ impl<PdC: PdClient> Committer<PdC> {
     where
         F: FnOnce() + Send,
     {
-        debug!(
-            "committing (2pc), start_ts: {}",
-            self.start_version.version()
-        );
-
         let killed = self
             .settings
             .variables
@@ -7431,6 +7404,9 @@ impl<PdC: PdClient> Committer<PdC> {
         }
         let secondary = self.clone();
         let secondary_commit_ts = commit_ts.clone();
+        let async_commit = self.options.async_commit;
+        let session_id = self.settings.session_id;
+        let start_ts = self.start_version.version();
         let hooks = self.settings.lifecycle_hooks.clone();
         if let Some(pre) = &hooks.pre {
             pre();
@@ -7441,8 +7417,24 @@ impl<PdC: PdClient> Committer<PdC> {
                 .flatten()
                 .is_some();
             if !skip_async_commit {
+                let commit_ts = secondary_commit_ts.version();
                 if let Err(error) = secondary.commit_secondary(secondary_commit_ts).await {
-                    log::warn!("Failed to commit secondary keys: {}", error);
+                    if async_commit {
+                        log::warn!(
+                            sessionID = session_id,
+                            startTS = start_ts,
+                            commitTS = commit_ts,
+                            error:% = error;
+                            "2PC async commit failed"
+                        );
+                    } else {
+                        log::debug!(
+                            session = session_id,
+                            "action type" = "commit",
+                            error:% = error;
+                            "2PC async doActionOnBatches"
+                        );
+                    }
                 }
             }
             if let Some(post) = hooks.post {
@@ -7528,12 +7520,10 @@ impl<PdC: PdClient> Committer<PdC> {
                 if let Some(pre) = hooks.pre {
                     pre();
                 }
-                if let Err(error) = secondary
+                // `finish_pipelined_locks` logs a failure as client-go does.
+                let _ = secondary
                     .finish_pipelined_locks(secondary_commit_timestamp.version())
-                    .await
-                {
-                    warn!("failed to resolve pipelined transaction locks: {error}");
-                }
+                    .await;
                 if let Some(post) = hooks.post {
                     post();
                 }
@@ -7572,11 +7562,8 @@ impl<PdC: PdClient> Committer<PdC> {
                 .build()
             {
                 Ok(runtime) => runtime,
-                Err(error) => {
+                Err(_) => {
                     failed.store(true, atomic::Ordering::Release);
-                    warn!(
-                        "failed to start pipelined heartbeat runtime, start_ts: {start_ts}: {error}"
-                    );
                     return;
                 }
             };
@@ -7601,10 +7588,20 @@ impl<PdC: PdClient> Committer<PdC> {
                                 // terminal heartbeat failure. Pipelined DML cannot
                                 // keep flushing after any such primary rejection.
                                 let terminal = heartbeat_error_stops_immediately(&error);
-                                warn!(
-                                    "pipelined heartbeat failed, start_ts: {start_ts}, consecutive failures: {consecutive_failures}: {error}"
+                                log::debug!(
+                                    error:% = error,
+                                    txnStartTS = start_ts,
+                                    isPipelinedTxn = true;
+                                    "send TxnHeartBeat failed"
                                 );
                                 if terminal || consecutive_failures > 10 {
+                                    log::warn!(
+                                        error:% = error,
+                                        consecutiveFailure = consecutive_failures,
+                                        txnStartTS = start_ts,
+                                        isPipelinedTxn = true;
+                                        "stop TxnHeartBeat"
+                                    );
                                     failed.store(true, atomic::Ordering::Release);
                                     break;
                                 }
@@ -7620,7 +7617,13 @@ impl<PdC: PdClient> Committer<PdC> {
     /// and the TTL manager must be closed without sending another heartbeat.
     async fn send_pipelined_heartbeat(&self) -> Result<bool> {
         let primary = self.primary_key.clone().ok_or(Error::NoPrimaryKey)?;
-        let now = self.store_timestamp().await?;
+        let now = match self.store_timestamp().await {
+            Ok(now) => now,
+            Err(error) => {
+                log::warn!(error:% = error; "keepAlive get tso fail");
+                return Err(error);
+            }
+        };
         let uptime = crate::oracle::extract_physical(now.version()).saturating_sub(
             crate::oracle::extract_physical(self.start_version.version()),
         );
@@ -7628,21 +7631,26 @@ impl<PdC: PdClient> Committer<PdC> {
             .max_txn_ttl
             .max(MAX_PIPELINED_TXN_TTL.load(atomic::Ordering::Relaxed));
         if uptime > maximum_lifetime as i64 {
-            info!(
-                "pipelined TTL manager reached its maximum lifetime, start_ts: {}, uptime_ms: {}",
-                self.start_version.version(),
-                uptime
+            log::info!(
+                txnStartTS = self.start_version.version(),
+                uptime = uptime,
+                maxTxnTTL = crate::config::get_global_config().max_txn_ttl,
+                isPipelinedTxn = true;
+                "ttlManager live up to its lifetime"
             );
             return Ok(true);
         }
         self.pipelined_state
             .min_commit_ts
             .try_update(now.version(), WriteAccessLevel::Ttl);
-        let mut request = new_heart_beat_request(
-            self.start_version.clone(),
-            primary,
-            self.start_instant.elapsed().as_millis() as u64 + managed_lock_ttl(),
+        let new_ttl = self.start_instant.elapsed().as_millis() as u64 + managed_lock_ttl();
+        log::info!(
+            startTS = self.start_version.version(),
+            newTTL = new_ttl,
+            isPipelinedTxn = true;
+            "send TxnHeartBeat"
         );
+        let mut request = new_heart_beat_request(self.start_version.clone(), primary, new_ttl);
         request.min_commit_ts = self.pipelined_state.min_commit_ts.get();
         self.settings
             .apply_heartbeat_request(&mut request, MAX_WRITE_EXECUTION_TIME);
@@ -7663,12 +7671,7 @@ impl<PdC: PdClient> Committer<PdC> {
         .plan()
         .execute()
         .await?;
-        if let Err(error) = self.broadcast_pipelined_status(0, false, false, true).await {
-            warn!(
-                "broadcast pipelined heartbeat status failed, start_ts: {}: {error}",
-                self.start_version.version()
-            );
-        }
+        let _ = self.broadcast_pipelined_status(0, false, false, true).await;
         Ok(false)
     }
 
@@ -8026,6 +8029,7 @@ impl<PdC: PdClient> Committer<PdC> {
             txn_status: vec![status],
             ..Default::default()
         };
+        let status_text = crate::error::protobuf_text(&request.txn_status[0]);
         let cluster_id = self.rpc.cluster_id().await;
         self.settings
             .apply_broadcast_request(&mut request, cluster_id);
@@ -8045,24 +8049,40 @@ impl<PdC: PdClient> Committer<PdC> {
         .plan()
         .execute()
         .await
+        .inspect_err(|error| {
+            // client-go logs each store's failure in `broadcastToAllStores`.
+            log::info!(status:% = status_text, error:% = error; "broadcast txn status failed");
+        })
     }
 
     async fn finish_pipelined_locks(&self, commit_version: u64) -> Result<()> {
         let rolled_back = commit_version == 0;
-        if let Err(error) = self
+        let _ = self
             .broadcast_pipelined_status(commit_version, false, rolled_back, true)
-            .await
-        {
-            warn!("broadcast pipelined transaction status failed: {error}");
+            .await;
+        let status = if rolled_back { "rollback" } else { "commit" };
+        if let Err(error) = self.resolve_pipelined_locks(commit_version).await {
+            log::error!(
+                "txn-status" = status,
+                startTS = self.start_version.version(),
+                commitTS = commit_version,
+                session = self.settings.session_id,
+                error:% = error;
+                "[pipelined dml] resolve flushed locks failed"
+            );
+            return Err(error);
         }
-        self.resolve_pipelined_locks(commit_version).await?;
+        log::info!(
+            "txn-status" = status,
+            startTS = self.start_version.version(),
+            commitTS = commit_version,
+            session = self.settings.session_id;
+            "[pipelined dml] resolve flushed locks done"
+        );
         tokio::time::sleep(pipelined_broadcast_grace_period()).await;
-        if let Err(error) = self
+        let _ = self
             .broadcast_pipelined_status(commit_version, true, rolled_back, false)
-            .await
-        {
-            warn!("broadcast completed pipelined transaction status failed: {error}");
-        }
+            .await;
         Ok(())
     }
 
@@ -8114,6 +8134,44 @@ impl<PdC: PdClient> Committer<PdC> {
     where
         F: FnOnce() + Send,
     {
+        let mut steps = TxnFileSteps::new();
+        let result = self
+            .execute_txn_file_steps(discard_values, &mut steps)
+            .await;
+        // client-go `executeTxnFile`'s deferred summary line.
+        let commit_ts = self
+            .txn_file_commit_timestamp
+            .as_ref()
+            .map_or(0, TimestampExt::version);
+        let request_source = self.settings.request_source.get_request_source();
+        match &result {
+            Ok(_) => log::info!(
+                startTS = self.start_version.version(),
+                commitTS = commit_ts,
+                requestSource:% = request_source,
+                steps:serde = steps.rendered;
+                "execute txn file finished"
+            ),
+            Err(error) => log::info!(
+                startTS = self.start_version.version(),
+                commitTS = commit_ts,
+                error:% = error,
+                requestSource:% = request_source,
+                steps:serde = steps.rendered;
+                "execute txn file finished"
+            ),
+        }
+        result
+    }
+
+    async fn execute_txn_file_steps<F>(
+        &mut self,
+        discard_values: &mut Option<F>,
+        steps: &mut TxnFileSteps,
+    ) -> Result<Option<Timestamp>>
+    where
+        F: FnOnce() + Send,
+    {
         let resource_accounting = self.before_execute_txn_file_resource_control().await?;
         let chunks = build_txn_chunks(
             &self.mutations,
@@ -8126,10 +8184,13 @@ impl<PdC: PdClient> Committer<PdC> {
                 "txn file: chunk writer returned no chunks".to_owned(),
             ));
         }
+        steps.done("build");
         self.txn_file_chunks = chunks.clone();
         self.pre_split_txn_file_regions(&chunks).await?;
+        steps.done("pre-split");
         self.execute_txn_file_action(&chunks, TxnFileAction::Prewrite)
             .await?;
+        steps.done("prewrite");
 
         let commit_timestamp = self.prepare_txn_file_commit_timestamp().await?;
         self.txn_file_commit_timestamp = Some(commit_timestamp.clone());
@@ -8140,6 +8201,7 @@ impl<PdC: PdClient> Committer<PdC> {
             .execute_txn_file_action(&chunks, TxnFileAction::Commit)
             .await;
         self.normalize_txn_file_commit_result(commit_result)?;
+        steps.done("commit");
         self.committed = true;
         self.after_execute_txn_file_resource_control(resource_accounting);
         Ok(Some(commit_timestamp))
@@ -8217,10 +8279,10 @@ impl<PdC: PdClient> Committer<PdC> {
             }
             Err(error) => {
                 crate::stats::increment_txn_file_error("accounting");
-                warn!(
-                    "txn file: resource control accounting failed after commit, start_ts: {}, error: {}",
-                    self.start_version.version(),
-                    error
+                log::warn!(
+                    txnStartTS = self.start_version.version(),
+                    error:% = error;
+                    "txn file: resource control accounting failed after commit"
                 );
             }
         }
@@ -8413,7 +8475,12 @@ impl<PdC: PdClient> Committer<PdC> {
                         )
                         .await
                     {
-                        warn!("txn file secondary failed: {error}");
+                        log::warn!(
+                            startTS = secondary.start_version.version(),
+                            action:% = action,
+                            error:% = error;
+                            "txn file: async execute secondaries failed"
+                        );
                     }
                     if let Some(post) = hooks.post {
                         post();
@@ -8801,10 +8868,10 @@ impl<PdC: PdClient> Committer<PdC> {
                 return Ok(false);
             };
             if let Some(expired) = key_error.commit_ts_expired.as_ref() {
-                info!(
-                    "2PC commitTS rejected by TiKV, retry with a newer commitTS, txnStartTS: {}, info: {}",
-                    self.start_version.version(),
-                    crate::logutil::hex(expired)
+                log::info!(
+                    txnStartTS = self.start_version.version(),
+                    info:% = crate::logutil::hex(expired);
+                    "2PC commitTS rejected by TiKV, retry with a newer commitTS"
                 );
                 let primary = self.primary_key.as_ref().ok_or(Error::NoPrimaryKey)?;
                 if !batch.is_primary || expired.key.as_slice() != <&[u8]>::from(primary) {
@@ -9124,7 +9191,7 @@ impl<PdC: PdClient> Committer<PdC> {
         pre_split_large_mutation_regions(
             self.rpc.clone(),
             &self.mutations,
-            "2PC large transaction",
+            self.start_version.version(),
         )
         .await;
     }
@@ -9163,11 +9230,6 @@ impl<PdC: PdClient> Committer<PdC> {
         source_retry_owner: Option<Arc<tokio::sync::Mutex<RetryBackoffer>>>,
     ) -> Result<Option<Timestamp>> {
         let undetermined_retry_owner = source_retry_owner.clone();
-        debug!(
-            "prewriting, start_ts: {}, mutations: {}",
-            self.start_version.version(),
-            self.mutations.len()
-        );
         let primary_lock = self.primary_key.clone().unwrap();
         let elapsed = self.start_instant.elapsed().as_millis() as u64;
         let mut lock_ttl = self.calc_txn_lock_ttl().saturating_add(elapsed);
@@ -9546,11 +9608,6 @@ impl<PdC: PdClient> Committer<PdC> {
     where
         F: FnOnce() + Send,
     {
-        debug!(
-            "committing primary, start_ts: {}, commit_ts: {}",
-            self.start_version.version(),
-            commit_version.version(),
-        );
         let primary_key = self.primary_key.clone().ok_or(Error::NoPrimaryKey)?;
         if let Some(discard_values) = discard_values.take() {
             discard_values();
@@ -9663,11 +9720,6 @@ impl<PdC: PdClient> Committer<PdC> {
         };
         self.undetermined = primary_undetermined.load(atomic::Ordering::SeqCst);
         if let Err(error) = &result {
-            debug!(
-                "commit primary error: {:?}, start_ts: {}",
-                error,
-                self.start_version.version()
-            );
             if has_undetermined_region_error(error) {
                 self.undetermined = true;
             }
@@ -9776,16 +9828,21 @@ impl<PdC: PdClient> Committer<PdC> {
                     Some(Error::KeyError(key_err)) => {
                         if let Some(expired) = key_err.commit_ts_expired {
                             // Ref: https://github.com/tikv/client-go/blob/tidb-8.5/txnkv/transaction/commit.go
-                            info!(
-                                "2PC commit_ts rejected by TiKV, retry with a newer commit_ts, start_ts: {}, info: {}",
-                                self.start_version.version(),
-                                crate::logutil::hex(&expired)
+                            log::info!(
+                                txnStartTS = self.start_version.version(),
+                                info:% = crate::logutil::hex(&expired);
+                                "2PC commitTS rejected by TiKV, retry with a newer commitTS"
                             );
 
                             let primary_key = self.primary_key.as_ref().unwrap();
                             if primary_key != expired.key.as_ref() {
-                                error!("2PC commit_ts rejected by TiKV, but the key is not the primary key, start_ts: {}, key: {}, primary: {}",
-                                    self.start_version.version(), format_key_for_log(&expired.key), format_key_for_log(primary_key));
+                                log::error!(
+                                    txnStartTS = self.start_version.version(),
+                                    key:% = crate::redact::key(&expired.key),
+                                    primary:% = crate::redact::key(primary_key),
+                                    batchIsPrimary = true;
+                                    "2PC commitTS rejected by TiKV, but the key is not the primary key"
+                                );
                                 return Err(Error::StringError("2PC commitTS rejected by TiKV, but the key is not the primary key".to_string()));
                             }
 
@@ -9841,11 +9898,6 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn commit_secondary_in_background(self, commit_version: Timestamp) -> Result<()> {
-        debug!(
-            "committing secondary keys, start_ts: {}, mutations: {}",
-            self.start_version.version(),
-            self.mutations.len()
-        );
         let start_version = self.start_version.clone();
         let mutations_len = self.mutations.len();
         let primary_only = mutations_len == 1;
@@ -9869,10 +9921,6 @@ impl<PdC: PdClient> Committer<PdC> {
                             "failpoint: before-commit-secondary return error".to_owned(),
                         ))
                     } else {
-                        debug!(
-                            "failpoint: before-commit-secondary truncate mutation {} -> {}",
-                            mutations_len, new_len
-                        );
                         Ok(new_len)
                     }
                 });
@@ -10051,11 +10099,6 @@ impl<PdC: PdClient> Committer<PdC> {
         prewritten: bool,
         source_retry_owner: Option<Arc<tokio::sync::Mutex<RetryBackoffer>>>,
     ) -> Result<()> {
-        debug!(
-            "rolling back (2pc), start_ts: {}, prewritten: {}",
-            self.start_version.version(),
-            prewritten
-        );
         fail_point!("before-rollback", |_| {
             Err(Error::StringError(
                 "failpoint: before-rollback return error".to_owned(),
@@ -10063,9 +10106,7 @@ impl<PdC: PdClient> Committer<PdC> {
         });
         if self.settings.pipelined.enable {
             if self.pipelined_state.generation == 0 {
-                if let Err(error) = self.broadcast_pipelined_status(0, true, true, true).await {
-                    warn!("broadcast completed pipelined rollback status failed: {error}");
-                }
+                let _ = self.broadcast_pipelined_status(0, true, true, true).await;
                 return Ok(());
             }
             return self.finish_pipelined_locks(0).await;
@@ -18167,12 +18208,26 @@ mod tests {
     }
 
     // A minimal capturing logger (no extra dependency) used to assert that
-    // transaction lifecycle logs carry the txn's `start_ts`.
+    // client-go's log lines arrive with their structured fields, as TiDB's
+    // `log` bridge receives them: "message key=value ...".
     static CAPTURED_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
     static LOGGER: CaptureLogger = CaptureLogger;
     static LOGGER_INIT: Once = Once::new();
 
     struct CaptureLogger;
+
+    struct CaptureFields<'a>(&'a mut String);
+
+    impl<'kvs> log::kv::VisitSource<'kvs> for CaptureFields<'_> {
+        fn visit_pair(
+            &mut self,
+            key: log::kv::Key<'kvs>,
+            value: log::kv::Value<'kvs>,
+        ) -> Result<(), log::kv::Error> {
+            self.0.push_str(&format!(" {key}={value}"));
+            Ok(())
+        }
+    }
 
     impl log::Log for CaptureLogger {
         fn enabled(&self, _metadata: &log::Metadata) -> bool {
@@ -18180,8 +18235,10 @@ mod tests {
         }
 
         fn log(&self, record: &log::Record) {
+            let mut line = format!("{} {}", record.level(), record.args());
+            let _ = record.key_values().visit(&mut CaptureFields(&mut line));
             if let Ok(mut logs) = CAPTURED_LOGS.lock() {
-                logs.push(record.args().to_string());
+                logs.push(line);
             }
         }
 
@@ -18198,17 +18255,24 @@ mod tests {
         });
     }
 
+    /// client-go logs a failed commit's cleanup as "2PC prewrite lock cleanup
+    /// finished" with zap fields `txnStartTS` and `isPessimistic`.
     #[tokio::test]
-    async fn commit_logs_start_ts() {
+    async fn commit_cleanup_logs_client_go_line_with_fields() {
         install_capture_logger();
-        CAPTURED_LOGS.lock().unwrap().clear();
 
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |req: &dyn Any| {
                 if req.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some() {
-                    Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
+                    Ok(Box::new(kvrpcpb::PrewriteResponse {
+                        errors: vec![kvrpcpb::KeyError {
+                            abort: "abort for the log test".to_owned(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>)
                 } else {
-                    Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>)
+                    Ok(Box::<kvrpcpb::BatchRollbackResponse>::default() as Box<dyn Any>)
                 }
             },
         )));
@@ -18219,17 +18283,31 @@ mod tests {
         let mut txn = Transaction::new(
             Timestamp::from_version(start_ts),
             pd_client,
-            TransactionOptions::new_optimistic(),
+            TransactionOptions::new_optimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::None),
             Keyspace::Disable,
         );
         txn.put("key1".to_owned(), "value").await.unwrap();
-        txn.commit().await.unwrap();
+        assert!(txn.commit().await.is_err());
 
-        let logs = CAPTURED_LOGS.lock().unwrap();
-        assert!(
-            logs.iter()
-                .any(|line| line.contains("start_ts") && line.contains(&start_ts.to_string())),
-            "expected a lifecycle log carrying start_ts {start_ts}; captured: {logs:?}"
+        let expected = format!(
+            "INFO 2PC prewrite lock cleanup finished txnStartTS={start_ts} isPessimistic=false"
+        );
+        let abort = "WARN 2PC failed error=tikv aborts txn: abort for the log test";
+        for _ in 0..100 {
+            {
+                let logs = CAPTURED_LOGS.lock().unwrap();
+                if logs.iter().any(|line| line == &expected) {
+                    assert!(logs.iter().any(|line| line == abort), "{logs:?}");
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!(
+            "expected {expected:?}; captured: {:?}",
+            CAPTURED_LOGS.lock().unwrap()
         );
     }
 

@@ -548,8 +548,13 @@ impl RetryClient<Cluster> {
                     };
                     let observe = connection.prepare_service_mode(&cluster.read().await.0, timeout);
                     if let Err(error) = observe.await {
+                        let urls = cluster.read().await.0.service_urls();
+                        log::warn!(
+                            "sorted-urls":serde = urls,
+                            error:% = error;
+                            "[pd] failed to update service mode"
+                        );
                         refresh.members_changed.notify_one();
-                        log::warn!("PD service mode observation: {error}");
                     }
                 }
             };
@@ -567,7 +572,7 @@ impl RetryClient<Cluster> {
                         refresh_timestamp_cached(&cluster, &connection, &refresh, timeout, None)
                             .await
                     {
-                        log::warn!("PD service discovery refresh: {error}");
+                        log::warn!(error:% = error; "[tso] update connection contexts failed");
                     }
                 }
             };
@@ -588,7 +593,12 @@ impl RetryClient<Cluster> {
                         refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None, false)
                             .await
                     {
-                        log::warn!("PD membership refresh: {error}");
+                        let urls = cluster.read().await.0.service_urls();
+                        log::warn!(
+                            "sorted-urls":serde = urls,
+                            error:% = error;
+                            "[pd] failed to update member"
+                        );
                     }
                 }
             };
@@ -635,9 +645,7 @@ impl RetryClient<Cluster> {
         self.cancellation.cancel();
         let mut worker = self.discovery_worker.lock().await;
         if let Some(handle) = worker.as_mut() {
-            if let Err(error) = handle.await {
-                log::error!("PD discovery worker failed: {error}");
-            }
+            let _ = handle.await;
             worker.take();
         }
         let _members = self.reconnect.members.lock().await;
@@ -1460,7 +1468,8 @@ pub(crate) fn spawn_watch_forwarder<S: WatchStream + 'static>(
         let mut stream = match opened {
             Ok(stream) => stream,
             Err(error) => {
-                log::warn!("watch stream open failed, error: {error}");
+                // pd-client returns the open error to its caller unlogged.
+                let _ = error;
                 return;
             }
         };
@@ -1474,11 +1483,12 @@ pub(crate) fn spawn_watch_forwarder<S: WatchStream + 'static>(
             let resp = match message {
                 Ok(Some(resp)) => resp,
                 Ok(None) => {
-                    log::warn!("watch stream closed");
+                    // Go's `Recv` reports the stream end as `io.EOF`.
+                    log::warn!(error = "EOF"; "watch stream closed");
                     return;
                 }
                 Err(error) => {
-                    log::warn!("watch stream closed, error: {error}");
+                    log::warn!(error:% = error; "watch stream closed");
                     return;
                 }
             };
@@ -1493,8 +1503,9 @@ pub(crate) fn spawn_watch_forwarder<S: WatchStream + 'static>(
                 if error.r#type == crate::proto::meta_storagepb::ErrorType::DataCompacted as i32 {
                     compact_revision = resp.compact_revision;
                     log::info!(
-                        "watch stream closed due to data compacted, required watch revision: {compact_revision}, err: {}",
-                        super::meta_storage_client::meta_storage_error_text(error)
+                        "required watch revision" = compact_revision,
+                        err:% = super::meta_storage_client::meta_storage_error_text(error);
+                        "watch stream closed due to data compacted"
                     );
                 }
             }

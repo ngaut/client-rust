@@ -202,11 +202,9 @@ impl TimestampOracle {
         let mut worker = self.inner.worker.lock().await;
         if let Some(handle) = worker.as_mut() {
             // Keep ownership through the await so a cancelled close can be retried.
-            match handle.await {
-                Ok(Ok(())) | Ok(Err(Error::ContextCanceled)) => {}
-                Ok(Err(error)) => log::debug!("TSO stream stopped: {error}"),
-                Err(error) => log::error!("TSO worker failed: {error}"),
-            }
+            // pd-client logs a stopped dispatcher as "[tso] exit tso
+            // dispatcher" (in `run_tso`), nothing at close.
+            let _ = handle.await;
             worker.take();
         }
     }
@@ -546,6 +544,11 @@ impl RpcConcurrency {
         if new_concurrency == self.concurrency {
             return;
         }
+        log::info!(
+            old = self.concurrency,
+            new = new_concurrency;
+            "[tso] switching tso rpc concurrency"
+        );
         self.concurrency = new_concurrency;
         // Go keeps `int` throughout, so its arithmetic carries a nonpositive
         // option into the token count unchanged and the dispatcher starves.

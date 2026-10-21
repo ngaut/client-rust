@@ -15,9 +15,6 @@ use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 
 use fail::fail_point;
-use log::debug;
-use log::error;
-use log::warn;
 use tokio::sync::{oneshot, Mutex, Notify, RwLock, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
@@ -621,7 +618,6 @@ async fn resolve_locks_with_context_body(
     context: ResolveLocksContext,
     read_lock_context: Option<&ReadLockContext>,
 ) -> Result<ResolveLocksResult> {
-    debug!("resolving locks");
     reject_shared_locks(&locks)?;
     // client-go ResolveLocksWithOpts returns before consulting the oracle when
     // no locks were supplied. This also keeps an empty retry path independent
@@ -1814,11 +1810,7 @@ async fn resolve_lock_with_retry_inner(
     retry_owner: Option<Arc<Mutex<crate::retry::RetryBackoffer>>>,
     server_side_async: bool,
 ) -> Result<RegionVerId> {
-    debug!("resolving locks with retry");
-    let mut attempt = 0;
     loop {
-        attempt += 1;
-        debug!("resolving locks: attempt {}", attempt);
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region_with_leader.ver_id();
         let mut request =
@@ -1905,13 +1897,17 @@ async fn resolve_lock_with_retry_inner(
                     }
                     Some(Error::KeyError(key_err)) => {
                         // Keyspace is not truncated here because we need full key info for logging.
-                        error!(
-                            "resolve_lock error, unexpected resolve err: {:?}, lock: {{key: {}, start_version: {}, commit_version: {}, is_txn_file: {}}}",
-                            key_err,
-                            format_key_for_log(key),
-                            start_version,
-                            commit_version,
-                            is_txn_file,
+                        log::error!(
+                            error:% = format!(
+                                "unexpected resolve err: {}, lock: key: {}, txnStartTS: {}, commitTS: {}, isTxnFile: {}",
+                                crate::error::protobuf_text(key_err.as_ref()),
+                                format_key_for_log(key),
+                                start_version,
+                                commit_version,
+                                is_txn_file,
+                            ),
+                            debugInfo:% = crate::error::extract_debug_info_string(&key_err);
+                            "resolveLock error"
                         );
                         return Err(Error::KeyError(key_err));
                     }
@@ -2658,13 +2654,8 @@ impl LockResolver {
                     .await?;
                 let commit_ts =
                     secondary_status.determine_commit_ts(txn_id, primary_min_commit_ts)?;
-                debug!(
-                    "secondary status, txn_id:{}, commit_ts:{:?}, fallback_2pc:{}",
-                    txn_id, commit_ts, secondary_status.fallback_2pc,
-                );
 
                 if commit_ts.is_none() {
-                    debug!("fallback to 2pc, txn_id:{}, check_txn_status again", txn_id);
                     let resolving_pessimistic_lock = is_pessimistic_lock(&l);
                     status = self
                         .check_txn_status(
@@ -2689,9 +2680,8 @@ impl LockResolver {
 
             match &status.kind {
                 TransactionStatusKind::Locked(_, lock_info) => {
-                    error!(
-                        "cleanup_locks fail to clean locks, this result is not expected. txn_id:{}",
-                        txn_id
+                    log::error!(
+                        "BatchResolveLocks fail to clean locks, this result is not expected!"
                     );
                     return Err(Error::ResolveLockError(vec![lock_info.clone()]));
                 }
@@ -2709,11 +2699,6 @@ impl LockResolver {
             return Ok(());
         }
 
-        debug!(
-            "batch resolve locks, region:{:?}, txn:{:?}",
-            store.region_with_leader.ver_id(),
-            txn_infos
-        );
         let mut txn_ids = Vec::with_capacity(txn_infos.len());
         let mut txn_info_vec = Vec::with_capacity(txn_infos.len());
         for (txn_id, (commit_ts, is_txn_file)) in txn_infos.into_iter() {
@@ -3044,9 +3029,11 @@ impl LockResolver {
                     let current = self.ctx.store_oracle.get_timestamp(&pd_client).await?;
                     self.last_status_timestamp = Some(current.clone());
                     if lock_until_expired_ms(lock.lock_version, lock.lock_ttl, current) <= 0 {
-                        warn!(
-                            "lock txn not found, lock has expired, lock {:?}, caller_start_ts {}, current_ts {}",
-                            lock, caller_start_ts, current_ts
+                        log::warn!(
+                            CallerStartTs = caller_start_ts,
+                            "lock str":% = Lock::from(lock),
+                            status = "ttl:0 commit_ts:0 action: NoAction";
+                            "lock txn not found, lock has expired"
                         );
                         rollback_if_not_exist = true;
                         continue;

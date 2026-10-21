@@ -4,8 +4,6 @@ use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use log::{debug, trace};
-
 use crate::pd::{PdClient, PdRpcClient};
 use crate::BoundRange;
 use crate::GetOption;
@@ -430,7 +428,6 @@ impl<PdC: PdClient> Snapshot<PdC> {
 
     /// Get the value associated with the given key.
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
-        trace!("invoking get request on snapshot");
         self.transaction.get(key).await
     }
 
@@ -441,13 +438,11 @@ impl<PdC: PdClient> Snapshot<PdC> {
         key: impl Into<Key>,
         options: &[GetOption],
     ) -> Result<Option<ValueEntry>> {
-        trace!("invoking get request with options on snapshot");
         self.transaction.get_with_options(key, options).await
     }
 
     /// Check whether the key exists.
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
-        debug!("invoking key_exists request on snapshot");
         self.transaction.key_exists(key).await
     }
 
@@ -456,7 +451,6 @@ impl<PdC: PdClient> Snapshot<PdC> {
         &mut self,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!("invoking batch_get request on snapshot");
         self.transaction.batch_get(keys).await
     }
 
@@ -524,7 +518,6 @@ impl<PdC: PdClient> Snapshot<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!("invoking scan request on snapshot");
         self.transaction.scan(range, limit).await
     }
 
@@ -534,7 +527,6 @@ impl<PdC: PdClient> Snapshot<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        debug!("invoking scan_keys request on snapshot");
         self.transaction.scan_keys(range, limit).await
     }
 
@@ -544,7 +536,6 @@ impl<PdC: PdClient> Snapshot<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = KvPair>> {
-        debug!("invoking scan_reverse request on snapshot");
         self.transaction.scan_reverse(range, limit).await
     }
 
@@ -554,7 +545,6 @@ impl<PdC: PdClient> Snapshot<PdC> {
         range: impl Into<BoundRange>,
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
-        debug!("invoking scan_keys_reverse request on snapshot");
         self.transaction.scan_keys_reverse(range, limit).await
     }
 }

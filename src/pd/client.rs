@@ -8,7 +8,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures::prelude::*;
 use futures::stream::BoxStream;
-use log::info;
 use tokio::sync::{watch, Mutex, RwLock};
 
 use crate::compat::stream_fn;
@@ -1119,10 +1118,9 @@ async fn probe_store_liveness(
     };
     match tokio::time::timeout(timeout, request).await {
         Ok(Ok(response)) => source_health_status_liveness(response),
-        Ok(Err(error)) => {
-            log::debug!("source store liveness check failed for {target}: {error}");
-            StoreLiveness::Unreachable
-        }
+        // client-go's health check logs these at its own loop (`[health
+        // check] ...`), not per probe.
+        Ok(Err(_)) => StoreLiveness::Unreachable,
         Err(_) => StoreLiveness::Unreachable,
     }
 }
@@ -1329,11 +1327,7 @@ where
                             client.region_cache.finish_store_health_check(store_id);
                             return;
                         }
-                        Err(error) => {
-                            log::debug!(
-                                "source store liveness re-resolution failed for {store_id}: {error}"
-                            );
-                        }
+                        Err(_) => {}
                     }
                 }
                 let liveness = client.request_store_liveness(&route).await;
@@ -2185,9 +2179,11 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
         if enable_preload {
             let mut backoffer =
                 RetryBackoffer::new(crate::async_util::Cancellation::default(), 20_000);
+            log::info!("preload region index start");
             if let Err(error) = self.region_cache.refresh_region_index(&mut backoffer).await {
-                log::debug!("preload region index failed: {error}");
+                log::error!(error:% = error; "refresh region index failed");
             }
+            log::info!("preload region index finish");
         }
         if regions_refresh_interval > 0 {
             self.region_cache
@@ -2323,7 +2319,6 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
         // client-go `recycleIdleConnArray`: an idle pool is closed by its
         // version (`CloseAddrVer`) and the request gets a new one.
         recycle_idle_kv_client(&self.kv_client_cache, address).await;
-        info!("connect to tikv endpoint: {:?}", address);
         let client = self
             .kv_connect
             .connect_with_store_type(address, store_type)

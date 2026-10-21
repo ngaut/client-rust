@@ -450,12 +450,12 @@ pub fn extract_key_error(key_error: &mut kvrpcpb::KeyError) -> BoxError {
     }
     if !key_error.abort.is_empty() {
         let error = MessageError(format!("tikv aborts txn: {}", key_error.abort));
-        log::warn!("2PC failed: {error}");
+        log::warn!(error:% = error; "2PC failed");
         return Box::new(error);
     }
     if let Some(too_large) = &key_error.commit_ts_too_large {
         let error = MessageError(format!("commit TS {} is too large", too_large.commit_ts));
-        log::warn!("2PC failed: {error}");
+        log::warn!(error:% = error; "2PC failed");
         return Box::new(error);
     }
     if let Some(not_found) = &key_error.txn_not_found {
@@ -572,8 +572,9 @@ impl<'a> Iterator for ErrorChain<'a> {
 pub fn log(error: Option<&(dyn StdError + 'static)>) {
     if let Some(error) = error {
         log::error!(
-            "encountered error: {error}; stack:\n{}",
-            Backtrace::force_capture()
+            error:% = error,
+            stack:% = Backtrace::force_capture();
+            "encountered error"
         );
     }
 }

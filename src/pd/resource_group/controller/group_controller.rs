@@ -535,8 +535,8 @@ impl GroupCostController {
             .limiter
             .reconfigure(now, cfg, &[reset_low_process()]);
         log::info!(
-            "[resource group controller] resource token bucket enter degraded mode, name: {}",
-            self.name
+            name = self.name.as_str();
+            "[resource group controller] resource token bucket enter degraded mode"
         );
     }
 

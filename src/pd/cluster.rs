@@ -4,12 +4,8 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
 use async_trait::async_trait;
-use log::error;
-use log::info;
-use log::warn;
 use tonic::transport::Channel;
 use tonic::IntoRequest;
 use tonic::Request;
@@ -1086,9 +1082,45 @@ impl Cluster {
         }
         self.client = Some(leader.client);
         self.keyspace_client = Some(leader.keyspace_client);
-        self.members = leader.members;
+        let previous = std::mem::replace(&mut self.members, leader.members);
+        self.log_member_changes(Some(&previous));
         self.update_region_members();
         Ok(())
+    }
+
+    /// The members' client URLs, sorted (pd-client `GetServiceURLs`).
+    pub(crate) fn service_urls(&self) -> Vec<String> {
+        sorted_member_urls(&self.members)
+    }
+
+    /// pd-client `updateURLs` and `switchLeader`'s log lines for a new
+    /// membership observation (`previous` is `None` at initialization).
+    fn log_member_changes(&self, previous: Option<&pdpb::GetMembersResponse>) {
+        let old_urls = previous.map(sorted_member_urls).unwrap_or_default();
+        let new_urls = sorted_member_urls(&self.members);
+        if old_urls != new_urls {
+            log::info!(
+                "old-sorted-urls":serde = old_urls,
+                "new-sorted-urls":serde = new_urls;
+                "[pd] update member urls"
+            );
+        }
+        let leader_url = |members: &pdpb::GetMembersResponse| {
+            members
+                .leader
+                .as_ref()
+                .and_then(|member| self.connection.member_url(member))
+                .unwrap_or_default()
+        };
+        let old_leader = previous.map(leader_url).unwrap_or_default();
+        let new_leader = leader_url(&self.members);
+        if old_leader != new_leader {
+            log::info!(
+                "new-leader" = new_leader.as_str(),
+                "old-leader" = old_leader.as_str();
+                "[pd] switch leader"
+            );
+        }
     }
 
     pub(crate) fn install_timestamp(
@@ -1171,6 +1203,16 @@ impl Drop for Cluster {
             connection.cancel();
         }
     }
+}
+
+fn sorted_member_urls(members: &pdpb::GetMembersResponse) -> Vec<String> {
+    let mut urls = members
+        .members
+        .iter()
+        .flat_map(|member| member.client_urls.iter().cloned())
+        .collect::<Vec<_>>();
+    urls.sort();
+    urls
 }
 
 fn tso_connection(
@@ -1321,22 +1363,19 @@ impl Connection {
             tso_order,
             retired_tso: Vec::new(),
         };
+        cluster.log_member_changes(None);
         cluster.update_region_members();
         Ok((cluster, meta))
     }
 
     // Re-establish connection with PD leader in asynchronous fashion.
     pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
-        warn!("updating pd client");
-        let start = Instant::now();
         let leader = self.prepare_reconnect(cluster, timeout).await?;
         cluster.install_leader(leader)?;
         let _ = self.prepare_service_mode(cluster, timeout).await;
         let timestamp = self.prepare_timestamp(cluster, timeout, None).await?;
         cluster.install_timestamp(timestamp, timeout)?.await;
         cluster.finish_retirement();
-
-        info!("updating PD client done, spent {:?}", start.elapsed());
         Ok(())
     }
 
@@ -1517,7 +1556,7 @@ impl Connection {
                 Ok(resp) => resp,
                 // Ignore failed PD node.
                 Err(e) => {
-                    warn!("PD endpoint {} failed to respond: {:?}", ep, e);
+                    log::warn!(url = ep.as_str(), error:% = e; "[pd] failed to get cluster id");
                     continue;
                 }
             };
@@ -1544,7 +1583,7 @@ impl Connection {
 
         match members {
             Some(members) => {
-                info!("All PD endpoints are consistent: {:?}", endpoints);
+                log::info!("cluster-id" = cluster_id.unwrap_or_default(); "[pd] init cluster id");
                 Ok(members)
             }
             _ => Err(internal_err!("PD cluster failed to respond")),
@@ -1685,7 +1724,7 @@ impl Connection {
                         break 'outer;
                     }
                     Err(e) => {
-                        error!("failed to connect to {}, {:?}", ep, e);
+                        log::info!(url = ep.as_str(), error:% = e; "[pd] cannot update member from this url");
                         continue;
                     }
                 }

@@ -597,7 +597,8 @@ impl RetryBackoffer {
     ) -> Result<BackoffWait, RetryError> {
         let reason = reason.into();
         if reason.contains(MISMATCH_CLUSTER_ID) {
-            log::error!("critical error: {reason}");
+            // client-go logs this at fatal and exits; `log` has no fatal level.
+            log::error!(error:% = reason; "critical error");
             return Err(RetryError::ClusterIdMismatch { reason });
         }
         if self.cancellation.is_cancelled() {
@@ -607,16 +608,8 @@ impl RetryBackoffer {
             return Err(RetryError::Noop { reason });
         }
         if self.budget_exhausted(config) {
-            let error = self.exhausted(reason);
-            log::warn!(
-                "{} backoffer.maxSleep {}ms is exceeded; total-backoff-times: {}; backoff-detail: {:?}; recent-errors: {:?}",
-                config,
-                self.max_sleep_ms,
-                self.total_backoff_times(),
-                self.times_by_type,
-                self.errors
-            );
-            return Err(error);
+            log::warn!("{}", self.exceeded_message(config));
+            return Err(self.exhausted(reason));
         }
         self.push_error(reason.clone());
         self.configs.push(config);
@@ -657,10 +650,13 @@ impl RetryBackoffer {
         }
         self.check_killed()?;
         log::debug!(
-            "retry later: totalSleep={}; excludedSleep={}; maxSleep={}; type={config}",
-            self.total_sleep_ms,
-            self.excluded_sleep_ms,
-            self.max_sleep_ms
+            error:% = self.errors.last().map_or("", |error| error.reason.as_str()),
+            totalSleep = self.total_sleep_ms,
+            excludedSleep = self.excluded_sleep_ms,
+            maxSleep = self.max_sleep_ms,
+            type:% = config,
+            txnStartTS = "null";
+            "retry later"
         );
         Ok(())
     }
@@ -668,7 +664,7 @@ impl RetryBackoffer {
     pub fn check_killed(&self) -> Result<(), RetryError> {
         let signal = self.variables.killed.load(Ordering::Acquire);
         if signal != 0 {
-            log::info!("backoff stops because a killed signal is received: signal={signal}");
+            log::info!(signal = signal; "backoff stops because a killed signal is received");
             return Err(QueryInterruptedWithSignalError { signal }.into());
         }
         if let Some(handler) = &self.variables.kill_signal_handler {
@@ -793,6 +789,46 @@ impl RetryBackoffer {
             })
     }
 
+    /// client-go `BackoffWithCfgAndMaxSleep`'s budget-exceeded message.
+    fn exceeded_message(&self, config: RetryConfig) -> String {
+        use std::fmt::Write as _;
+
+        let max_backoff_exceeded =
+            self.total_sleep_ms.saturating_sub(self.excluded_sleep_ms) >= self.max_sleep_ms;
+        let max_excluded_exceeded = config.excluded_budget_limit_ms.is_some_and(|limit| {
+            self.excluded_sleep_ms >= limit && self.excluded_sleep_ms >= self.max_sleep_ms
+        });
+        let mut message = format!(
+            "{config} backoffer.maxSleep {}ms is exceeded, errors:",
+            self.max_sleep_ms
+        );
+        for error in &self.errors {
+            let _ = write!(message, "\n{error}");
+        }
+        let detail = self
+            .times_by_type
+            .iter()
+            .map(|(name, times)| format!("{name}:{times}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = write!(
+            message,
+            "\ntotal-backoff-times: {}, backoff-detail: {detail}, maxBackoffTimeExceeded: {max_backoff_exceeded}, maxExcludedTimeExceeded: {max_excluded_exceeded}",
+            self.total_backoff_times()
+        );
+        if let Some(longest) = self.longest_sleep_config() {
+            let time = self
+                .sleep_by_type
+                .get(longest.name)
+                .copied()
+                .unwrap_or_default();
+            if time > 0 {
+                let _ = write!(message, "\nlongest sleep type: {longest}, time: {time}ms");
+            }
+        }
+        message
+    }
+
     fn exhausted(&self, reason: String) -> RetryError {
         let terminal = self
             .longest_sleep_config()
@@ -830,19 +866,14 @@ impl RetryBackoffer {
             .saturating_mul(2u64.saturating_pow(state.attempts))
             .min(config.cap_ms);
         let mut rng = thread_rng();
-        let delay = match config.jitter {
+        match config.jitter {
             Jitter::No => exponential,
             Jitter::Full => rng.gen_range(0..exponential),
             Jitter::Equal => exponential / 2 + rng.gen_range(0..(exponential / 2).max(1)),
             Jitter::Decorrelated => rng
                 .gen_range(base..state.last_sleep_ms.saturating_mul(3).max(base + 1))
                 .min(config.cap_ms),
-        };
-        log::debug!(
-            "backoff: base={base}; sleep={delay}; attempts={}",
-            state.attempts
-        );
-        delay
+        }
     }
 
     fn complete_delay(&mut self, config: RetryConfig, delay_ms: u64) {

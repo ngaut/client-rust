@@ -489,6 +489,7 @@ impl BatchPendingResponses {
             if stats.oldest_wait.is_none_or(|oldest| wait > oldest) {
                 stats.oldest_id = Some(*id);
                 stats.oldest_wait = Some(wait);
+                stats.oldest_received_by_tikv = !unconfirmed;
             }
         }
         stats
@@ -701,6 +702,8 @@ impl BatchPendingResponses {
 pub(crate) struct PendingBatchRequestStats {
     pub(crate) oldest_id: Option<u64>,
     pub(crate) oldest_wait: Option<std::time::Duration>,
+    /// client-go `batchRequestReceivedByTiKV(stats.oldestEntry)`.
+    pub(crate) oldest_received_by_tikv: bool,
     pub(crate) slow_count: usize,
     pub(crate) slow_unconfirmed_count: usize,
     pub(crate) hanging_count: usize,

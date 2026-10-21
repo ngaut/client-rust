@@ -15,7 +15,6 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt,
 };
-use log::debug;
 use rand::Rng;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::Notify;
@@ -291,6 +290,24 @@ pub fn change_pd_region_meta_circuit_breaker_settings(
     apply: impl FnOnce(&mut PdRegionMetaCircuitBreakerSettings),
 ) {
     PD_REGION_META_CIRCUIT_BREAKER.change_settings(apply);
+}
+
+/// zap's `zap.Any` of `[]*metapb.StoreLabel`: the JSON array Go reflects.
+fn go_store_labels(labels: &[metapb::StoreLabel]) -> String {
+    let labels = labels
+        .iter()
+        .map(|label| {
+            let mut object = serde_json::Map::new();
+            if !label.key.is_empty() {
+                object.insert("key".to_owned(), label.key.clone().into());
+            }
+            if !label.value.is_empty() {
+                object.insert("value".to_owned(), label.value.clone().into());
+            }
+            serde_json::Value::Object(object)
+        })
+        .collect::<Vec<_>>();
+    serde_json::Value::Array(labels).to_string()
 }
 
 async fn pd_region_meta_call<T>(call: impl Future<Output = Result<T>>) -> Result<T> {
@@ -575,6 +592,16 @@ pub(crate) enum StoreResolveState {
 }
 
 impl StoreResolveState {
+    /// client-go `resolveState.String()`.
+    fn go_name(self) -> &'static str {
+        match self {
+            Self::Unresolved => "unresolved",
+            Self::Resolved => "resolved",
+            Self::NeedCheck => "needCheck",
+            Self::Tombstone => "tombstone",
+        }
+    }
+
     fn from_encoded(value: u8) -> Self {
         match value {
             0 => Self::Unresolved,
@@ -757,15 +784,42 @@ impl CachedStore {
         self.resolve_state.store(state as u8, Ordering::Release);
     }
 
+    /// client-go `changeResolveStateTo`: move `from` to `to`, logging the
+    /// transition as client-go does; `false` when another state intervened.
+    fn change_resolve_state(&self, from: StoreResolveState, to: StoreResolveState) -> bool {
+        match self.resolve_state.compare_exchange(
+            from as u8,
+            to as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                log::info!(
+                    store = self.meta.id,
+                    addr = self.meta.address.as_str(),
+                    from = from.go_name(),
+                    to = to.go_name(),
+                    "liveness-state" = self.go_liveness();
+                    "change store resolve state"
+                );
+                true
+            }
+            Err(current) => current == to as u8,
+        }
+    }
+
+    /// client-go `livenessState.String()` of the cached liveness.
+    fn go_liveness(&self) -> &'static str {
+        if self.unreachable_since.lock().unwrap().is_some() {
+            "unreachable"
+        } else {
+            "reachable"
+        }
+    }
+
     fn mark_need_check(&self) -> bool {
-        self.resolve_state
-            .compare_exchange(
-                StoreResolveState::Resolved as u8,
-                StoreResolveState::NeedCheck as u8,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
+        self.resolve_state() != StoreResolveState::NeedCheck
+            && self.change_resolve_state(StoreResolveState::Resolved, StoreResolveState::NeedCheck)
     }
 
     fn update_metadata(&mut self, meta: Store) {
@@ -1133,7 +1187,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     result = cache.refresh_region_index(&mut backoffer) => result,
                 };
                 if let Err(error) = result {
-                    debug!("periodic region-cache refresh failed: {error}");
+                    log::error!(error:% = error; "refresh region cache failed");
                 }
             }
         });
@@ -1252,7 +1306,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     result = cache.insert_missing_stores() => result,
                 };
                 if let Err(error) = result {
-                    debug!("periodic store-list refresh failed: {error}");
+                    log::info!(error:% = error; "refresh full store list failed");
                 }
             }
         }));
@@ -1278,9 +1332,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             })
             .collect::<Vec<_>>();
         for store_id in store_ids {
-            if let Err(error) = self.refresh_store_by_id(store_id).await {
-                debug!("failed to re-resolve store {store_id}: {error}");
-            }
+            // `fetch_and_update_store` logs a reResolve failure as client-go.
+            let _ = self.refresh_store_by_id(store_id).await;
         }
     }
 
@@ -1300,7 +1353,6 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     continue;
                 }
                 if store.address.is_empty() {
-                    debug!("ignoring store {} with an empty PD address", store.id);
                     cache.insert(store.id, CachedStore::unresolved(store.id));
                     continue;
                 }
@@ -1344,11 +1396,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 Some(store_id)
             }
             Err(error) if is_store_not_found_error(&error) => {
+                log::info!(storeID = store_id; "clean up store metrics");
                 crate::stats::remove_store_metrics(store_id);
                 Some(store_id)
             }
             Err(error) => {
-                debug!("cannot confirm stale store {store_id}: {error}");
+                log::info!(storeID = store_id, error:% = error; "cannot confirm store state");
                 None
             }
         }
@@ -1371,7 +1424,19 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let store = match self.inner_client.clone().get_store(store_id).await {
             Ok(store) => store,
             Err(error) if is_store_not_found_error(&error) => None,
-            Err(error) => return Err(error),
+            Err(error) => {
+                // client-go `reResolve`; an initial resolve returns the error.
+                let re_resolve = self
+                    .store_cache
+                    .read()
+                    .unwrap()
+                    .get(&store_id)
+                    .is_some_and(|cached| cached.resolve_state() != StoreResolveState::Unresolved);
+                if re_resolve {
+                    log::error!(id = store_id, error:% = error; "loadStore from PD failed");
+                }
+                return Err(error);
+            }
         };
         let mut cache = self.store_cache.write().unwrap();
         let cached = cache
@@ -1380,6 +1445,11 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let Some(store) = store.filter(|store| !is_tombstone_store(store)) else {
             if advance_epoch_for_tombstone && cached.resolve_state() != StoreResolveState::Tombstone
             {
+                log::info!(
+                    store = store_id,
+                    addr = cached.meta.address.as_str();
+                    "invalidate regions in removed store"
+                );
                 cached.epoch.fetch_add(1, Ordering::AcqRel);
             }
             cached.set_resolve_state(StoreResolveState::Tombstone);
@@ -1391,11 +1461,26 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 "empty store({store_id}) address"
             )));
         }
-        if cached.resolve_state() == StoreResolveState::Unresolved
-            || cached.meta.address != store.address
+        let previous = cached.resolve_state();
+        if previous == StoreResolveState::Unresolved {
+            cached.update_metadata(store);
+            cached.change_resolve_state(previous, StoreResolveState::Resolved);
+        } else if cached.meta.address != store.address
             || !store_labels_are_same(&cached.meta.labels, &store.labels)
         {
+            log::info!(
+                store = store_id,
+                "old-addr" = cached.meta.address.as_str(),
+                "old-labels":% = go_store_labels(&cached.meta.labels),
+                "old-liveness" = cached.go_liveness(),
+                "new-addr" = store.address.as_str(),
+                "new-labels":% = go_store_labels(&store.labels);
+                "store metadata(address or labels) changed, updating store"
+            );
             cached.update_metadata(store);
+            cached.set_resolve_state(StoreResolveState::Resolved);
+        } else {
+            cached.change_resolve_state(previous, StoreResolveState::Resolved);
         }
         cached.set_resolve_state(StoreResolveState::Resolved);
         cached.update_liveness_metric();
@@ -2026,7 +2111,19 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             };
             let valid_regions = regions
                 .into_iter()
-                .filter(|region| region.leader.as_ref().is_some_and(|leader| leader.id != 0))
+                .filter(|region| {
+                    let has_leader = region.leader.as_ref().is_some_and(|leader| leader.id != 0);
+                    if !has_leader {
+                        // client-go `handleRegionInfos`.
+                        log::warn!(
+                            regionId = region.region.id,
+                            startKey:% = crate::redact::key(&region.region.start_key),
+                            endKey:% = crate::redact::key(&region.region.end_key);
+                            "filter out region without leader"
+                        );
+                    }
+                    has_leader
+                })
                 .collect::<Vec<_>>();
             if valid_regions.is_empty() {
                 crate::stats::increment_stale_region_from_pd();
@@ -2226,6 +2323,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         mut count: usize,
         backoffer: &mut RetryBackoffer,
     ) -> Result<Vec<RegionWithLeader>> {
+        log::warn!("range-num" = ranges.len(); "batch scan regions fallback to scan regions");
         let mut result = Vec::with_capacity(ranges.len());
         let mut last_region: Option<RegionWithLeader> = None;
         for range in ranges {
@@ -2754,7 +2852,6 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 .get_mut(&ver_id)
                 .expect("cached region disappeared while write-locked");
             region.region.leader = Some(leader);
-            debug!("updated cached region leader, region: {:?}", ver_id);
         } else {
             let region = cache
                 .ver_id_to_region
@@ -2766,10 +2863,6 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             if cache.id_to_ver_id.get(&id) == Some(&ver_id) {
                 cache.id_to_ver_id.remove(&id);
             }
-            debug!(
-                "invalidated cached region after NotLeader hint for unknown peer, region: {:?}",
-                ver_id
-            );
         }
 
         Ok(())
@@ -2863,7 +2956,6 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             cache.ver_id_to_region.remove(&ver_id);
             cache.id_to_ver_id.remove(&id);
             cache.key_to_ver_id.remove(&start_key);
-            debug!("invalidated region cache entry, region: {:?}", ver_id);
         }
     }
 
@@ -3330,14 +3422,19 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 .tick_with_feedback(now, async {
                     if liveness == StoreLiveness::Reachable && !address.is_empty() {
                         if let Some(callback) = callback.as_ref() {
-                            crate::stats::increment_health_feedback_operation(store_id, "active_update");
+                            crate::stats::increment_health_feedback_operation(
+                                store_id,
+                                "active_update",
+                            );
                             if let Err(error) = callback(address).await {
                                 crate::stats::increment_health_feedback_operation(
                                     store_id,
                                     "active_update_err",
                                 );
-                                debug!(
-                                    "active health feedback request failed for store {store_id}: {error}"
+                                log::warn!(
+                                    storeID = store_id,
+                                    error:% = error;
+                                    "actively request health feedback info from store got error"
                                 );
                             }
                         }

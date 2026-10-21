@@ -2239,14 +2239,15 @@ impl BatchCommandsDispatcher {
         let stats = self.pending.inspect(now);
         if let (Some(oldest_id), Some(oldest_wait)) = (stats.oldest_id, stats.oldest_wait) {
             log::warn!(
-                "BatchCommands detects slow pending request: target={}, request_id={}, wait={:?}, slow_count={}, slow_unconfirmed_count={}, hanging_count={}, hanging_unconfirmed_count={}",
-                self.client.batch_metric_target(),
-                oldest_id,
-                oldest_wait,
-                stats.slow_count,
-                stats.slow_unconfirmed_count,
-                stats.hanging_count,
-                stats.hanging_unconfirmed_count,
+                target:% = self.client.batch_metric_target(),
+                requestID = oldest_id,
+                waitTime:% = crate::logutil::go_duration(oldest_wait),
+                receivedByTiKV = stats.oldest_received_by_tikv,
+                slowCount = stats.slow_count,
+                slowUnconfirmedCount = stats.slow_unconfirmed_count,
+                hangingCount = stats.hanging_count,
+                hangingUnconfirmedCount = stats.hanging_unconfirmed_count;
+                "batchRecvLoop detects slow pending request"
             );
         }
     }
@@ -3717,6 +3718,7 @@ mod tests {
             super::super::command::PendingBatchRequestStats {
                 oldest_id: Some(1),
                 oldest_wait: Some(Duration::from_secs(7 * 60 + 30)),
+                oldest_received_by_tikv: false,
                 slow_count: 5,
                 slow_unconfirmed_count: 3,
                 hanging_count: 4,

@@ -685,10 +685,8 @@ impl<PdC: PdClient> StoreRuntime<PdC> {
                         runtime.safe_point.update(value, SystemTime::now());
                         delay = POLL_TXN_SAFE_POINT_INTERVAL;
                     }
-                    Err(error) => {
-                        log::debug!("transaction safe-point refresh failed: {error}");
-                        delay = POLL_TXN_SAFE_POINT_QUICK_REPEAT_INTERVAL;
-                    }
+                    // `load_txn_safe_point` logs its failure as client-go does.
+                    Err(_) => delay = POLL_TXN_SAFE_POINT_QUICK_REPEAT_INTERVAL,
                 }
             }
         });
@@ -705,7 +703,7 @@ impl<PdC: PdClient> StoreRuntime<PdC> {
                     return;
                 };
                 if let Err(error) = runtime.refresh_safe_ts().await {
-                    log::debug!("safe-TS refresh failed: {error}");
+                    log::debug!(error:% = error; "get resolved TS from PD failed");
                 }
             }
         });
@@ -855,17 +853,23 @@ where
     C: FnOnce() -> CF,
     CF: Future<Output = Result<u64>>,
 {
-    if !compatible_mode.load(Ordering::Acquire) {
+    if compatible_mode.load(Ordering::Acquire) {
+        log::debug!("GC states API is not available, which is possibly caused by cluster version < 9.0. Txn safe point updating will be fallen back to direct etcd reading.");
+    } else {
         match pd_load().await {
             Ok(safe_point) => {
                 crate::stats::increment_load_txn_safe_point("ok");
                 return Ok(safe_point);
             }
             Err(error) if is_unimplemented_gc_state(&error) => {
+                log::warn!(
+                    error:% = error;
+                    "GC states API is not available, which is possibly caused by cluster version < 9.0. Txn safe point updating will be fallen back to direct etcd reading."
+                );
                 compatible_mode.store(true, Ordering::Release);
-                log::warn!("PD GetGCState is unavailable; falling back to etcd safe point");
             }
             Err(error) => {
+                log::error!(error:% = error; "failed to load current txn safe point from PD");
                 crate::stats::increment_load_txn_safe_point("fail");
                 return Err(error);
             }
@@ -877,6 +881,10 @@ where
             Ok(safe_point)
         }
         Err(error) => {
+            log::error!(
+                error:% = error;
+                "failed to load current txn safe point from PD in compatible mode"
+            );
             crate::stats::increment_load_txn_safe_point("fail_compatible");
             Err(error)
         }

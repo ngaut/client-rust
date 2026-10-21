@@ -781,7 +781,7 @@ pub(crate) fn trace_exec_details_response(started_at: Instant, response: &dyn An
     }
 }
 
-fn format_go_duration(duration: Duration) -> String {
+pub(crate) fn format_go_duration(duration: Duration) -> String {
     let nanos = duration.as_nanos();
     if nanos == 0 {
         return "0s".to_owned();

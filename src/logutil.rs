@@ -302,6 +302,12 @@ fn go_field_name(json_name: &str) -> String {
     first.to_uppercase().chain(characters).collect()
 }
 
+/// zap's `zap.Duration` value as TiDB's logger encodes it (Go
+/// `time.Duration.String()`), for structured log fields.
+pub(crate) fn go_duration(duration: std::time::Duration) -> String {
+    crate::trace::format_go_duration(duration)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
