@@ -1112,6 +1112,28 @@ where
         }
     }
 
+    /// client-go `broadcastToAllStores`: one attempt per TiKV store, each
+    /// within `timeout`, every store's outcome reported separately.
+    pub fn broadcast_tikv_stores(
+        self,
+        timeout: Duration,
+    ) -> PlanBuilder<PdC, crate::request::plan::BroadcastTiKvStores<P, PdC>, Targetted> {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: crate::request::plan::BroadcastTiKvStores {
+                inner: self.plan,
+                pd_client: self.pd_client,
+                timeout,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
     /// Target every non-tombstone ordinary TiKV store, excluding TiFlash and
     /// TiFlash compute nodes as client-go's unsafe range destruction does.
     pub fn all_tikv_stores(

@@ -644,7 +644,7 @@ pub(crate) mod test_capture {
     pub(crate) fn install() {
         LOGGER_INIT.call_once(|| {
             let _ = log::set_logger(&LOGGER);
-            log::set_max_level(log::LevelFilter::Trace);
+            log::set_max_level(log::LevelFilter::Debug);
         });
     }
 

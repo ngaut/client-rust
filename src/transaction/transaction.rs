@@ -16,7 +16,6 @@ use tokio::time::Duration;
 
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
-use crate::backoff::DEFAULT_STORE_BACKOFF;
 use crate::interceptor::RpcInterceptorChain;
 use crate::interceptor::RpcInterceptorHandle;
 use crate::kv::{
@@ -126,6 +125,9 @@ fn prewrite_min_commit_ts(start_ts: u64, for_update_ts: u64, managed_min_commit_
         managed_min_commit_ts
     }
 }
+
+/// client-go `broadcastRpcTimeout`.
+const BROADCAST_RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn pipelined_broadcast_grace_period() -> Duration {
     if cfg!(test) {
@@ -2055,6 +2057,28 @@ impl<PdC: PdClient> Transaction<PdC> {
         ))
     }
 
+    /// client-go `KVSnapshot.Get`/`BatchGet`/`newScanner`'s ctx: the
+    /// statement ctx carrying `retry.TxnStartKey` = the snapshot version, so
+    /// every Backoffer of the read reports it. `None` when the active context
+    /// already is that ctx.
+    fn snapshot_read_trace_context(&self) -> Option<crate::trace::TraceContext> {
+        let version = self.snapshot_timestamp.version();
+        let statement = self.statement_trace_context();
+        let base = match statement {
+            Some(statement) => statement,
+            None => {
+                if crate::trace::with_active_trace_context(crate::retry::txn_start_ts_from_context)
+                    .flatten()
+                    == Some(version)
+                {
+                    return None;
+                }
+                crate::trace::current_trace_context()
+            }
+        };
+        Some(crate::retry::context_with_txn_start_ts(&base, version))
+    }
+
     /// Create a new 'get' request
     ///
     /// Once resolved this request will result in the fetching of the value associated with the
@@ -2076,7 +2100,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     pub async fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -2216,7 +2240,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<Option<ValueEntry>> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -2447,7 +2471,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     pub async fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -2497,7 +2521,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = KvPair>> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -2673,7 +2697,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<BTreeMap<Key, ValueEntry>> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -2862,7 +2886,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = KvPair>> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -3104,7 +3128,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = KvPair>> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -3158,7 +3182,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = Key>> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -3191,7 +3215,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = KvPair>> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -3221,7 +3245,7 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<impl Iterator<Item = Key>> {
         // The statement ctx's path boxes the operation (built lazily inside
         // the box), so the common path keeps the operation's own size.
-        match self.statement_trace_context() {
+        match self.snapshot_read_trace_context() {
             Some(statement) => {
                 crate::trace::with_trace_context(
                     statement,
@@ -7671,7 +7695,7 @@ impl<PdC: PdClient> Committer<PdC> {
         .plan()
         .execute()
         .await?;
-        let _ = self.broadcast_pipelined_status(0, false, false, true).await;
+        self.broadcast_pipelined_status(0, false, false, true).await;
         Ok(false)
     }
 
@@ -8009,13 +8033,17 @@ impl<PdC: PdClient> Committer<PdC> {
         Ok(())
     }
 
+    /// client-go `broadcastToAllStores`: the status goes to every TiKV store
+    /// asynchronously (`spawnWithStorePool`), one attempt per store within
+    /// `broadcastRpcTimeout`; each store's failure is logged with its id and
+    /// address and otherwise ignored.
     async fn broadcast_pipelined_status(
         &self,
         commit_version: u64,
         is_completed: bool,
         rolled_back: bool,
         include_min_commit_ts: bool,
-    ) -> Result<()> {
+    ) {
         let status = kvrpcpb::TxnStatus {
             start_ts: self.start_version.version(),
             min_commit_ts: include_min_commit_ts
@@ -8033,7 +8061,7 @@ impl<PdC: PdClient> Committer<PdC> {
         let cluster_id = self.rpc.cluster_id().await;
         self.settings
             .apply_broadcast_request(&mut request, cluster_id);
-        plan_with_keyspace_name(
+        let plan = plan_with_keyspace_name(
             self.rpc.clone(),
             self.keyspace,
             self.keyspace_name.as_deref(),
@@ -8044,21 +8072,32 @@ impl<PdC: PdClient> Committer<PdC> {
             ReplicaReadConfig::default(),
             request,
         )
-        .all_stores(DEFAULT_STORE_BACKOFF)
-        .merge(Collect)
-        .plan()
-        .execute()
-        .await
-        .inspect_err(|error| {
-            // client-go logs each store's failure in `broadcastToAllStores`.
-            log::info!(status:% = status_text, error:% = error; "broadcast txn status failed");
-        })
+        .broadcast_tikv_stores(BROADCAST_RPC_TIMEOUT)
+        .plan();
+        let broadcast = async move {
+            let results = match plan.execute().await {
+                Ok(results) => results,
+                // Go's region cache answers the store list without failing.
+                Err(_) => return,
+            };
+            for store in results {
+                if let Err(error) = store.result {
+                    log::info!(
+                        storeID = store.store_id,
+                        storeAddr = store.store_addr.as_str(),
+                        status:% = status_text,
+                        error:% = error;
+                        "broadcast txn status failed"
+                    );
+                }
+            }
+        };
+        tokio::spawn(crate::async_util::inherit_background_rpc_context(broadcast));
     }
 
     async fn finish_pipelined_locks(&self, commit_version: u64) -> Result<()> {
         let rolled_back = commit_version == 0;
-        let _ = self
-            .broadcast_pipelined_status(commit_version, false, rolled_back, true)
+        self.broadcast_pipelined_status(commit_version, false, rolled_back, true)
             .await;
         let status = if rolled_back { "rollback" } else { "commit" };
         if let Err(error) = self.resolve_pipelined_locks(commit_version).await {
@@ -8080,8 +8119,7 @@ impl<PdC: PdClient> Committer<PdC> {
             "[pipelined dml] resolve flushed locks done"
         );
         tokio::time::sleep(pipelined_broadcast_grace_period()).await;
-        let _ = self
-            .broadcast_pipelined_status(commit_version, true, rolled_back, false)
+        self.broadcast_pipelined_status(commit_version, true, rolled_back, false)
             .await;
         Ok(())
     }
@@ -10106,7 +10144,7 @@ impl<PdC: PdClient> Committer<PdC> {
         });
         if self.settings.pipelined.enable {
             if self.pipelined_state.generation == 0 {
-                let _ = self.broadcast_pipelined_status(0, true, true, true).await;
+                self.broadcast_pipelined_status(0, true, true, true).await;
                 return Ok(());
             }
             return self.finish_pipelined_locks(0).await;
@@ -18204,6 +18242,56 @@ mod tests {
         transaction.set_status(TransactionStatus::Committed);
 
         assert_eq!(*observed.lock().unwrap(), Some((77, true)));
+    }
+
+    /// client-go's `broadcastToAllStores` logs each TiKV store's failure on
+    /// its own line, with the store's id and address.
+    #[tokio::test]
+    async fn pipelined_broadcast_logs_each_failed_store() {
+        crate::logutil::test_capture::install();
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |req: &dyn Any| {
+                if req.is::<kvrpcpb::BroadcastTxnStatusRequest>() {
+                    return Err(Error::StringError(
+                        "broadcast refused for the log test".to_owned(),
+                    ));
+                }
+                panic!("unexpected request")
+            },
+        )));
+        let mut committer = source_test_committer(
+            pd_client,
+            Some(Key::from(b"k".to_vec())),
+            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+            TransactionOptions::new_optimistic(),
+            CommitSettings::default(),
+        );
+        committer.start_version = Timestamp::from_version(737_373);
+        committer
+            .broadcast_pipelined_status(737_380, true, false, false)
+            .await;
+        let expected = "INFO broadcast txn status failed storeID=0 storeAddr= status=start_ts:737373 commit_ts:737380 is_completed:true  error=broadcast refused for the log test";
+        crate::logutil::test_capture::wait_for(expected, |line| line == expected).await;
+    }
+
+    /// client-go's snapshot reads run under `context.WithValue(ctx,
+    /// retry.TxnStartKey, s.version)`; an already-scoped ctx is reused.
+    #[tokio::test]
+    async fn snapshot_reads_carry_txn_start_key() {
+        let txn = Transaction::new(
+            Timestamp::from_version(777),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let context = txn
+            .snapshot_read_trace_context()
+            .expect("a read outside any ctx gets one");
+        assert_eq!(crate::retry::txn_start_ts_from_context(&context), Some(777));
+        let reused =
+            crate::trace::with_trace_context(context, async { txn.snapshot_read_trace_context() })
+                .await;
+        assert!(reused.is_none());
     }
 
     /// client-go logs a failed commit's cleanup as "2PC prewrite lock cleanup

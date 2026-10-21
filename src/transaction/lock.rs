@@ -1057,11 +1057,8 @@ async fn resolve_locks_with_context_body(
                 continue;
             }
             let cleaned_region = resolve_lock_with_retry_inner(
-                &lock.key,
-                lock.lock_version,
+                &Lock::from(&lock),
                 commit_version,
-                lock.is_txn_file,
-                lock.txn_size,
                 force_lite,
                 pd_client.clone(),
                 keyspace,
@@ -1218,11 +1215,8 @@ async fn schedule_read_lock_cleanup(
         true,
         move |context| async move {
             resolve_lock_with_retry_inner(
-                &lock.key,
-                lock.lock_version,
+                &Lock::from(&lock),
                 commit_version,
-                lock.is_txn_file,
-                lock.txn_size,
                 false,
                 pd_client,
                 keyspace,
@@ -1768,12 +1762,21 @@ async fn resolve_lock_with_retry(
     ru_details: Option<Arc<crate::RuDetails>>,
     backoff: Backoff,
 ) -> Result<RegionVerId> {
-    resolve_lock_with_retry_inner(
-        key,
-        start_version,
-        commit_version,
-        is_txn_file,
+    let lock = Lock {
+        key: key.clone(),
+        primary: Vec::new(),
+        txn_id: start_version,
+        ttl: 0,
         txn_size,
+        lock_type: 0,
+        use_async_commit: false,
+        lock_for_update_ts: 0,
+        min_commit_ts: 0,
+        is_txn_file,
+    };
+    resolve_lock_with_retry_inner(
+        &lock,
+        commit_version,
         force_lite,
         pd_client,
         keyspace,
@@ -1791,12 +1794,11 @@ async fn resolve_lock_with_retry(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// client-go `LockResolver.resolveLock` for one lock (`l *Lock`), whose
+/// text its key-error line reports in full.
 async fn resolve_lock_with_retry_inner(
-    #[allow(clippy::ptr_arg)] key: &Vec<u8>,
-    start_version: u64,
+    lock: &Lock,
     commit_version: u64,
-    is_txn_file: bool,
-    txn_size: u64,
     force_lite: bool,
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
@@ -1810,6 +1812,8 @@ async fn resolve_lock_with_retry_inner(
     retry_owner: Option<Arc<Mutex<crate::retry::RetryBackoffer>>>,
     server_side_async: bool,
 ) -> Result<RegionVerId> {
+    let key = &lock.key;
+    let (start_version, is_txn_file, txn_size) = (lock.txn_id, lock.is_txn_file, lock.txn_size);
     loop {
         let store = pd_client.clone().store_for_key(key.into()).await?;
         let ver_id = store.region_with_leader.ver_id();
@@ -1899,12 +1903,9 @@ async fn resolve_lock_with_retry_inner(
                         // Keyspace is not truncated here because we need full key info for logging.
                         log::error!(
                             error:% = format!(
-                                "unexpected resolve err: {}, lock: key: {}, txnStartTS: {}, commitTS: {}, isTxnFile: {}",
+                                "unexpected resolve err: {}, lock: {}",
                                 crate::error::protobuf_text(key_err.as_ref()),
-                                format_key_for_log(key),
-                                start_version,
-                                commit_version,
-                                is_txn_file,
+                                lock,
                             ),
                             debugInfo:% = crate::error::extract_debug_info_string(&key_err);
                             "resolveLock error"
@@ -3916,6 +3917,65 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rollback_count.load(Ordering::SeqCst), 1);
+    }
+
+    /// client-go's `resolveLock` reports a key error with the whole lock's
+    /// `String()` (`unexpected resolve err: %s, lock: %v`).
+    #[tokio::test]
+    async fn resolve_lock_key_error_logs_the_full_lock_text() {
+        crate::logutil::test_capture::install();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |_: &dyn Any| {
+                Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                    error: Some(kvrpcpb::KeyError {
+                        abort: "resolve abort for the log test".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let lock = Lock {
+            key: vec![7],
+            primary: vec![6],
+            txn_id: 515_151,
+            ttl: 3000,
+            txn_size: 1,
+            lock_type: kvrpcpb::Op::Put as i32,
+            use_async_commit: false,
+            lock_for_update_ts: 0,
+            min_commit_ts: 9,
+            is_txn_file: false,
+        };
+        assert!(resolve_lock_with_retry_inner(
+            &lock,
+            0,
+            true,
+            client,
+            Keyspace::Disable,
+            None,
+            "",
+            None,
+            None,
+            None,
+            None,
+            OPTIMISTIC_BACKOFF,
+            None,
+            false,
+        )
+        .await
+        .is_err());
+        let expected = format!(
+            "ERROR resolveLock error error=unexpected resolve err: abort:\"resolve abort for the log test\" , lock: {lock} debugInfo="
+        );
+        assert!(
+            crate::logutil::test_capture::any(|line| line == expected),
+            "{expected:?} not in {:?}",
+            crate::logutil::test_capture::lines()
+        );
+        assert!(
+            expected.contains("primary: 06, txnStartTS: 515151, lockForUpdateTS:0, minCommitTs:9")
+        );
     }
 
     #[rstest::rstest]

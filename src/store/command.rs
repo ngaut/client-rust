@@ -460,14 +460,29 @@ impl BatchPendingResponses {
             .count()
     }
 
-    /// Mirrors `inspectPendingBatchRequests`: count old pending entries and
-    /// identify whether the stream has confirmed each one reached TiKV.
-    pub(crate) fn inspect(&self, now: std::time::Instant) -> PendingBatchRequestStats {
+    /// Mirrors `inspectPendingBatchRequests` for every pooled
+    /// `batchCommandsClient`: count old pending entries per connection and
+    /// identify whether the stream has confirmed each one reached TiKV. An
+    /// entry belongs to a client once it is published on that client's
+    /// stream (client-go's `c.batched`); unpublished entries are not counted.
+    pub(crate) fn inspect(
+        &self,
+        now: std::time::Instant,
+    ) -> std::collections::BTreeMap<usize, PendingBatchRequestStats> {
         const SLOW_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(30);
         const HANG_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(90);
 
-        let mut stats = PendingBatchRequestStats::default();
+        let mut by_connection = std::collections::BTreeMap::new();
         for (id, entry) in self.entries.lock().unwrap().iter() {
+            let Some(connection_index) = entry
+                .stream_metrics
+                .as_ref()
+                .map(|metrics| metrics.connection_index)
+            else {
+                continue;
+            };
+            let stats: &mut PendingBatchRequestStats =
+                by_connection.entry(connection_index).or_default();
             let wait = entry.telemetry.wait_duration(now);
             if wait < SLOW_THRESHOLD {
                 continue;
@@ -490,9 +505,13 @@ impl BatchPendingResponses {
                 stats.oldest_id = Some(*id);
                 stats.oldest_wait = Some(wait);
                 stats.oldest_received_by_tikv = !unconfirmed;
+                // client-go `entry.canceled`: the caller stopped waiting.
+                stats.oldest_canceled = entry.sender.is_closed();
+                stats.oldest_progress = entry.telemetry.progress(now);
             }
         }
-        stats
+        by_connection.retain(|_, stats| stats.slow_count != 0);
+        by_connection
     }
 
     pub(crate) fn register(
@@ -704,6 +723,10 @@ pub(crate) struct PendingBatchRequestStats {
     pub(crate) oldest_wait: Option<std::time::Duration>,
     /// client-go `batchRequestReceivedByTiKV(stats.oldestEntry)`.
     pub(crate) oldest_received_by_tikv: bool,
+    /// client-go `stats.oldestEntry.canceled`.
+    pub(crate) oldest_canceled: bool,
+    /// client-go `writeBatchCommandsEntryProgress(nil, stats.oldestEntry, checkTime)`.
+    pub(crate) oldest_progress: String,
     pub(crate) slow_count: usize,
     pub(crate) slow_unconfirmed_count: usize,
     pub(crate) hanging_count: usize,

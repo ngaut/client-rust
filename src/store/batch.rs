@@ -674,17 +674,31 @@ impl BatchRequestTelemetry {
     }
 
     fn timeout_reason(&self, timeout: Duration, now: Instant) -> String {
-        use std::fmt::Write;
-
         let mut out = format!(
-            "wait recvLoop timeout, timeout:{}, EntryProgress{{",
+            "wait recvLoop timeout, timeout:{}, ",
             crate::util::format_duration(timeout)
         );
+        self.write_progress(&mut out, now);
+        out
+    }
+
+    /// client-go `writeBatchCommandsEntryProgress(nil, entry, now).String()`.
+    pub(crate) fn progress(&self, now: Instant) -> String {
+        let mut out = String::new();
+        self.write_progress(&mut out, now);
+        out
+    }
+
+    /// client-go `writeBatchCommandsEntryProgress`: `EntryProgress{...}`.
+    fn write_progress(&self, out: &mut String, now: Instant) {
+        use std::fmt::Write;
+
+        out.push_str("EntryProgress{");
         let now_ns = self.elapsed_ns(now);
         let batched_ns = self.selected_after_arrival_ns.load(Ordering::Acquire);
         if batched_ns == 0 {
             out.push('}');
-            return out;
+            return;
         }
         let received_ns = self.received_after_arrival_ns.load(Ordering::Acquire);
         let (batch_size, mut sent_ns, first_response_ns) = self
@@ -752,7 +766,7 @@ impl BatchRequestTelemetry {
                 out.push_str(", ack:yes");
             }
             out.push('}');
-            return out;
+            return;
         }
         let _ = write!(
             out,
@@ -788,7 +802,6 @@ impl BatchRequestTelemetry {
             let _ = write!(out, ", fwd:{}", published.forwarded_host);
         }
         out.push('}');
-        out
     }
 
     pub(crate) fn complete(&self, error: Option<&Error>) {
@@ -2235,13 +2248,21 @@ impl BatchCommandsDispatcher {
             .fail_all(|| Error::StringError("batch client closed".to_owned()));
     }
 
+    /// client-go `batchConn.inspectPendingRequests`: one
+    /// `logPendingBatchRequests` line per pooled `batchCommandsClient`.
     fn inspect_pending_requests(&self, now: Instant) {
-        let stats = self.pending.inspect(now);
-        if let (Some(oldest_id), Some(oldest_wait)) = (stats.oldest_id, stats.oldest_wait) {
+        let target = self.client.batch_metric_target();
+        for (connection_index, stats) in self.pending.inspect(now) {
+            let (Some(oldest_id), Some(oldest_wait)) = (stats.oldest_id, stats.oldest_wait) else {
+                continue;
+            };
             log::warn!(
-                target:% = self.client.batch_metric_target(),
+                target:% = target,
+                conn:% = connection_index,
                 requestID = oldest_id,
                 waitTime:% = crate::logutil::go_duration(oldest_wait),
+                canceled = stats.oldest_canceled,
+                progress:% = stats.oldest_progress,
                 receivedByTiKV = stats.oldest_received_by_tikv,
                 slowCount = stats.slow_count,
                 slowUnconfirmedCount = stats.slow_unconfirmed_count,
@@ -2783,6 +2804,81 @@ mod tests {
         );
         policy.observe_batch_size(5);
         assert!((policy.average_batch_wait_size - 3.4).abs() < 1e-12);
+    }
+
+    /// client-go logs one `batchRecvLoop detects slow pending request` line
+    /// per pooled client, with its `conn`, the oldest entry's `canceled` flag
+    /// and its `EntryProgress`.
+    #[tokio::test]
+    async fn slow_pending_request_lines_are_per_connection_with_progress() {
+        crate::logutil::test_capture::install();
+        let clients = vec![
+            TikvClient::new(Channel::from_static("http://127.0.0.1:1").connect_lazy()),
+            TikvClient::new(Channel::from_static("http://127.0.0.1:2").connect_lazy()),
+        ];
+        let dispatcher = BatchCommandsDispatcher::new_with_concurrency(
+            KvRpcClient::new(clients, Duration::from_secs(1)),
+            8,
+            1,
+        );
+        let now = Instant::now();
+        let mut kept = Vec::new();
+        for (id, connection_index, wait_secs, cancel) in
+            [(71_001, 0, 40, false), (71_002, 1, 100, true)]
+        {
+            let arrived_at = now - Duration::from_secs(wait_secs);
+            let telemetry = Arc::new(BatchRequestTelemetry::new(0, arrived_at));
+            telemetry.mark_selected(arrived_at);
+            let (sender, receiver) = oneshot::channel();
+            dispatcher.pending.register_sender_with_telemetry(
+                id,
+                "",
+                sender,
+                telemetry,
+                Some(BatchStreamMetricLabels::new(
+                    String::new(),
+                    connection_index,
+                    false,
+                )),
+            );
+            if cancel {
+                drop(receiver);
+            } else {
+                kept.push(receiver);
+            }
+        }
+        dispatcher.inspect_pending_requests(now);
+        let lines = crate::logutil::test_capture::lines();
+        let line = |id: u64| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.starts_with("WARN batchRecvLoop detects slow pending request")
+                        && line.contains(&format!(" requestID={id} "))
+                })
+                .unwrap_or_else(|| panic!("no line for {id}: {lines:?}"))
+                .clone()
+        };
+        let first = line(71_001);
+        assert!(first.contains(" conn=0 requestID=71001 waitTime=40s canceled=false progress=EntryProgress{batch:1ns, send:40s} "), "{first}");
+        assert!(
+            first.ends_with(
+                "slowCount=1 slowUnconfirmedCount=1 hangingCount=0 hangingUnconfirmedCount=0"
+            ),
+            "{first}"
+        );
+        let second = line(71_002);
+        assert!(
+            second.contains(" conn=1 requestID=71002 waitTime=1m40s canceled=true "),
+            "{second}"
+        );
+        assert!(
+            second.ends_with(
+                "slowCount=1 slowUnconfirmedCount=1 hangingCount=1 hangingUnconfirmedCount=1"
+            ),
+            "{second}"
+        );
+        drop(kept);
     }
 
     #[tokio::test]
@@ -3713,12 +3809,23 @@ mod tests {
         register(4, Duration::from_secs(4 * 60), confirmed);
         register(5, Duration::from_secs(6 * 60), unconfirmed);
 
+        let mut inspected = pending.inspect(now);
+        assert_eq!(inspected.len(), 1);
+        let mut stats = inspected.remove(&0).unwrap();
+        assert!(
+            stats.oldest_progress.starts_with("EntryProgress{batch:"),
+            "{}",
+            stats.oldest_progress
+        );
+        stats.oldest_progress.clear();
         assert_eq!(
-            pending.inspect(now),
+            stats,
             super::super::command::PendingBatchRequestStats {
                 oldest_id: Some(1),
                 oldest_wait: Some(Duration::from_secs(7 * 60 + 30)),
                 oldest_received_by_tikv: false,
+                oldest_canceled: false,
+                oldest_progress: String::new(),
                 slow_count: 5,
                 slow_unconfirmed_count: 3,
                 hanging_count: 4,

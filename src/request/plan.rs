@@ -2723,6 +2723,81 @@ where
     }
 }
 
+/// client-go `broadcastToAllStores`'s sending half: one attempt per TiKV
+/// store (`GetStoresByType(tikvrpc.TiKV)`), at most `broadcastMaxConcurrency`
+/// at a time, each bounded by `broadcastRpcTimeout`. Every store's outcome is
+/// reported with its identity, since Go handles (logs) each store's failure on
+/// its own and never retries.
+pub struct BroadcastTiKvStores<P: Plan, PdC: PdClient> {
+    pub(super) inner: P,
+    pub pd_client: Arc<PdC>,
+    pub timeout: Duration,
+}
+
+impl<P: Plan, PdC: PdClient> Clone for BroadcastTiKvStores<P, PdC> {
+    fn clone(&self) -> Self {
+        BroadcastTiKvStores {
+            inner: self.inner.clone(),
+            pd_client: self.pd_client.clone(),
+            timeout: self.timeout,
+        }
+    }
+}
+
+/// client-go `broadcastMaxConcurrency`.
+pub const BROADCAST_MAX_CONCURRENCY: usize = 10;
+
+/// One store's outcome in [`BroadcastTiKvStores`].
+pub struct StoreBroadcastResult<T> {
+    /// client-go `target.StoreID()`.
+    pub store_id: StoreId,
+    /// client-go `target.GetAddr()`.
+    pub store_addr: String,
+    pub result: Result<T>,
+}
+
+#[async_trait]
+impl<P: Plan + StoreRequest, PdC: PdClient> Plan for BroadcastTiKvStores<P, PdC> {
+    type Result = Vec<StoreBroadcastResult<P::Result>>;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut stores = self.pd_client.clone().all_stores().await?;
+        stores.retain(|store| store.endpoint_type == crate::store::EndpointType::TiKv);
+        let permits = Arc::new(Semaphore::new(
+            BROADCAST_MAX_CONCURRENCY.min(stores.len()).max(1),
+        ));
+        let stores_len = stores.len();
+        let mut join_set = JoinSet::new();
+        for (idx, store) in stores.into_iter().enumerate() {
+            let mut plan = self.inner.clone();
+            plan.apply_store(&store);
+            let permits = permits.clone();
+            let timeout = self.timeout;
+            let (store_id, store_addr) = (store.id, store.target.clone());
+            join_set.spawn(crate::async_util::inherit_background_rpc_context(
+                crate::trace::inherit_client_spans(async move {
+                    let _permit = permits.acquire_owned().await;
+                    let result = match tokio::time::timeout(timeout, plan.execute()).await {
+                        Ok(result) => result,
+                        Err(_) => Err(Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                            "context deadline exceeded",
+                        ))),
+                    };
+                    (
+                        idx,
+                        StoreBroadcastResult {
+                            store_id,
+                            store_addr,
+                            result,
+                        },
+                    )
+                }),
+            ));
+        }
+        collect_join_set_results(join_set, stores_len, "broadcast_tikv_store").await
+    }
+}
+
 /// A technique for merging responses into a single result (with type `Out`).
 pub trait Merge<In>: Sized + Clone + Send + Sync + 'static {
     type Out: Send;
