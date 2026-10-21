@@ -222,6 +222,12 @@ impl Cluster {
         self.id
     }
 
+    /// Go `GetKeyspaceID()`: the TSO route's keyspace (the null keyspace
+    /// without one).
+    pub(crate) fn keyspace_id(&self) -> u32 {
+        self.route.keyspace_id
+    }
+
     pub fn get_region(
         &self,
         key: Vec<u8>,
@@ -380,6 +386,12 @@ impl Cluster {
         req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
         req.need_buckets = options.need_buckets;
         req.contain_all_key_range = options.output_must_contain_all_key_range;
+        // pd-client `getServiceClient`: router-service handling first.
+        let router_node = options
+            .allow_router_service_handle
+            .then(|| self.connection.router_node())
+            .flatten();
+        let routed_req = router_node.as_ref().map(|_| req.clone());
         let future = self.region_request(
             req,
             timeout,
@@ -392,6 +404,21 @@ impl Cluster {
             },
         );
         async move {
+            if let (Some(node), Some(req)) = (router_node, routed_req) {
+                let mut request = super::region_service::region_request(req, true);
+                request.set_timeout(timeout);
+                let routed =
+                    crate::proto::routerpb::router_client::RouterClient::new(node.channel.clone())
+                        .batch_scan_regions(request)
+                        .await
+                        .map(tonic::Response::into_inner);
+                // `serviceClient.NeedRetry`: any error falls back to PD.
+                if let Ok(response) = routed {
+                    if response.header.as_ref().is_none_or(|h| h.error.is_none()) {
+                        return Ok(response);
+                    }
+                }
+            }
             match future.await {
                 Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
                     Err(Error::Unimplemented)
@@ -526,6 +553,40 @@ impl Cluster {
         async move {
             let mut client = client.await?;
             let req = pd_request!(cluster_id, pdpb::GetAllStoresRequest);
+            req.send(&mut client, timeout).await
+        }
+    }
+
+    /// pd-client `GetAllStores(ctx, WithExcludeTombstone(),
+    /// WithAllowRouterServiceHandleStoreRequest())`: a healthy router node
+    /// answers (`routerpb.Router/GetAllStores`, as a follower-handled
+    /// request) when there is one; PD otherwise, and when the node fails
+    /// (`serviceClient.NeedRetry`).
+    pub fn get_all_stores_allowing_router_service(
+        &self,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::GetAllStoresResponse>> + Send + 'static {
+        let mut req = pd_request!(self.id, pdpb::GetAllStoresRequest);
+        req.exclude_tombstone_stores = true;
+        let node = self.connection.router_node();
+        let leader = self.rpc_client();
+        async move {
+            if let Some(node) = node {
+                let mut request = super::region_service::region_request(req.clone(), true);
+                request.set_timeout(timeout);
+                let routed =
+                    crate::proto::routerpb::router_client::RouterClient::new(node.channel.clone())
+                        .get_all_stores(request)
+                        .await
+                        .map(tonic::Response::into_inner);
+                match routed {
+                    Ok(response) if response.header.as_ref().is_none_or(|h| h.error.is_none()) => {
+                        return Ok(response)
+                    }
+                    _ => {}
+                }
+            }
+            let mut client = leader.await?;
             req.send(&mut client, timeout).await
         }
     }
@@ -881,6 +942,29 @@ impl Cluster {
 
     /// pd-client's resource-manager client over the PD leader (the resource
     /// manager is a PD service unless it runs as a microservice).
+    /// pd-client `resourceManagerReadClient`: the standalone resource
+    /// manager once discovered, PD otherwise.
+    fn resource_manager_read_client(
+        &self,
+    ) -> impl Future<
+        Output = Result<
+            crate::proto::resource_manager::resource_manager_client::ResourceManagerClient<Channel>,
+        >,
+    > + Send
+           + 'static {
+        let standalone = self.connection.resource_manager_service();
+        let pd = self.resource_manager_client();
+        async move {
+            match standalone {
+                Some((_, conn)) => Ok(
+                    crate::proto::resource_manager::resource_manager_client::ResourceManagerClient::new(conn),
+                ),
+                None => pd.await,
+            }
+        }
+    }
+
+    /// pd-client `resourceManagerWriteClient`: PD's serving member.
     fn resource_manager_client(
         &self,
     ) -> impl Future<
@@ -909,7 +993,8 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<Vec<crate::proto::resource_manager::ResourceGroup>>> + Send + 'static
     {
-        let client = self.resource_manager_client();
+        let client = self.resource_manager_read_client();
+        let connection = self.connection.clone();
         async move {
             let mut client = client.await?;
             let mut req = crate::proto::resource_manager::ListResourceGroupsRequest {
@@ -922,6 +1007,7 @@ impl Cluster {
                 .list_resource_groups(req)
                 .await
                 .map_err(|status| {
+                    connection.resource_manager_error_handler(&status);
                     internal_err!("get all resource group failed, {}", status.message())
                 })?
                 .into_inner();
@@ -1006,9 +1092,14 @@ impl Cluster {
         }
     }
 
-    /// The leader URL the resource-manager token stream connects to.
+    /// The URL the resource-manager token stream connects to: the
+    /// standalone resource manager once discovered, PD's leader otherwise
+    /// (Go `resourceManagerTokenClient`).
     pub(crate) fn resource_manager_leader_url(&self) -> Option<String> {
-        self.leader_url()
+        match self.connection.resource_manager_service() {
+            Some((url, _)) => Some(url),
+            None => self.leader_url(),
+        }
     }
 
     /// pd-client's resource-manager token client and the leader URL it uses.
@@ -1022,8 +1113,15 @@ impl Cluster {
     > + Send
            + 'static {
         let connection = self.connection.clone();
+        let standalone = self.connection.resource_manager_service();
         let leader = self.leader_url();
         async move {
+            if let Some((url, conn)) = standalone {
+                return Ok((
+                    crate::proto::resource_manager::resource_manager_client::ResourceManagerClient::new(conn),
+                    url,
+                ));
+            }
             let leader = leader.ok_or_else(|| internal_err!("no PD leader"))?;
             let channel = connection.channel(&leader).await?;
             Ok((
@@ -1046,7 +1144,8 @@ impl Cluster {
     ) -> impl Future<Output = Result<Option<crate::proto::resource_manager::ResourceGroup>>>
            + Send
            + 'static {
-        let client = self.resource_manager_client();
+        let client = self.resource_manager_read_client();
+        let connection = self.connection.clone();
         async move {
             let mut client = client.await?;
             let req = crate::proto::resource_manager::GetResourceGroupRequest {
@@ -1057,13 +1156,14 @@ impl Cluster {
             let response = match client.get_resource_group(req).await {
                 Ok(response) => response.into_inner(),
                 Err(status) => {
+                    connection.resource_manager_error_handler(&status);
                     return Err(Error::PdResourceGroup(
                         super::errs::ClientGetResourceGroupError {
                             resource_group_name: name,
                             cause: grpc_error_text(&status),
                             error: Some(Arc::new(status)),
                         },
-                    ))
+                    ));
                 }
             };
             if let Some(error) = response.error {
@@ -1429,6 +1529,15 @@ pub struct Connection {
     channels: Arc<ChannelCache>,
     // Initialization retries share probe selection before a Cluster exists.
     discovery: TsoDiscovery,
+    /// pd-client `innerClient.msDiscovery`: the router service discovery,
+    /// once the owning client has started it.
+    router_discovery: Arc<
+        std::sync::RwLock<Option<Arc<super::router_service_discovery::RouterServiceDiscovery>>>,
+    >,
+    /// pd-client `innerClient.resourceManagerDiscovery` (microservice mode).
+    rm_discovery: Arc<
+        std::sync::RwLock<Option<Arc<super::resource_manager_discovery::ResourceManagerDiscovery>>>,
+    >,
 }
 
 impl Connection {
@@ -1462,7 +1571,78 @@ impl Connection {
             security_mgr,
             channels: Arc::new(ChannelCache::default()),
             discovery: TsoDiscovery::default(),
+            router_discovery: Arc::default(),
+            rm_discovery: Arc::default(),
         }
+    }
+
+    /// Publishes (or clears) the resource manager discovery.
+    pub(crate) fn set_resource_manager_discovery(
+        &self,
+        discovery: Option<Arc<super::resource_manager_discovery::ResourceManagerDiscovery>>,
+    ) -> Option<Arc<super::resource_manager_discovery::ResourceManagerDiscovery>> {
+        std::mem::replace(&mut *self.rm_discovery.write().unwrap(), discovery)
+    }
+
+    /// The resource manager discovery, in microservice mode.
+    pub(crate) fn resource_manager_discovery(
+        &self,
+    ) -> Option<Arc<super::resource_manager_discovery::ResourceManagerDiscovery>> {
+        self.rm_discovery.read().unwrap().clone()
+    }
+
+    /// pd-client `resourceManagerErrorHandler`: an RPC error that suggests
+    /// the resource manager moved asks the discovery to look again.
+    pub(crate) fn resource_manager_error_handler(&self, status: &tonic::Status) {
+        let error = Error::GrpcAPI(status.clone());
+        if !super::resource_manager_discovery::should_update_rm_url(&error) {
+            return;
+        }
+        log::warn!(error:% = error; "[resource-manager] resource manager error");
+        if let Some(discovery) = self.resource_manager_discovery() {
+            discovery.schedule_update_service_url();
+        }
+    }
+
+    /// The standalone resource manager's (URL, connection), once discovered.
+    fn resource_manager_service(&self) -> Option<(String, Channel)> {
+        let discovery = self.resource_manager_discovery()?;
+        let conn = discovery.get_conn()?;
+        Some((discovery.get_service_url(), conn))
+    }
+
+    /// Publishes the router service discovery the owning client started.
+    pub(crate) fn set_router_discovery(
+        &self,
+        discovery: Option<Arc<super::router_service_discovery::RouterServiceDiscovery>>,
+    ) {
+        *self.router_discovery.write().unwrap() = discovery;
+    }
+
+    /// Go `msDiscovery.GetServiceClient()`: a healthy router node, if any.
+    fn router_node(&self) -> Option<Arc<super::router_service_discovery::RouterNode>> {
+        self.router_discovery
+            .read()
+            .unwrap()
+            .as_ref()
+            .and_then(|discovery| discovery.get_service_client())
+    }
+
+    /// Go `GetOrCreateGRPCConn` over the shared connection cache.
+    pub(crate) async fn get_or_create_channel(
+        &self,
+        url: &str,
+    ) -> std::result::Result<Channel, tonic::Status> {
+        self.channel(url).await
+    }
+
+    /// Go `RemoveClientConn` over the shared connection cache.
+    pub(crate) fn remove_channel(&self, url: &str) {
+        self.channels.remove(url);
+    }
+
+    pub(crate) fn tls_configured(&self) -> bool {
+        self.security_mgr.tls_configured()
     }
 
     pub async fn connect_cluster(

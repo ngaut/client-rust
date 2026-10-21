@@ -4087,3 +4087,42 @@ async fn check_monotonicity_keeps_the_maximum_across_overlaps() {
         line == "INFO [tso] keyspace group changed old-group-id=0 new-group-id=7"
     }));
 }
+
+/// pd-client's client-level discovery lines: the service mode it adopts
+/// (`[pd] service mode changed`), the router service discovery created at
+/// init, and the resource manager discovery created for microservice mode.
+#[tokio::test]
+async fn client_discovery_lines_follow_the_service_mode() {
+    crate::logutil::test_capture::install();
+    let pd = Server::start(Reply::Timestamp).await;
+    let tso = Server::start(Reply::Timestamp).await;
+    let client = RetryClient::connect(
+        &[pd.service.endpoint.clone()],
+        Arc::new(SecurityManager::default()),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    let pd_mode = "INFO [pd] service mode changed new-mode=PD_SVC_MODE";
+    crate::logutil::test_capture::wait_for(pd_mode, |line| line == pd_mode).await;
+    assert!(crate::logutil::test_capture::any(|line| line.starts_with(
+        "INFO [router service] created router service discovery cluster-id=42 "
+    )));
+    api_mode(&pd, &tso);
+    let api_mode_line = "INFO [pd] service mode changed new-mode=API_SVC_MODE";
+    tokio::time::timeout(Duration::from_secs(6), async {
+        while !crate::logutil::test_capture::any(|line| line == api_mode_line) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("API mode is adopted");
+    assert!(crate::logutil::test_capture::any(|line| {
+        line
+        == "INFO [resource-manager] created resource manager discovery cluster-id=42 discovery-key=/ms/42/resource_manager/primary"
+    }));
+    client.close().await;
+    assert!(crate::logutil::test_capture::any(
+        |line| line == "INFO [router service] is closed"
+    ));
+}

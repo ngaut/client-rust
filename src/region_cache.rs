@@ -1364,7 +1364,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// client-go `storeCacheUpdater.tick`: the full store list, retried
     /// once (with PD-leader-only handling in Go) before giving up.
     async fn insert_missing_stores(&self) -> Result<()> {
-        let stores = match self.inner_client.clone().get_all_stores().await {
+        let stores = match self
+            .inner_client
+            .clone()
+            .get_all_stores_allowing_router_service()
+            .await
+        {
             Ok(stores) => stores,
             Err(error) => {
                 log::info!(error:% = error; "refresh full store list failed");

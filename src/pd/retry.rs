@@ -146,6 +146,13 @@ pub trait RetryClientTrait {
 
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>>;
 
+    /// pd-client `GetAllStores(ctx, WithExcludeTombstone(),
+    /// WithAllowRouterServiceHandleStoreRequest())`, the store-list refresh's
+    /// first attempt. Clients without a router service answer from PD.
+    async fn get_all_stores_allowing_router_service(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
+        self.get_all_stores().await
+    }
+
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
     async fn get_min_timestamp(self: Arc<Self>) -> Result<Timestamp> {
@@ -360,6 +367,9 @@ pub struct RetryClient<Cl = Cluster> {
     initial_keyspace: Option<keyspacepb::KeyspaceMeta>,
     // pd-client's token dispatcher, created on the first token request.
     token_dispatcher: tokio::sync::OnceCell<super::resource_manager_client::TokenDispatcher>,
+    /// pd-client `innerClient.msDiscovery`.
+    router_discovery:
+        tokio::sync::Mutex<Option<Arc<super::router_service_discovery::RouterServiceDiscovery>>>,
 }
 
 impl<Cl> RetryClient<Cl> {
@@ -378,6 +388,7 @@ impl<Cl> RetryClient<Cl> {
             timeout,
             initial_keyspace: None,
             token_dispatcher: tokio::sync::OnceCell::new(),
+            router_discovery: tokio::sync::Mutex::new(None),
         }
     }
 }
@@ -526,7 +537,86 @@ impl RetryClient<Cluster> {
         client.connection = connection;
         client.initial_keyspace = initial_keyspace;
         client.start_discovery().await;
+        client.start_router_service_discovery().await;
         Ok(client)
+    }
+
+    /// A meta-storage read through this client's current cluster, of one key
+    /// or (`prefix`) of every key under it.
+    fn meta_get(
+        &self,
+        prefix: bool,
+    ) -> Arc<
+        dyn Fn(
+                Vec<u8>,
+            ) -> futures::future::BoxFuture<
+                'static,
+                Result<crate::proto::meta_storagepb::GetResponse>,
+            > + Send
+            + Sync,
+    > {
+        let meta_cluster = Arc::downgrade(&self.cluster);
+        let timeout = self.timeout;
+        Arc::new(move |key| {
+            let cluster = meta_cluster.clone();
+            async move {
+                let cluster = cluster.upgrade().ok_or(Error::ContextCanceled)?;
+                let request = {
+                    let guard = cluster.read().await;
+                    let request = crate::proto::meta_storagepb::GetRequest {
+                        header: Some(crate::proto::meta_storagepb::RequestHeader {
+                            cluster_id: guard.0.id(),
+                            ..Default::default()
+                        }),
+                        range_end: if prefix {
+                            super::meta_storage_client::get_prefix(&key)
+                        } else {
+                            Vec::new()
+                        },
+                        key,
+                        ..Default::default()
+                    };
+                    guard.0.meta_storage_get(request, timeout)
+                };
+                request.await
+            }
+            .boxed()
+        })
+    }
+
+    fn get_or_create_conn(&self) -> super::router_service_discovery::GetOrCreateConn {
+        let connection = self.connection.clone();
+        Arc::new(move |url| {
+            let connection = connection.clone();
+            async move { connection.get_or_create_channel(&url).await }.boxed()
+        })
+    }
+
+    /// pd-client `innerClient.init`'s `NewRouterServiceDiscovery`.
+    async fn start_router_service_discovery(&self) {
+        let (cluster_id, keyspace_id) = {
+            let guard = self.cluster.read().await;
+            (guard.0.id(), guard.0.keyspace_id())
+        };
+        let meta_get = self.meta_get(true);
+        let connect = self.get_or_create_conn();
+        let connection = self.connection.clone();
+        let remove: super::router_service_discovery::RemoveConn =
+            Arc::new(move |url| connection.remove_channel(url));
+        let discovery = super::router_service_discovery::RouterServiceDiscovery::new(
+            &self.cancellation,
+            cluster_id,
+            keyspace_id,
+            self.connection.tls_configured(),
+            self.connection.options.max_retry_times,
+            meta_get,
+            connect,
+            remove,
+        )
+        .await;
+        self.connection
+            .set_router_discovery(Some(discovery.clone()));
+        *self.router_discovery.lock().await = Some(discovery);
     }
 
     /// The TSO client's `ScheduleCheckMemberChanged` / `CheckMemberChanged`
@@ -580,8 +670,41 @@ impl RetryClient<Cluster> {
         let cancellation = self.cancellation.clone();
         let timeout = self.timeout;
         let mode = self.cluster.read().await.0.service_mode();
+        let cluster_id = self.cluster.read().await.0.id();
+        let rm_meta_get = self.meta_get(false);
+        let rm_connect = self.get_or_create_conn();
+        let rm_connection = self.connection.clone();
+        let rm_cancellation = self.cancellation.clone();
+        let rm_mode = mode.clone();
         let worker = tokio::spawn(async move {
             let mut mode_changes = mode.subscribe();
+            // pd-client `setServiceMode`: each new service mode resets the
+            // resource manager discovery (`resetResourceManagerDiscoveryLocked`).
+            let watch_mode = async {
+                let mut changes = rm_mode.subscribe();
+                let mut applied = pdpb::ServiceMode::UnknownSvcMode;
+                loop {
+                    let observed = rm_mode
+                        .snapshot()
+                        .and_then(|info| info.service_modes.first().copied())
+                        .and_then(|mode| pdpb::ServiceMode::try_from(mode).ok());
+                    if let Some(new_mode) = observed.filter(|mode| *mode != applied) {
+                        set_service_mode(
+                            new_mode,
+                            cluster_id,
+                            &rm_connection,
+                            &rm_cancellation,
+                            &rm_meta_get,
+                            &rm_connect,
+                        )
+                        .await;
+                        applied = new_mode;
+                    }
+                    if changes.changed().await.is_err() {
+                        break;
+                    }
+                }
+            };
             let observe_mode = async {
                 let mut ticks = tokio::time::interval_at(
                     tokio::time::Instant::now() + super::service_discovery::UPDATE_INTERVAL,
@@ -667,7 +790,7 @@ impl RetryClient<Cluster> {
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => {},
-                _ = async { tokio::join!(observe_mode, discover, members, health); } => {},
+                _ = async { tokio::join!(observe_mode, discover, members, health, watch_mode); } => {},
             }
         });
         *self.discovery_worker.lock().await = Some(worker);
@@ -695,6 +818,13 @@ impl RetryClient<Cluster> {
         if let Some(handle) = worker.as_mut() {
             let _ = handle.await;
             worker.take();
+        }
+        if let Some(discovery) = self.router_discovery.lock().await.take() {
+            self.connection.set_router_discovery(None);
+            discovery.close().await;
+        }
+        if let Some(discovery) = self.connection.set_resource_manager_discovery(None) {
+            discovery.close().await;
         }
         let _members = self.reconnect.members.lock().await;
         let _timestamp = self.reconnect.timestamp.lock().await;
@@ -977,6 +1107,14 @@ impl RetryClientTrait for RetryClient<Cluster> {
         retry!(self, "get_all_stores", |cluster| {
             cluster
                 .get_all_stores(self.timeout)
+                .map(|result| result.map(|resp| resp.stores))
+        })
+    }
+
+    async fn get_all_stores_allowing_router_service(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
+        retry!(self, "get_all_stores", |cluster| {
+            cluster
+                .get_all_stores_allowing_router_service(self.timeout)
                 .map(|result| result.map(|resp| resp.stores))
         })
     }
@@ -1422,6 +1560,44 @@ impl<Cl> Drop for RetryClient<Cl> {
     fn drop(&mut self) {
         self.cancellation.cancel();
     }
+}
+
+/// pd-client `innerClient.setServiceMode`'s resource-manager half
+/// (`resetResourceManagerDiscoveryLocked`) and its line.
+async fn set_service_mode(
+    new_mode: pdpb::ServiceMode,
+    cluster_id: u64,
+    connection: &Connection,
+    cancellation: &Cancellation,
+    meta_get: &super::resource_manager_discovery::MetaGet,
+    connect: &super::router_service_discovery::GetOrCreateConn,
+) {
+    match new_mode {
+        pdpb::ServiceMode::PdSvcMode => {
+            if let Some(old) = connection.set_resource_manager_discovery(None) {
+                old.close().await;
+            }
+        }
+        pdpb::ServiceMode::ApiSvcMode => {
+            let discovery = super::resource_manager_discovery::ResourceManagerDiscovery::new(
+                cancellation,
+                cluster_id,
+                meta_get.clone(),
+                connect.clone(),
+                // The token dispatcher reconnects when the URL it reads
+                // differs from its stream's.
+                Arc::new(|| {}),
+            );
+            discovery.init().await;
+            if let Some(old) = connection.set_resource_manager_discovery(Some(discovery)) {
+                old.close().await;
+            }
+        }
+        pdpb::ServiceMode::UnknownSvcMode => {
+            log::warn!("[pd] intend to switch to unknown service mode, just return");
+        }
+    }
+    log::info!("new-mode" = new_mode.as_str_name(); "[pd] service mode changed");
 }
 
 async fn refresh_cluster(

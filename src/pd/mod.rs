@@ -15,7 +15,9 @@ pub mod metrics;
 pub mod opt;
 pub mod resource_group;
 pub mod resource_manager_client;
+mod resource_manager_discovery;
 mod retry;
+mod router_service_discovery;
 pub(crate) mod tso;
 pub mod tso_batch;
 
