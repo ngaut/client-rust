@@ -304,12 +304,14 @@ impl Limiter {
         opts: &[LimiterOption],
     ) {
         let mut state = self.lock();
-        log_controller_trace(|| {
-            format!(
-                "[resource group controller] before reconfigure, name: {}, old-tokens: {}, old-rate: {}, old-notify-threshold: {}, old-burst: {}",
-                state.name, state.tokens, state.fill_rate, state.notify_threshold, state.burst
-            )
-        });
+        log_controller_trace!(
+            name = state.name.as_str(),
+            "old-tokens" = state.tokens,
+            "old-rate" = state.fill_rate,
+            "old-notify-threshold" = state.notify_threshold,
+            "old-burst" = state.burst;
+            "[resource group controller] before reconfigure"
+        );
         if args.new_burst < 0 {
             state.update_last(now);
             state.tokens = args.new_tokens;
@@ -330,12 +332,14 @@ impl Limiter {
             reconfigured.cancel();
         }
         state.reconfigured_ch = Some(Arc::new(Cancellation::default()));
-        log_controller_trace(|| {
-            format!(
-                "[resource group controller] after reconfigure, name: {}, tokens: {}, rate: {}, notify-threshold: {}, burst: {}",
-                state.name, state.tokens, state.fill_rate, args.new_notify_threshold, state.burst
-            )
-        });
+        log_controller_trace!(
+            name = state.name.as_str(),
+            tokens = state.tokens,
+            rate = state.fill_rate,
+            "notify-threshold" = args.new_notify_threshold,
+            burst = state.burst;
+            "[resource group controller] after reconfigure"
+        );
     }
 
     /// The tokens available at `now`.

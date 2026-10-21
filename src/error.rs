@@ -755,7 +755,7 @@ fn format_system_time_in(time: SystemTime, zone: &chrono_tz::Tz) -> String {
 /// Go's `time.Local`, loaded once per process: `$TZ` when set (empty is
 /// UTC, an unloadable name falls back to UTC), otherwise the system zone
 /// (`/etc/localtime`), otherwise UTC.
-fn go_time_local() -> chrono_tz::Tz {
+pub(crate) fn go_time_local() -> chrono_tz::Tz {
     static LOCAL: std::sync::OnceLock<chrono_tz::Tz> = std::sync::OnceLock::new();
     *LOCAL.get_or_init(|| match std::env::var("TZ") {
         Ok(name) if name.is_empty() => chrono_tz::UTC,

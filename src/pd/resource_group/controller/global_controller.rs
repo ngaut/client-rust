@@ -64,12 +64,22 @@ pub(crate) fn enable_controller_trace_log() -> bool {
     ENABLE_CONTROLLER_TRACE_LOG.load(Ordering::SeqCst)
 }
 
-/// Logs at info level only when controller trace logging is enabled.
-pub(crate) fn log_controller_trace(message: impl FnOnce() -> String) {
-    if enable_controller_trace_log() {
-        log::info!("{}", message());
-    }
+#[cfg(test)]
+pub(crate) fn set_enable_controller_trace_log_for_test(enabled: bool) {
+    ENABLE_CONTROLLER_TRACE_LOG.store(enabled, Ordering::SeqCst);
 }
+
+/// pd-client `logControllerTrace`: an info line, with its zap fields as
+/// structured key-values, only while controller trace logging is enabled.
+/// The arguments are `log::info!`'s and are not evaluated otherwise.
+macro_rules! log_controller_trace {
+    ($($arg:tt)+) => {
+        if super::global_controller::enable_controller_trace_log() {
+            log::info!($($arg)+);
+        }
+    };
+}
+pub(crate) use log_controller_trace;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
@@ -1076,6 +1086,7 @@ impl ResourceGroupsController {
         notify_msg: NotifyMsg,
     ) {
         let now = Instant::now();
+        let sent_at = std::time::SystemTime::now();
         let req = TokenBucketsRequest {
             requests,
             target_request_period_ms: DEFAULT_TARGET_PERIOD.as_millis() as u64,
@@ -1093,12 +1104,12 @@ impl ResourceGroupsController {
         let token_response_chan = self.token_response_chan.clone();
         let ctx = ctx.clone();
         tokio::spawn(async move {
-            log_controller_trace(|| {
-                format!(
-                    "[resource group controller] send token bucket request, now: {now:?}, req: {:?}, source: {source}",
-                    req.requests
-                )
-            });
+            log_controller_trace!(
+                now:% = crate::logutil::zap_time(sent_at),
+                req:% = crate::logutil::go_json_protobuf_slice(Some(req.requests.as_slice())),
+                source = source;
+                "[resource group controller] send token bucket request"
+            );
             let result = tokio::select! {
                 result = provider.acquire_token_buckets(req) => result,
                 _ = ctx.done() => Err(crate::Error::from(ctx.err().unwrap_or(ContextError::Canceled))),
@@ -1130,13 +1141,13 @@ impl ResourceGroupsController {
                     log::warn!(source:% = source, cost:% = go_duration_string(duration_nanos(cost)); "[resource group controller] slow token bucket request");
                 }
             }
-            log_controller_trace(|| {
-                format!(
-                    "[resource group controller] token bucket response, now: {:?}, resp: {resp:?}, source: {source}, latency: {}",
-                    Instant::now(),
-                    go_duration_string(duration_nanos(latency))
-                )
-            });
+            log_controller_trace!(
+                now:% = crate::logutil::zap_time(std::time::SystemTime::now()),
+                resp:% = crate::logutil::go_json_protobuf_slice(resp.as_deref()),
+                source = source,
+                latency:% = go_duration_string(duration_nanos(latency));
+                "[resource group controller] token bucket response"
+            );
             let _ = token_response_chan.send(resp).await;
         });
     }

@@ -10317,7 +10317,6 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::sync::Arc;
     use std::sync::Mutex;
-    use std::sync::Once;
     use std::time::{Duration, Instant, SystemTime};
 
     use fail::FailScenario;
@@ -18207,59 +18206,11 @@ mod tests {
         assert_eq!(*observed.lock().unwrap(), Some((77, true)));
     }
 
-    // A minimal capturing logger (no extra dependency) used to assert that
-    // client-go's log lines arrive with their structured fields, as TiDB's
-    // `log` bridge receives them: "message key=value ...".
-    static CAPTURED_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    static LOGGER: CaptureLogger = CaptureLogger;
-    static LOGGER_INIT: Once = Once::new();
-
-    struct CaptureLogger;
-
-    struct CaptureFields<'a>(&'a mut String);
-
-    impl<'kvs> log::kv::VisitSource<'kvs> for CaptureFields<'_> {
-        fn visit_pair(
-            &mut self,
-            key: log::kv::Key<'kvs>,
-            value: log::kv::Value<'kvs>,
-        ) -> Result<(), log::kv::Error> {
-            self.0.push_str(&format!(" {key}={value}"));
-            Ok(())
-        }
-    }
-
-    impl log::Log for CaptureLogger {
-        fn enabled(&self, _metadata: &log::Metadata) -> bool {
-            true
-        }
-
-        fn log(&self, record: &log::Record) {
-            let mut line = format!("{} {}", record.level(), record.args());
-            let _ = record.key_values().visit(&mut CaptureFields(&mut line));
-            if let Ok(mut logs) = CAPTURED_LOGS.lock() {
-                logs.push(line);
-            }
-        }
-
-        fn flush(&self) {}
-    }
-
-    fn install_capture_logger() {
-        LOGGER_INIT.call_once(|| {
-            // Ignore the error if another logger is already installed in this
-            // process; the assertion below only checks for presence of a unique
-            // marker, so foreign records are harmless.
-            let _ = log::set_logger(&LOGGER);
-            log::set_max_level(log::LevelFilter::Debug);
-        });
-    }
-
     /// client-go logs a failed commit's cleanup as "2PC prewrite lock cleanup
     /// finished" with zap fields `txnStartTS` and `isPessimistic`.
     #[tokio::test]
     async fn commit_cleanup_logs_client_go_line_with_fields() {
-        install_capture_logger();
+        crate::logutil::test_capture::install();
 
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             |req: &dyn Any| {
@@ -18295,19 +18246,11 @@ mod tests {
             "INFO 2PC prewrite lock cleanup finished txnStartTS={start_ts} isPessimistic=false"
         );
         let abort = "WARN 2PC failed error=tikv aborts txn: abort for the log test";
-        for _ in 0..100 {
-            {
-                let logs = CAPTURED_LOGS.lock().unwrap();
-                if logs.iter().any(|line| line == &expected) {
-                    assert!(logs.iter().any(|line| line == abort), "{logs:?}");
-                    return;
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!(
-            "expected {expected:?}; captured: {:?}",
-            CAPTURED_LOGS.lock().unwrap()
+        crate::logutil::test_capture::wait_for(&expected, |line| line == expected).await;
+        assert!(
+            crate::logutil::test_capture::any(|line| line == abort),
+            "{:?}",
+            crate::logutil::test_capture::lines()
         );
     }
 
