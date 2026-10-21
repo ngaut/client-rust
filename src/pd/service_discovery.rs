@@ -198,6 +198,12 @@ pub struct TsoDiscovery {
     cursor: Arc<Mutex<DiscoveryCursor>>,
     accepted_info: Option<pdpb::GetClusterInfoResponse>,
     service_mode: ServiceModeDiscovery,
+    /// Go `GetKeyspaceGroupID()`: the accepted group (0 until one is found).
+    group_id: u32,
+    /// Go `keyspaceGroupSD.primaryURL`.
+    primary_url: String,
+    /// Go `printFallbackLogOnce`.
+    fallback_logged: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug, Default)]
@@ -216,6 +222,9 @@ impl Default for TsoDiscovery {
             cursor: Arc::new(Mutex::new(DiscoveryCursor::default())),
             accepted_info: None,
             service_mode: ServiceModeDiscovery::default(),
+            group_id: 0,
+            primary_url: String::new(),
+            fallback_logged: Arc::default(),
         }
     }
 }
@@ -336,6 +345,17 @@ impl TsoDiscovery {
                     "no TSO microservice available in microservice mode",
                 ));
             }
+            if !self
+                .fallback_logged
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                log::warn!(
+                    "keyspace-id-in-request" = self.keyspace_id,
+                    "tso-server-url" = "",
+                    "discovery-key":% = format!("/ms/{cluster_id}/tso/00000/primary");
+                    "[tso] no tso server URL found, fallback to the legacy path to discover from etcd directly"
+                );
+            }
             // The Go compatibility path reads the default primary through PD's
             // MetaStorage service; never redirect API-mode Tso to PD itself.
             let response = meta_storagepb::meta_storage_client::MetaStorageClient::new(channel)
@@ -387,6 +407,7 @@ impl TsoDiscovery {
             let url = {
                 let mut cursor = self.cursor.lock().expect("TSO discovery cursor poisoned");
                 if cursor.urls != urls {
+                    log::info!("sorted-urls":serde = urls; "update tso server URLs");
                     cursor.urls = urls;
                     cursor.next = 0;
                 }
@@ -395,7 +416,7 @@ impl TsoDiscovery {
                 url
             };
             let (mut group, mut revision) = self
-                .find_group(cluster_id, &url, timeout, channels, &dial)
+                .find_group_logged(cluster_id, &url, timeout, channels, &dial)
                 .await?;
             // A discovery server outside the group can return only secondaries.
             if !group
@@ -415,12 +436,24 @@ impl TsoDiscovery {
                     .choose(&mut rand::thread_rng())
                     .ok_or_else(|| Status::unavailable("no TSO group member"))?;
                 (group, revision) = self
-                    .find_group(cluster_id, &secondary.address, timeout, channels, &dial)
+                    .find_group_logged(cluster_id, &secondary.address, timeout, channels, &dial)
                     .await?;
             }
             (group, revision)
         };
+        if group.id != self.group_id {
+            log::info!(
+                "keyspace-id" = self.keyspace_id,
+                "new-keyspace-group-id" = group.id,
+                "old-keyspace-group-id" = self.group_id;
+                "[tso] the keyspace group changed"
+            );
+        }
         if revision < self.revision.load(Ordering::SeqCst) {
+            log::warn!(
+                modRevision = revision;
+                "[tso] failed to update keyspace group, met stale keyspace group info"
+            );
             return Err(Status::failed_precondition(
                 "stale TSO keyspace group revision",
             ));
@@ -436,9 +469,34 @@ impl TsoDiscovery {
             keyspace_id: self.keyspace_id,
             group_id: Some(group.id),
         };
-        let channel = dial(route.endpoint.clone()).await?;
+        let channel = match dial(route.endpoint.clone()).await {
+            Ok(channel) => channel,
+            Err(error) => {
+                log::warn!(
+                    "keyspace-id-in-request" = self.keyspace_id,
+                    "next-primary" = route.endpoint.as_str(),
+                    error:% = error;
+                    "[tso] failed to connect the next primary"
+                );
+                return Err(error);
+            }
+        };
         self.service_urls = group.members.iter().map(|m| m.address.clone()).collect();
         self.revision.fetch_max(revision, Ordering::SeqCst);
+        if !route.endpoint.eq_ignore_ascii_case(&self.primary_url) {
+            log::info!(
+                "keyspace-id-in-request" = self.keyspace_id,
+                "keyspace-group-service":% = crate::error::protobuf_text(&group);
+                "[tso] updated keyspace group service discovery info"
+            );
+            log::info!(
+                "new-primary" = route.endpoint.as_str(),
+                "old-primary" = self.primary_url.as_str();
+                "[tso] switch primary"
+            );
+            self.primary_url.clone_from(&route.endpoint);
+        }
+        self.group_id = group.id;
         Ok((route, channel))
     }
 
@@ -446,12 +504,43 @@ impl TsoDiscovery {
         // A subsequent API-mode entry creates a new group discovery lifecycle.
         self.revision = Arc::default();
         self.service_urls.clear();
+        self.group_id = 0;
+        self.primary_url.clear();
         *self.cursor.lock().expect("TSO discovery cursor poisoned") = DiscoveryCursor::default();
         TsoRoute {
             endpoint: leader.to_owned(),
             keyspace_id: self.keyspace_id,
             group_id: None,
         }
+    }
+
+    /// [`Self::find_group`] with pd-client's failure line.
+    async fn find_group_logged<F, Fut>(
+        &self,
+        cluster_id: u64,
+        url: &str,
+        timeout: Duration,
+        channels: &ChannelCache,
+        dial: &F,
+    ) -> Result<(tsopb::KeyspaceGroup, u64), Status>
+    where
+        F: Fn(String) -> Fut,
+        Fut: Future<Output = Result<Channel, Status>>,
+    {
+        let result = self
+            .find_group(cluster_id, url, timeout, channels, dial)
+            .await;
+        if let Err(error) = &result {
+            log::error!(
+                "keyspace-id-in-request" = self.keyspace_id,
+                "tso-server-url" = url,
+                "response-mod-revision" = 0_u64,
+                "current-mod-revision" = self.revision.load(Ordering::SeqCst),
+                error:% = error;
+                "[tso] failed to find the keyspace group"
+            );
+        }
+        result
     }
 
     async fn find_group<F, Fut>(

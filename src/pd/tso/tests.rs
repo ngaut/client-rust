@@ -2085,6 +2085,7 @@ fn api_mode(pd: &Server, tso: &Server) {
 
 #[tokio::test]
 async fn source_service_routes_keyspace_and_retires_on_group_move() {
+    crate::logutil::test_capture::install();
     let pd = Server::start(Reply::Timestamp).await;
     let first = Server::start(Reply::Timestamp).await;
     let second =
@@ -2135,6 +2136,31 @@ async fn source_service_routes_keyspace_and_retires_on_group_move() {
         second.service.tso_headers.lock().unwrap()[0].keyspace_group_id,
         9
     );
+    // pd-client tsoServiceDiscovery's lines for the primary switch.
+    for expected in [
+        format!(
+            "INFO [tso] switch primary new-primary={} old-primary={}",
+            second.service.endpoint, first.service.endpoint
+        ),
+        format!(
+            "INFO [tso] switch the tso leader serving url new-url={}",
+            second.service.endpoint
+        ),
+    ] {
+        assert!(
+            crate::logutil::test_capture::any(|line| line == expected),
+            "{expected:?} not in {:?}",
+            crate::logutil::test_capture::lines()
+        );
+    }
+    let group_changed = "INFO [tso] the keyspace group changed keyspace-id=27 new-keyspace-group-id=9 old-keyspace-group-id=";
+    assert!(crate::logutil::test_capture::any(
+        |line| line.starts_with(group_changed)
+    ));
+    let updated = "INFO [tso] updated keyspace group service discovery info keyspace-id-in-request=27 keyspace-group-service=id:9 ";
+    assert!(crate::logutil::test_capture::any(
+        |line| line.starts_with(updated)
+    ));
     first.service.revision.store(1, Ordering::SeqCst);
     assert!(client.reconnect_for_test().await.is_err());
     // A stale observation must not replace the accepted route.
