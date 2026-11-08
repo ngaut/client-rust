@@ -51,7 +51,7 @@ pub use crate::region::{RegionId, RegionVerId, RegionWithLeader, StoreId};
 pub use crate::region_cache::StoreLiveness;
 pub use crate::region_cache::{
     change_pd_region_meta_circuit_breaker_settings, set_region_cache_ttl_secs,
-    set_region_cache_ttl_with_jitter, PdRegionMetaCircuitBreakerSettings, RegionCache,
+    set_region_cache_ttl_with_jitter, InvalidReason, PdRegionMetaCircuitBreakerSettings, RegionCache,
     TiFlashLabelFilter, TiFlashRpcContextUnavailableDetail, TiFlashRpcContextUnavailableReason,
     TiFlashSelectionError,
 };
@@ -505,9 +505,9 @@ impl TxnSafePointCache {
         if start_timestamp < safe_point {
             return Err(crate::error::TransactionAbortedByGcError {
                 transaction_start_timestamp: start_timestamp,
-                transaction_start_time: oracle::get_time_from_timestamp(start_timestamp),
+                transaction_start_time: oracle::get_time_from_ts(start_timestamp),
                 transaction_safe_point: safe_point,
-                transaction_safe_point_time: oracle::get_time_from_timestamp(safe_point),
+                transaction_safe_point_time: oracle::get_time_from_ts(safe_point),
             }
             .into());
         }

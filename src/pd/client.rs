@@ -325,6 +325,40 @@ pub trait PdClient: Send + Sync + 'static {
         Err(crate::Error::Unimplemented)
     }
 
+    /// client-go `RegionCache.LocateKeyRange(bo, startKey, endKey)`: the
+    /// leader-bearing regions covering `[start_key, end_key)`. Clients
+    /// without a region cache refuse.
+    async fn locate_key_range(
+        &self,
+        _start_key: Key,
+        _end_key: Key,
+        _backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// client-go `RegionCache.BatchLoadRegionsWithKeyRange(bo, startKey,
+    /// endKey, count)`: at most `count` consecutive regions from `start_key`,
+    /// freshly loaded from PD. Clients without a region cache refuse.
+    async fn batch_load_regions_with_key_range(
+        &self,
+        _start_key: Key,
+        _end_key: Key,
+        _count: usize,
+        _backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// client-go `RegionCache.GetStoresByType(typ)`; `None` for a client
+    /// without a region cache (Go's failed `tikv.Storage` assertion).
+    fn get_stores_by_type(
+        &self,
+        _endpoint_type: crate::store::EndpointType,
+    ) -> Option<Vec<metapb::Store>> {
+        None
+    }
+
     /// Loads metadata using client-go's canonical default keyspace name.
     async fn get_keyspace_meta(&self, name: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.load_keyspace(&build_keyspace_name(name)).await
@@ -382,6 +416,18 @@ pub trait PdClient: Send + Sync + 'static {
     /// tombstones and every engine included -- where [`Self::all_stores`]
     /// answers clients for the stores requests can reach.
     async fn get_all_stores(&self) -> Result<Vec<metapb::Store>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// client-go `RegionCache.PDClient().BatchScanRegions(ctx, ranges, limit,
+    /// opts...)`: the regions PD itself reports, through the cache's key
+    /// codec but not its cached regions. A zero `limit` is Go's `-1`.
+    async fn batch_scan_regions(
+        &self,
+        _ranges: Vec<pdpb::KeyRange>,
+        _limit: usize,
+        _options: crate::pd::retry::RegionScanOptions,
+    ) -> Result<Vec<RegionWithLeader>> {
         Err(crate::Error::Unimplemented)
     }
 
@@ -542,6 +588,15 @@ pub trait PdClient: Send + Sync + 'static {
     }
 
     async fn invalidate_region_cache(&self, ver_id: RegionVerId);
+
+    /// Source `InvalidateCachedRegionWithReason`.
+    async fn invalidate_cached_region_with_reason(
+        &self,
+        ver_id: RegionVerId,
+        _reason: crate::region_cache::InvalidReason,
+    ) {
+        self.invalidate_region_cache(ver_id).await;
+    }
 
     async fn invalidate_store_cache(&self, store_id: StoreId);
 
@@ -1546,6 +1601,18 @@ where
         self.pd.clone().get_all_stores().await
     }
 
+    async fn batch_scan_regions(
+        &self,
+        ranges: Vec<pdpb::KeyRange>,
+        limit: usize,
+        options: crate::pd::retry::RegionScanOptions,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.region_cache
+            .pd_client()
+            .batch_scan_regions(ranges, limit, options)
+            .await
+    }
+
     async fn all_stores(&self) -> Result<Vec<Store>> {
         let pb_stores = self.region_cache.read_through_all_stores().await?;
         let mut stores = Vec::with_capacity(pb_stores.len());
@@ -1723,6 +1790,16 @@ where
         self.region_cache.invalidate_region_cache(ver_id).await
     }
 
+    async fn invalidate_cached_region_with_reason(
+        &self,
+        ver_id: RegionVerId,
+        reason: crate::region_cache::InvalidReason,
+    ) {
+        self.region_cache
+            .invalidate_cached_region_with_reason(ver_id, reason)
+            .await
+    }
+
     async fn invalidate_store_cache(&self, store_id: StoreId) {
         let store = self.region_cache.invalidate_store_cache(store_id).await;
         if let Some(store) = store {
@@ -1806,6 +1883,36 @@ where
         self.region_cache
             .load_regions_in_key_range(start_key, end_key, backoffer)
             .await
+    }
+
+    async fn locate_key_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.region_cache
+            .locate_key_range(start_key, end_key, backoffer)
+            .await
+    }
+
+    async fn batch_load_regions_with_key_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        count: usize,
+        backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.region_cache
+            .batch_load_regions_with_key_range(start_key, end_key, count, backoffer)
+            .await
+    }
+
+    fn get_stores_by_type(
+        &self,
+        endpoint_type: crate::store::EndpointType,
+    ) -> Option<Vec<metapb::Store>> {
+        Some(self.region_cache.cached_stores_by_type(endpoint_type))
     }
 }
 

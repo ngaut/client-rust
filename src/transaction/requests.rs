@@ -335,6 +335,28 @@ impl Shardable for kvrpcpb::BatchGetRequest {
         self.keys = shard;
     }
 
+    /// The shard's copy, without cloning the vectors `apply_shard` replaces:
+    /// re-cloning a whole transaction's keys for every region batch made a
+    /// large commit quadratic. Every field is named, so a new one fails to
+    /// compile here rather than being dropped.
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let kvrpcpb::BatchGetRequest {
+            context,
+            keys: _,
+            version,
+            need_commit_ts,
+        } = self;
+        kvrpcpb::BatchGetRequest {
+            context: context.clone(),
+            keys: shard,
+            version: *version,
+            need_commit_ts: *need_commit_ts,
+        }
+    }
+
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
         self.set_leader(&store.request_region())?;
         self.set_replica_read(store.is_replica_read());
@@ -660,6 +682,45 @@ impl Shardable for kvrpcpb::PrewriteRequest {
             .boxed()
     }
 
+    // client-go `doActionOnGroupMutations` for a prewrite: every grouping
+    // adds its regions to `PrewriteRegionNum`, and the first one's batches
+    // are `prewriteTotalReqNum`.
+    fn observe_grouping(&self, region_groups: usize, batches: usize, _regroup: bool) {
+        if let Some(committer) =
+            crate::util::committer_detail_from_context(&crate::trace::current_trace_context())
+        {
+            let mut detail = committer.detail.lock().unwrap();
+            detail.prewrite_region_num = detail
+                .prewrite_region_num
+                .wrapping_add(region_groups as i32);
+            if detail.prewrite_request_num == 0 {
+                detail.prewrite_request_num = batches;
+            }
+        }
+    }
+
+    // client-go's batch executor records a prewrite batch's Backoffer when it
+    // slept longer than any batch before it.
+    fn observe_batch_backoff(&self, sleep_ms: u64, types: &[&'static str]) {
+        if let Some(committer) =
+            crate::util::committer_detail_from_context(&crate::trace::current_trace_context())
+        {
+            let mut detail = committer.detail.lock().unwrap();
+            detail.record_prewrite_backoff(sleep_ms, types);
+        }
+    }
+
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
+    }
+
+    // client-go `handleRegionErr` fails an async-commit or 1PC prewrite on
+    // `UndeterminedResult`; a standard 2PC one retries.
+    fn retries_undetermined_result(&self) -> bool {
+        !self.use_async_commit && !self.try_one_pc
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         let full_txn_size = self.txn_size;
         let (mutations, pessimistic_actions, constraints, region_txn_size) = shard;
@@ -691,6 +752,56 @@ impl Shardable for kvrpcpb::PrewriteRequest {
                 })
             })
             .collect();
+    }
+
+    /// The shard's copy, without cloning the vectors `apply_shard` replaces:
+    /// re-cloning a whole transaction's keys for every region batch made a
+    /// large commit quadratic. Every field is named, so a new one fails to
+    /// compile here rather than being dropped.
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let kvrpcpb::PrewriteRequest {
+            context,
+            mutations: _,
+            primary_lock,
+            start_version,
+            lock_ttl,
+            skip_constraint_check,
+            pessimistic_actions: _,
+            txn_size,
+            for_update_ts,
+            min_commit_ts,
+            use_async_commit,
+            secondaries,
+            try_one_pc,
+            max_commit_ts,
+            assertion_level,
+            for_update_ts_constraints: _,
+            txn_file_chunks,
+        } = self;
+        let mut cloned = kvrpcpb::PrewriteRequest {
+            context: context.clone(),
+            mutations: Vec::new(),
+            primary_lock: primary_lock.clone(),
+            start_version: *start_version,
+            lock_ttl: *lock_ttl,
+            skip_constraint_check: *skip_constraint_check,
+            pessimistic_actions: Vec::new(),
+            txn_size: *txn_size,
+            for_update_ts: *for_update_ts,
+            min_commit_ts: *min_commit_ts,
+            use_async_commit: *use_async_commit,
+            secondaries: secondaries.clone(),
+            try_one_pc: *try_one_pc,
+            max_commit_ts: *max_commit_ts,
+            assertion_level: *assertion_level,
+            for_update_ts_constraints: Vec::new(),
+            txn_file_chunks: txn_file_chunks.clone(),
+        };
+        cloned.apply_shard(shard);
+        cloned
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
@@ -761,6 +872,11 @@ impl Shardable for kvrpcpb::CommitRequest {
             .boxed()
     }
 
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         if !self.primary_key.is_empty() {
             self.commit_role = if shard.iter().any(|key| key == &self.primary_key) {
@@ -770,6 +886,38 @@ impl Shardable for kvrpcpb::CommitRequest {
             } as i32;
         }
         self.keys = shard;
+    }
+
+    /// The shard's copy, without cloning the vectors `apply_shard` replaces:
+    /// re-cloning a whole transaction's keys for every region batch made a
+    /// large commit quadratic. Every field is named, so a new one fails to
+    /// compile here rather than being dropped.
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let kvrpcpb::CommitRequest {
+            context,
+            start_version,
+            keys: _,
+            commit_version,
+            commit_role,
+            primary_key,
+            use_async_commit,
+            is_txn_file,
+        } = self;
+        let mut cloned = kvrpcpb::CommitRequest {
+            context: context.clone(),
+            start_version: *start_version,
+            keys: Vec::new(),
+            commit_version: *commit_version,
+            commit_role: *commit_role,
+            primary_key: primary_key.clone(),
+            use_async_commit: *use_async_commit,
+            is_txn_file: *is_txn_file,
+        };
+        cloned.apply_shard(shard);
+        cloned
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
@@ -835,8 +983,35 @@ impl Shardable for kvrpcpb::BatchRollbackRequest {
             .boxed()
     }
 
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         self.keys = shard;
+    }
+
+    /// The shard's copy, without cloning the vectors `apply_shard` replaces:
+    /// re-cloning a whole transaction's keys for every region batch made a
+    /// large commit quadratic. Every field is named, so a new one fails to
+    /// compile here rather than being dropped.
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let kvrpcpb::BatchRollbackRequest {
+            context,
+            start_version,
+            keys: _,
+            is_txn_file,
+        } = self;
+        kvrpcpb::BatchRollbackRequest {
+            context: context.clone(),
+            start_version: *start_version,
+            keys: shard,
+            is_txn_file: *is_txn_file,
+        }
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
@@ -902,8 +1077,35 @@ impl Shardable for kvrpcpb::PessimisticRollbackRequest {
             .boxed()
     }
 
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         self.keys = shard;
+    }
+
+    /// The shard's copy, without cloning the vectors `apply_shard` replaces:
+    /// re-cloning a whole transaction's keys for every region batch made a
+    /// large commit quadratic. Every field is named, so a new one fails to
+    /// compile here rather than being dropped.
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let kvrpcpb::PessimisticRollbackRequest {
+            context,
+            start_version,
+            for_update_ts,
+            keys: _,
+        } = self;
+        kvrpcpb::PessimisticRollbackRequest {
+            context: context.clone(),
+            start_version: *start_version,
+            for_update_ts: *for_update_ts,
+            keys: shard,
+        }
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
@@ -985,9 +1187,71 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
             .boxed()
     }
 
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         self.mutations = shard.0;
         self.wake_up_mode = shard.1;
+    }
+
+    /// The shard's copy, without cloning the vectors `apply_shard` replaces:
+    /// re-cloning a whole transaction's keys for every region batch made a
+    /// large commit quadratic. Every field is named, so a new one fails to
+    /// compile here rather than being dropped.
+    #[allow(deprecated)]
+    fn clone_then_apply_shard(&self, shard: Self::Shard) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let kvrpcpb::PessimisticLockRequest {
+            context,
+            mutations: _,
+            primary_lock,
+            start_version,
+            lock_ttl,
+            for_update_ts,
+            is_first_lock,
+            wait_timeout,
+            force,
+            return_values,
+            min_commit_ts,
+            check_existence,
+            lock_only_if_exists,
+            wake_up_mode: _,
+        } = self;
+        kvrpcpb::PessimisticLockRequest {
+            context: context.clone(),
+            mutations: shard.0,
+            primary_lock: primary_lock.clone(),
+            start_version: *start_version,
+            lock_ttl: *lock_ttl,
+            for_update_ts: *for_update_ts,
+            is_first_lock: *is_first_lock,
+            wait_timeout: *wait_timeout,
+            force: *force,
+            return_values: *return_values,
+            min_commit_ts: *min_commit_ts,
+            check_existence: *check_existence,
+            lock_only_if_exists: *lock_only_if_exists,
+            wake_up_mode: shard.1,
+        }
+    }
+
+    // client-go `doActionOnGroupMutations`: a pessimistic lock sets
+    // `Stats.RegionNum` to the number of region groups. The first grouping
+    // is the committer's own (`pessimistic_lock_impl_with_retry_owner`).
+    fn observe_grouping(&self, region_groups: usize, _batches: usize, regroup: bool) {
+        if !regroup {
+            return;
+        }
+        if let Some(details) =
+            crate::util::lock_keys_details_from_context(&crate::trace::current_trace_context())
+        {
+            details.lock().unwrap().region_num = region_groups as i32;
+        }
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
@@ -1957,6 +2221,11 @@ impl Shardable for kvrpcpb::FlushRequest {
             .boxed()
     }
 
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         self.mutations = shard;
     }
@@ -2121,13 +2390,9 @@ impl_txn_v2_only_response!(
     }
 );
 
-shardable_key!(kvrpcpb::MvccGetByKeyRequest);
-collect_single!(kvrpcpb::MvccGetByKeyResponse);
-impl SingleKey for kvrpcpb::MvccGetByKeyRequest {
-    fn key(&self) -> &Vec<u8> {
-        &self.key
-    }
-}
+// client-go sends `CmdMvccGetByKey` only through `KVStore.SendReq` to the
+// region its caller located (TiDB `helper.GetMvccByEncodedKeyWithTS`).
+region_pinned!(kvrpcpb::MvccGetByKeyRequest);
 impl HasLocks for kvrpcpb::MvccGetByKeyResponse {}
 
 pub fn new_mvcc_get_by_start_ts_request(start_ts: u64) -> kvrpcpb::MvccGetByStartTsRequest {
@@ -2154,6 +2419,9 @@ impl_txn_v2_only_response!(
     }
 );
 
+// client-go sends `CmdMvccGetByStartTs` only through `KVStore.SendReq` to
+// the region its caller located (TiDB `helper.GetMvccByStartTs`).
+region_pinned!(kvrpcpb::MvccGetByStartTsRequest);
 impl HasLocks for kvrpcpb::MvccGetByStartTsResponse {}
 
 pub fn new_check_lock_observer_request(max_ts: u64) -> kvrpcpb::CheckLockObserverRequest {
@@ -2449,6 +2717,111 @@ mod tests {
     use std::any::Any;
     use std::sync::Arc;
     use std::sync::Mutex;
+
+    /// A request's shard copy is exactly a full clone with the shard applied,
+    /// for every request that builds it without cloning the replaced vectors.
+    #[test]
+    #[allow(deprecated)]
+    fn a_shard_copy_equals_a_clone_with_the_shard_applied() {
+        fn same<R: Shardable + Clone + PartialEq + std::fmt::Debug>(request: &R, shard: R::Shard)
+        where
+            R::Shard: Clone,
+        {
+            let mut cloned = request.clone();
+            cloned.apply_shard(shard.clone());
+            assert_eq!(request.clone_then_apply_shard(shard), cloned);
+        }
+        let mutation = |key: &[u8]| kvrpcpb::Mutation {
+            key: key.to_vec(),
+            value: b"v".to_vec(),
+            ..Default::default()
+        };
+        let context = Some(kvrpcpb::Context {
+            region_id: 7,
+            ..Default::default()
+        });
+        let prewrite = kvrpcpb::PrewriteRequest {
+            context: context.clone(),
+            mutations: vec![mutation(b"a"), mutation(b"b"), mutation(b"c")],
+            primary_lock: b"a".to_vec(),
+            start_version: 5,
+            lock_ttl: 3000,
+            pessimistic_actions: vec![1, 2, 1],
+            txn_size: 3,
+            for_update_ts: 6,
+            min_commit_ts: 7,
+            use_async_commit: true,
+            secondaries: vec![b"b".to_vec(), b"c".to_vec()],
+            try_one_pc: true,
+            max_commit_ts: 9,
+            assertion_level: 1,
+            txn_file_chunks: vec![4],
+            ..Default::default()
+        };
+        same(&prewrite, (vec![mutation(b"a")], vec![2], vec![Some(6)], 1));
+        same(&prewrite, (vec![mutation(b"b"), mutation(b"c")], vec![1, 1], vec![None, None], 2));
+        let keys = vec![b"a".to_vec(), b"b".to_vec()];
+        let shard = vec![b"b".to_vec()];
+        same(
+            &kvrpcpb::CommitRequest {
+                context: context.clone(),
+                start_version: 5,
+                keys: keys.clone(),
+                commit_version: 8,
+                primary_key: b"a".to_vec(),
+                use_async_commit: true,
+                is_txn_file: true,
+                ..Default::default()
+            },
+            shard.clone(),
+        );
+        same(
+            &kvrpcpb::BatchRollbackRequest {
+                context: context.clone(),
+                start_version: 5,
+                keys: keys.clone(),
+                is_txn_file: true,
+            },
+            shard.clone(),
+        );
+        same(
+            &kvrpcpb::PessimisticRollbackRequest {
+                context: context.clone(),
+                start_version: 5,
+                for_update_ts: 6,
+                keys: keys.clone(),
+            },
+            shard.clone(),
+        );
+        same(
+            &kvrpcpb::BatchGetRequest {
+                context: context.clone(),
+                keys,
+                version: 5,
+                need_commit_ts: true,
+            },
+            shard,
+        );
+        same(
+            &kvrpcpb::PessimisticLockRequest {
+                context,
+                mutations: vec![mutation(b"a"), mutation(b"b")],
+                primary_lock: b"a".to_vec(),
+                start_version: 5,
+                lock_ttl: 3000,
+                for_update_ts: 6,
+                is_first_lock: true,
+                wait_timeout: 10,
+                force: true,
+                return_values: true,
+                min_commit_ts: 7,
+                check_existence: true,
+                lock_only_if_exists: true,
+                wake_up_mode: 0,
+            },
+            (vec![mutation(b"b")], 1),
+        );
+    }
 
     #[test]
     fn unsafe_destroy_range_aggregates_every_store_failure() {
