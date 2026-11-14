@@ -1301,6 +1301,17 @@ impl<PdC: PdClient> KvStore<PdC> {
         self.runtime.cluster_id()
     }
 
+    /// Go `store.GetCodec().GetKeyspaceMeta`: the metadata loaded at open.
+    pub fn keyspace_meta(&self) -> Option<&keyspacepb::KeyspaceMeta> {
+        self.runtime.keyspace_meta.as_ref()
+    }
+
+    /// Go `pd.IsKeyspaceUsingKeyspaceLevelGC(store.GetCodec().GetKeyspaceMeta())`.
+    pub fn is_keyspace_using_keyspace_level_gc(&self) -> bool {
+        crate::pd::is_keyspace_using_keyspace_level_gc(self.runtime.keyspace_meta.as_ref())
+    }
+
+
     /// Returns the PD/routing client owned by this store.
     pub fn pd_client(&self) -> Arc<PdC> {
         self.inner.pd_client()
@@ -1611,6 +1622,13 @@ impl<PdC: PdClient> KvStore<PdC> {
         table_id: Option<i64>,
         options: SplitRegionOptions,
     ) -> (Vec<u64>, Result<()>) {
+        // Go `codecV2.EncodeRequest(CmdSplitRegion)`: the region cache and
+        // request plans in this client both operate on physical keys. Encode
+        // once before routing; retries retain those same physical keys.
+        use crate::request::EncodeKeyspace as _;
+        pending = pending.into_iter().map(|key| {
+            Key::from(key).encode_keyspace(self.inner.keyspace(), KeyMode::Txn).into()
+        }).collect();
         let pd = self.inner.pd_client();
         let mut region_ids = Vec::with_capacity(pending.len());
         let retry_budget = (pending.len() as u64).saturating_mul(20_000).min(120_000);
