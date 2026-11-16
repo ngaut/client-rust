@@ -352,6 +352,7 @@ pub use crate::transaction::SyncTransaction;
 #[doc(inline)]
 pub use crate::transaction::SyncTransactionClient;
 #[doc(inline)]
+pub use crate::transaction::KvSnapshot;
 pub use crate::transaction::Transaction;
 #[doc(inline)]
 pub use crate::transaction::TransactionOptions;
