@@ -580,7 +580,8 @@ mod tests {
     }
 
     /// client-go `KVSnapshot.Get(ctx, k)` runs the RPC interceptor its caller
-    /// ctx carries, as `KVTxn.Get` does.
+    /// ctx carries, as `KVTxn.Get` does, whether or not the statement charges
+    /// `ExecDetails`; one already in the active ctx is not linked twice.
     #[tokio::test]
     async fn a_snapshot_get_runs_the_caller_contexts_interceptor() {
         let manager = crate::MockInterceptorManager::new();
@@ -594,6 +595,21 @@ mod tests {
             snapshot.get(b"key".to_vec()).await.unwrap(),
             Some(b"value".to_vec())
         );
+        assert_eq!(manager.exec_log(), ["CALLER"]);
+        manager.reset();
+
+        let caller = crate::interceptor::with_rpc_interceptor(
+            &crate::trace::TraceContext::default(),
+            manager.create_mock_interceptor("CALLER"),
+        );
+        snapshot.set_caller_context(caller.clone());
+        snapshot.set_exec_details(Arc::new(crate::util::ExecDetails::default()));
+        let value = crate::trace::with_trace_context(caller, async {
+            snapshot.get(b"other".to_vec()).await
+        })
+        .await
+        .unwrap();
+        assert_eq!(value, Some(b"value".to_vec()));
         assert_eq!(manager.exec_log(), ["CALLER"]);
     }
 
