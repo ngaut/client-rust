@@ -12,8 +12,8 @@ pub use buffer::{
     BatchBufferGetter, BatchSnapshotBufferGetter, BufferBatchGetter, BufferSnapshotBatchGetter,
 };
 pub use client::Client;
-pub use kv_snapshot::KvSnapshot;
 pub use client::ProtoLockInfo;
+pub use kv_snapshot::KvSnapshot;
 pub(crate) use lock::HasLocks;
 pub use priority::Priority;
 pub use snapshot::Snapshot;
@@ -72,8 +72,8 @@ pub use transaction::TTL_FACTOR;
 mod art;
 mod buffer;
 mod client;
-mod kv_snapshot;
 pub mod gc;
+mod kv_snapshot;
 pub(crate) mod latch;
 mod lock;
 pub mod lowering;

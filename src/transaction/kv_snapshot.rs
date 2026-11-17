@@ -2,7 +2,8 @@
 
 //! client-go `txnkv/txnsnapshot.KVSnapshot` as a point read uses it.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::backoff::Backoff;
@@ -15,6 +16,7 @@ use crate::proto::pdpb::Timestamp;
 use crate::request::{EncodeKeyspace, KeyMode, Keyspace};
 use crate::resource_control::ResourceGroupControllerHandle;
 use crate::timestamp::TimestampExt;
+use crate::transaction::buffer::{snapshot_cache_entry_size, SNAPSHOT_CACHE_SIZE_LIMIT};
 use crate::transaction::transaction::{
     snapshot_read_trace_context_of, snapshot_runtime_interceptor, PointGet,
 };
@@ -22,7 +24,7 @@ use crate::transaction::{
     Priority, ReadLockContext, RequestSource, ResolveLocksContext, SnapshotResourceGroupTagger,
     SnapshotRuntimeStats, SnapshotVisibilityValidator, TransactionResourceGroupTagger,
 };
-use crate::{Key, Result, Value};
+use crate::{Key, Result, Value, ValueEntry};
 
 /// client-go `txnsnapshot.KVSnapshot`: reads at one version through the
 /// store, with the settings a statement gives it and no transaction around
@@ -49,6 +51,7 @@ pub struct KvSnapshot<PdC: PdClient = PdRpcClient> {
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
     exec_details: Option<Arc<crate::util::ExecDetails>>,
+    caller_context: Option<crate::trace::TraceContext>,
     replica_read_config: ReplicaReadConfig,
     replica_read_adjuster: Option<ReplicaReadAdjuster>,
     not_fill_cache: bool,
@@ -64,6 +67,45 @@ pub struct KvSnapshot<PdC: PdClient = PdRpcClient> {
     read_lock_context: ReadLockContext,
     lock_resolver_context: ResolveLocksContext,
     request_source: RequestSource,
+    cache: Mutex<SnapshotCache>,
+}
+
+/// client-go `KVSnapshot.mu.cached` and `cachedSize`: the values the
+/// snapshot read, keyed by physical key; `None` is a key that does not exist.
+#[derive(Default)]
+struct SnapshotCache {
+    cached: HashMap<Key, Option<Value>>,
+    cached_size: i64,
+}
+
+impl SnapshotCache {
+    /// client-go `KVSnapshot.UpdateSnapshotCache` for one key.
+    fn update(&mut self, key: Key, value: Option<Value>) {
+        let entry = value.clone().map(|value| ValueEntry::new(value, 0));
+        self.cached_size += snapshot_cache_entry_size(&key, &entry);
+        if let Some(old) = self.cached.insert(key.clone(), value) {
+            // client-go subtracts only the old entry, not its key.
+            let old = old.map(|value| ValueEntry::new(value, 0));
+            self.cached_size -= snapshot_cache_entry_size(&key, &old) - key.len() as i64;
+        }
+        if self.cached_size < SNAPSHOT_CACHE_SIZE_LIMIT {
+            return;
+        }
+        let evictable = self
+            .cached
+            .keys()
+            .filter(|cached| **cached != key)
+            .cloned()
+            .collect::<Vec<_>>();
+        for evicted in evictable {
+            let value = self.cached.remove(&evicted).flatten();
+            let entry = value.map(|value| ValueEntry::new(value, 0));
+            self.cached_size -= snapshot_cache_entry_size(&evicted, &entry);
+            if self.cached_size < SNAPSHOT_CACHE_SIZE_LIMIT {
+                break;
+            }
+        }
+    }
 }
 
 impl<PdC: PdClient> KvSnapshot<PdC> {
@@ -84,6 +126,12 @@ impl<PdC: PdClient> KvSnapshot<PdC> {
         read_timestamp_validator: Option<Arc<dyn ReadTimestampValidator>>,
         visibility_validator: Option<Arc<dyn SnapshotVisibilityValidator>>,
     ) -> Self {
+        // client-go `NewTiKVSnapshot`'s sanity check.
+        let version = timestamp.version();
+        assert!(
+            version < i64::MAX as u64 || version == u64::MAX,
+            "try to get snapshot with a large ts {version}"
+        );
         KvSnapshot {
             timestamp,
             rpc,
@@ -100,6 +148,7 @@ impl<PdC: PdClient> KvSnapshot<PdC> {
             resource_control: None,
             ru_details: None,
             exec_details: None,
+            caller_context: None,
             replica_read_config: ReplicaReadConfig::default(),
             replica_read_adjuster: None,
             not_fill_cache: false,
@@ -115,29 +164,47 @@ impl<PdC: PdClient> KvSnapshot<PdC> {
             read_lock_context: ReadLockContext::default(),
             lock_resolver_context,
             request_source: RequestSource::default(),
+            cache: Mutex::default(),
         }
     }
 
     /// client-go `KVSnapshot.Get`: the value of `key` at the snapshot's
-    /// version, resolving the locks the read meets.
+    /// version, from the snapshot's cache or else read from TiKV, resolving
+    /// the locks the read meets. A read at `u64::MAX` is never cached.
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let internal = self.request_source.is_internal();
-        let point_get = self.point_get();
         let read = async move {
             let _timer = crate::stats::snapshot_command_timer("get", internal);
+            if let Some(value) = self.cache().cached.get(&key) {
+                return Ok(value.clone());
+            }
             // client-go `KVSnapshot.get` opens its span and discards the
             // derived ctx.
-            crate::trace::detached_client_span("tikvSnapshot.get", point_get.run(key)).await
+            let value = crate::trace::detached_client_span(
+                "tikvSnapshot.get",
+                self.point_get().run(key.clone()),
+            )
+            .await?;
+            // `UpdateSnapshotCache`: a read at `MaxUint64` always reads the
+            // latest data, so it is not cached.
+            if self.timestamp.version() != u64::MAX {
+                self.cache().update(key, value.clone());
+            }
+            Ok(value)
         };
         match snapshot_read_trace_context_of(
             self.exec_details.as_ref(),
-            None,
+            self.caller_context.as_ref(),
             self.timestamp.version(),
         ) {
             Some(statement) => crate::trace::with_trace_context(statement, Box::pin(read)).await,
             None => read.await,
         }
+    }
+
+    fn cache(&self) -> std::sync::MutexGuard<'_, SnapshotCache> {
+        self.cache.lock().expect("snapshot cache lock poisoned")
     }
 
     fn point_get(&self) -> PointGet<PdC> {
@@ -261,6 +328,13 @@ impl<PdC: PdClient> KvSnapshot<PdC> {
         self.exec_details = Some(exec_details);
     }
 
+    /// See [`crate::Transaction::set_caller_context`]: the ctx client-go's
+    /// `KVSnapshot.Get(ctx, k)` is called with, whose RPC interceptor the
+    /// read runs.
+    pub fn set_caller_context(&mut self, context: crate::trace::TraceContext) {
+        self.caller_context = Some(context);
+    }
+
     /// See [`crate::Transaction::set_resource_group_tagger`]: the tagger a
     /// transaction's requests share, which a snapshot read applies after its
     /// own tag and tagger.
@@ -340,64 +414,81 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::kv::{ReplicaReadAdjustment, ReplicaReadSelectorOption};
     use crate::mock::{MockKvClient, MockPdClient};
     use crate::timestamp::TimestampExt;
-    use crate::{CheckLevel, Transaction, TransactionOptions};
+    use crate::{CheckLevel, ReplicaReadType, Transaction, TransactionOptions};
 
-    /// client-go's `KVTxn.Get` reads through its `KVSnapshot`: a snapshot
-    /// read sends the request a transaction's read at the same version and
-    /// settings sends.
-    #[tokio::test]
-    async fn a_snapshot_get_sends_the_request_a_transaction_get_sends() {
-        let requests = Arc::new(Mutex::new(Vec::new()));
+    type Requests = Arc<Mutex<Vec<kvrpcpb::GetRequest>>>;
+
+    /// A store that records every Get and answers `value`, or not found for
+    /// the key `missing`.
+    fn recording_store() -> (Arc<MockPdClient>, Requests) {
+        let requests = Requests::default();
         let captured = Arc::clone(&requests);
         let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
             move |request: &dyn Any| {
                 let request = request.downcast_ref::<kvrpcpb::GetRequest>().unwrap();
                 captured.lock().unwrap().push(request.clone());
+                let not_found = request.key == b"missing";
                 Ok(Box::new(kvrpcpb::GetResponse {
-                    value: b"value".to_vec(),
+                    value: if not_found {
+                        Vec::new()
+                    } else {
+                        b"value".to_vec()
+                    },
+                    not_found,
                     ..Default::default()
                 }) as Box<dyn Any>)
             },
         )));
-        let timestamp = Timestamp::from_version(u64::MAX);
-        let mut transaction = Transaction::new(
-            timestamp.clone(),
-            Arc::clone(&pd_client),
+        (pd_client, requests)
+    }
+
+    fn read_pair(
+        pd_client: &Arc<MockPdClient>,
+        version: u64,
+    ) -> (Transaction<MockPdClient>, KvSnapshot<MockPdClient>) {
+        let transaction = Transaction::new(
+            Timestamp::from_version(version),
+            Arc::clone(pd_client),
             TransactionOptions::new_optimistic()
                 .read_only()
                 .drop_check(CheckLevel::None),
             Keyspace::Disable,
         );
-        let mut snapshot = KvSnapshot::new(
-            timestamp,
-            pd_client,
+        let snapshot = KvSnapshot::new(
+            Timestamp::from_version(version),
+            Arc::clone(pd_client),
             Keyspace::Disable,
             None,
             ResolveLocksContext::default(),
             None,
             None,
         );
-        transaction.set_priority(Priority::High);
-        snapshot.set_priority(Priority::High);
-        transaction.set_not_fill_cache(true);
-        snapshot.set_not_fill_cache(true);
-        transaction.set_task_id(7);
-        snapshot.set_task_id(7);
-        transaction.set_isolation_level(kvrpcpb::IsolationLevel::Rc);
-        snapshot.set_isolation_level(kvrpcpb::IsolationLevel::Rc);
-        transaction.set_resource_group_name("rg");
-        snapshot.set_resource_group_name("rg");
-        transaction.set_resource_group_tag(Some(b"tag".to_vec()));
-        snapshot.set_resource_group_tag(Some(b"tag".to_vec()));
-        transaction.set_request_source_internal(true);
-        snapshot.set_request_source_internal(true);
-        transaction.set_request_source_type("lightning");
-        snapshot.set_request_source_type("lightning");
-        transaction.set_snapshot_read_timeout(Duration::from_millis(250));
-        snapshot.set_snapshot_read_timeout(Duration::from_millis(250));
+        (transaction, snapshot)
+    }
 
+    /// Applies the same setters to a transaction and a snapshot.
+    macro_rules! on_both {
+        ($transaction:expr, $snapshot:expr, |$reader:ident| $body:block) => {{
+            {
+                let $reader = &mut $transaction;
+                $body
+            }
+            {
+                let $reader = &mut $snapshot;
+                $body
+            }
+        }};
+    }
+
+    async fn assert_same_get(
+        transaction: &mut Transaction<MockPdClient>,
+        snapshot: &KvSnapshot<MockPdClient>,
+        requests: &Requests,
+    ) {
+        requests.lock().unwrap().clear();
         assert_eq!(
             transaction.get(b"key".to_vec()).await.unwrap(),
             Some(b"value".to_vec())
@@ -409,5 +500,116 @@ mod tests {
         let requests = requests.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0], requests[1]);
+    }
+
+    /// client-go's `KVTxn.Get` reads through its `KVSnapshot`: a snapshot
+    /// read sends the request a transaction's read at the same version and
+    /// settings sends.
+    #[tokio::test]
+    async fn a_snapshot_get_sends_the_request_a_transaction_get_sends() {
+        let (pd_client, requests) = recording_store();
+        let (mut transaction, mut snapshot) = read_pair(&pd_client, u64::MAX);
+        on_both!(transaction, snapshot, |reader| {
+            reader.set_priority(Priority::High);
+            reader.set_not_fill_cache(true);
+            reader.set_task_id(7);
+            reader.set_isolation_level(kvrpcpb::IsolationLevel::Rc);
+            reader.set_resource_group_name("rg");
+            reader.set_resource_group_tag(Some(b"tag".to_vec()));
+            reader.set_request_source_internal(true);
+            reader.set_request_source_type("lightning");
+            reader.set_snapshot_read_timeout(Duration::from_millis(250));
+        });
+        assert_same_get(&mut transaction, &snapshot, &requests).await;
+
+        // A follower read the adjuster sends to the leader, with load-based
+        // replica read and the snapshot's own resource group. The adjuster
+        // is asked once per read, for its one key.
+        let adjusted = Arc::new(Mutex::new(Vec::new()));
+        let (mut transaction, mut snapshot) = read_pair(&pd_client, 10);
+        on_both!(transaction, snapshot, |reader| {
+            let adjusted = Arc::clone(&adjusted);
+            reader.set_replica_read(ReplicaReadType::Follower);
+            reader.set_replica_read_adjuster(Arc::new(move |keys| {
+                adjusted.lock().unwrap().push(keys);
+                ReplicaReadAdjustment::new(
+                    Some(ReplicaReadSelectorOption::LeaderOnly),
+                    ReplicaReadType::Leader,
+                )
+            }));
+            reader.set_load_based_replica_read_threshold(Duration::from_millis(50));
+            reader.set_resource_group_name("rg");
+            reader.set_snapshot_resource_group_name(Some("snapshot-rg".to_owned()));
+        });
+        assert_same_get(&mut transaction, &snapshot, &requests).await;
+        assert_eq!(*adjusted.lock().unwrap(), [1, 1]);
+
+        // A stale read.
+        let (mut transaction, mut snapshot) = read_pair(&pd_client, 10);
+        on_both!(transaction, snapshot, |reader| {
+            reader.set_stale_read(true);
+        });
+        assert_same_get(&mut transaction, &snapshot, &requests).await;
+    }
+
+    /// client-go `KVSnapshot.Get` answers a key it read before from its cache,
+    /// a key that does not exist included, except at `MaxUint64`
+    /// (`UpdateSnapshotCache`).
+    #[tokio::test]
+    async fn a_snapshot_caches_its_reads_except_at_max_ts() {
+        let (pd_client, requests) = recording_store();
+        let (_, snapshot) = read_pair(&pd_client, 10);
+        for _ in 0..2 {
+            assert_eq!(
+                snapshot.get(b"key".to_vec()).await.unwrap(),
+                Some(b"value".to_vec())
+            );
+            assert_eq!(snapshot.get(b"missing".to_vec()).await.unwrap(), None);
+        }
+        assert_eq!(requests.lock().unwrap().len(), 2);
+
+        requests.lock().unwrap().clear();
+        let (_, snapshot) = read_pair(&pd_client, u64::MAX);
+        for _ in 0..2 {
+            assert_eq!(
+                snapshot.get(b"key".to_vec()).await.unwrap(),
+                Some(b"value".to_vec())
+            );
+        }
+        assert_eq!(requests.lock().unwrap().len(), 2);
+    }
+
+    /// client-go `KVSnapshot.Get(ctx, k)` runs the RPC interceptor its caller
+    /// ctx carries, as `KVTxn.Get` does.
+    #[tokio::test]
+    async fn a_snapshot_get_runs_the_caller_contexts_interceptor() {
+        let manager = crate::MockInterceptorManager::new();
+        let (pd_client, _) = recording_store();
+        let (_, mut snapshot) = read_pair(&pd_client, u64::MAX);
+        snapshot.set_caller_context(crate::interceptor::with_rpc_interceptor(
+            &crate::trace::TraceContext::default(),
+            manager.create_mock_interceptor("CALLER"),
+        ));
+        assert_eq!(
+            snapshot.get(b"key".to_vec()).await.unwrap(),
+            Some(b"value".to_vec())
+        );
+        assert_eq!(manager.exec_log(), ["CALLER"]);
+    }
+
+    /// client-go `NewTiKVSnapshot`'s sanity check.
+    #[test]
+    #[should_panic(expected = "try to get snapshot with a large ts")]
+    fn a_snapshot_rejects_a_ts_beyond_max_int64() {
+        let (pd_client, _) = recording_store();
+        KvSnapshot::new(
+            Timestamp::from_version(i64::MAX as u64),
+            pd_client,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext::default(),
+            None,
+            None,
+        );
     }
 }
