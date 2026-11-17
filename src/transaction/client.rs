@@ -34,6 +34,7 @@ use crate::transaction::lowering::new_unsafe_destroy_range_request;
 use crate::transaction::range_task::{RangeTaskHandler, Runner, TaskStat};
 use crate::transaction::resolve_locks_with_context;
 use crate::transaction::resolve_locks_with_context_result;
+use crate::transaction::KvSnapshot;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksResult;
 use crate::transaction::Snapshot;
@@ -819,6 +820,32 @@ impl<PdC: PdClient> Client<PdC> {
         }
         transaction.set_enable_async_batch_get(self.enable_async_batch_get);
         transaction
+    }
+
+    /// client-go `KVStore.GetSnapshot(ts)`: a [`KvSnapshot`] at `timestamp`
+    /// with the store's lock resolver, read-timestamp validation and txn
+    /// safe point, as [`Self::begin_with_options`] gives a transaction.
+    pub fn kv_snapshot(&self, timestamp: Timestamp) -> KvSnapshot<PdC> {
+        // client-go checks the store's txn safe point after a read returns
+        // (`KVSnapshot.Get`), not before it is sent.
+        let visibility = self
+            .read_timestamp_validator
+            .safe_point
+            .read()
+            .expect("read timestamp validator lock poisoned")
+            .clone()
+            .map(|safe_point| {
+                Arc::new(StoreVisibility(safe_point)) as Arc<dyn crate::SnapshotVisibilityValidator>
+            });
+        KvSnapshot::new(
+            timestamp,
+            self.pd.clone(),
+            self.keyspace,
+            self.keyspace_name.clone(),
+            self.lock_resolver_context.clone(),
+            Some(self.read_timestamp_validator.clone()),
+            visibility,
+        )
     }
 
     /// Returns the injected or production PD/routing client shared by this
